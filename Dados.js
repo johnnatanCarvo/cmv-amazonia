@@ -124,14 +124,24 @@ function processarCompras(rows) {
 
     // Detectar transferência interna pelo nome do fornecedor
     var fornecedor = limpaCelula(r[C_COMPRAS_FORNECEDOR]);
-    var ehTransf = fornecedor.toUpperCase().indexOf(TRANSFERENCIA_MARCADOR) >= 0;
+    var pareceTransf = fornecedor.toUpperCase().indexOf(TRANSFERENCIA_MARCADOR) >= 0;
+    var filDestino = filial;
+    var filOrig = pareceTransf ? filialOrigem(fornecedor) : null;
+    // So tratamos como transferencia se a origem resolvida for uma filial
+    // DIFERENTE do destino. Se resolver pra mesma filial (fornecedor nao
+    // mapeado em MAPA_ORIGEM_FILIAL, ou mapeado por engano pra si mesma),
+    // registrar como transferencia geraria uma "entrada" sem "saida"
+    // correspondente, inflando o CMC/CMV da unidade sem motivo real.
+    var ehTransf = pareceTransf && filOrig !== filDestino;
+
+    if (pareceTransf && !ehTransf) {
+      Logger.log('AVISO: transferencia com origem igual ao destino (' + filDestino +
+                  '), fornecedor="' + fornecedor + '". Tratando como compra externa.');
+    }
 
     if (ehTransf) {
       // Acumular como transferência, fora do CMC de compra externa.
       // A filial de destino RECEBEU (entrada). A filial de origem ENVIOU (saída).
-      var filDestino = filial;
-      var filOrig = filialOrigem(fornecedor);
-
       if (!transf[mesNome]) transf[mesNome] = { total:0, filiais:{} };
       transf[mesNome].total += total;
 
@@ -146,12 +156,10 @@ function processarCompras(rows) {
       tfD.produtos.push({ nome:prod, grupo:grupo, origem:fornecedor, destino:filDestino, qtd:r2(qtd), valor:r2(total), data:limpaCelula(r[C_COMPRAS.data]) });
 
       // Registro de SAÍDA na filial de origem
-      if (filOrig && filOrig !== filDestino) {
-        if (!transf[mesNome].filiais[filOrig]) {
-          transf[mesNome].filiais[filOrig] = { total:0, entrada:0, saida:0, origens:{}, produtos:[] };
-        }
-        transf[mesNome].filiais[filOrig].saida += total;
+      if (!transf[mesNome].filiais[filOrig]) {
+        transf[mesNome].filiais[filOrig] = { total:0, entrada:0, saida:0, origens:{}, produtos:[] };
       }
+      transf[mesNome].filiais[filOrig].saida += total;
       continue;  // não entra no CMC de compra externa
     }
 
@@ -575,7 +583,16 @@ function processarCMV(rowsEstoque, rowsCompras) {
       // Transferência: registrar entrada (destino) e saída (origem) separadamente,
       // com quebra por grupo (para o CMV por grupo dentro de uma unidade).
       var fornC = limpaCelula(rc[C_COMPRAS_FORNECEDOR]);
-      var ehTransfCMV = fornC.toUpperCase().indexOf(TRANSFERENCIA_MARCADOR) >= 0;
+      var pareceTransfCMV = fornC.toUpperCase().indexOf(TRANSFERENCIA_MARCADOR) >= 0;
+      var filOrigemCMV = pareceTransfCMV ? filialOrigem(fornC) : null;
+      // Mesmo ajuste do processarCompras: so tratar como transferencia real
+      // se a origem resolvida for diferente do destino. Caso contrario, cai
+      // para compra externa normal (evita entrada sem saida correspondente).
+      var ehTransfCMV = pareceTransfCMV && filOrigemCMV !== filC;
+      if (pareceTransfCMV && !ehTransfCMV) {
+        Logger.log('AVISO (CMV): transferencia com origem igual ao destino (' + filC +
+                    '), fornecedor="' + fornC + '". Tratando como compra externa.');
+      }
       if (ehTransfCMV) {
         var qtdTC = numVal(rc[C_COMPRAS.qtd]);
 
@@ -596,22 +613,19 @@ function processarCMV(rowsEstoque, rowsCompras) {
         comprasMes[mnC].entradaProdGrupoFilial[filC][grC][prodC].qtd   += qtdTC;
 
         // Saída na filial de origem (enviou)
-        var filOrigemCMV = filialOrigem(fornC);
-        if (filOrigemCMV && filOrigemCMV !== filC) {
-          comprasMes[mnC].saidaFilial[filOrigemCMV] = (comprasMes[mnC].saidaFilial[filOrigemCMV] || 0) + totC;
-          if (!comprasMes[mnC].saidaFilialGrupo) comprasMes[mnC].saidaFilialGrupo = {};
-          if (!comprasMes[mnC].saidaFilialGrupo[filOrigemCMV]) comprasMes[mnC].saidaFilialGrupo[filOrigemCMV] = {};
-          if (!comprasMes[mnC].saidaFilialGrupo[filOrigemCMV][grC]) comprasMes[mnC].saidaFilialGrupo[filOrigemCMV][grC] = { valor:0, qtd:0 };
-          comprasMes[mnC].saidaFilialGrupo[filOrigemCMV][grC].valor += totC;
-          comprasMes[mnC].saidaFilialGrupo[filOrigemCMV][grC].qtd   += qtdTC;
-          // Saída por produto (para o detalhe de produto dentro do grupo)
-          if (!comprasMes[mnC].saidaProdGrupoFilial) comprasMes[mnC].saidaProdGrupoFilial = {};
-          if (!comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV]) comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV] = {};
-          if (!comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV][grC]) comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV][grC] = {};
-          if (!comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV][grC][prodC]) comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV][grC][prodC] = { valor:0, qtd:0 };
-          comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV][grC][prodC].valor += totC;
-          comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV][grC][prodC].qtd   += qtdTC;
-        }
+        comprasMes[mnC].saidaFilial[filOrigemCMV] = (comprasMes[mnC].saidaFilial[filOrigemCMV] || 0) + totC;
+        if (!comprasMes[mnC].saidaFilialGrupo) comprasMes[mnC].saidaFilialGrupo = {};
+        if (!comprasMes[mnC].saidaFilialGrupo[filOrigemCMV]) comprasMes[mnC].saidaFilialGrupo[filOrigemCMV] = {};
+        if (!comprasMes[mnC].saidaFilialGrupo[filOrigemCMV][grC]) comprasMes[mnC].saidaFilialGrupo[filOrigemCMV][grC] = { valor:0, qtd:0 };
+        comprasMes[mnC].saidaFilialGrupo[filOrigemCMV][grC].valor += totC;
+        comprasMes[mnC].saidaFilialGrupo[filOrigemCMV][grC].qtd   += qtdTC;
+        // Saída por produto (para o detalhe de produto dentro do grupo)
+        if (!comprasMes[mnC].saidaProdGrupoFilial) comprasMes[mnC].saidaProdGrupoFilial = {};
+        if (!comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV]) comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV] = {};
+        if (!comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV][grC]) comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV][grC] = {};
+        if (!comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV][grC][prodC]) comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV][grC][prodC] = { valor:0, qtd:0 };
+        comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV][grC][prodC].valor += totC;
+        comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV][grC][prodC].qtd   += qtdTC;
       }
 
       var qtdC = numVal(rc[C_COMPRAS.qtd]);
