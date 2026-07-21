@@ -94,9 +94,17 @@ function getPayload(senha) {
       if (fatMesFilial[m] && cmc[m].filiais) {
         Object.keys(cmc[m].filiais).forEach(function(fil) {
           var fatFil = fatMesFilial[m][fil] || 0;
-          cmc[m].filiais[fil].faturamento = fatFil;
-          cmc[m].filiais[fil].cmc_pct_fat = (fatFil > 0)
-            ? Math.round(cmc[m].filiais[fil].cmc_total / fatFil * 10000) / 100
+          var filObj = cmc[m].filiais[fil];
+          filObj.faturamento = fatFil;
+          filObj.cmc_pct_fat = (fatFil > 0)
+            ? Math.round(filObj.cmc_total / fatFil * 10000) / 100
+            : null;
+          // CMC considerando a transferencia recebida de outra unidade como
+          // se fosse compra externa (cmc_total, por padrao, NAO inclui transferencia).
+          var entradaVal = filObj.transf_entrada || 0;
+          filObj.cmc_com_transf = Math.round((filObj.cmc_total + entradaVal) * 100) / 100;
+          filObj.cmc_pct_fat_com_transf = (fatFil > 0)
+            ? Math.round(filObj.cmc_com_transf / fatFil * 10000) / 100
             : null;
         });
       }

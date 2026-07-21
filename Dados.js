@@ -147,19 +147,21 @@ function processarCompras(rows) {
 
       // Registro de ENTRADA na filial de destino
       if (!transf[mesNome].filiais[filDestino]) {
-        transf[mesNome].filiais[filDestino] = { total:0, entrada:0, saida:0, origens:{}, produtos:[] };
+        transf[mesNome].filiais[filDestino] = { total:0, entrada:0, saida:0, entradaQtd:0, saidaQtd:0, origens:{}, produtos:[] };
       }
       var tfD = transf[mesNome].filiais[filDestino];
-      tfD.total   += total;
-      tfD.entrada += total;
+      tfD.total      += total;
+      tfD.entrada    += total;
+      tfD.entradaQtd += qtd;
       tfD.origens[fornecedor] = (tfD.origens[fornecedor] || 0) + total;
       tfD.produtos.push({ nome:prod, grupo:grupo, origem:fornecedor, destino:filDestino, qtd:r2(qtd), valor:r2(total), data:limpaCelula(r[C_COMPRAS.data]) });
 
       // Registro de SAÍDA na filial de origem
       if (!transf[mesNome].filiais[filOrig]) {
-        transf[mesNome].filiais[filOrig] = { total:0, entrada:0, saida:0, origens:{}, produtos:[] };
+        transf[mesNome].filiais[filOrig] = { total:0, entrada:0, saida:0, entradaQtd:0, saidaQtd:0, origens:{}, produtos:[] };
       }
-      transf[mesNome].filiais[filOrig].saida += total;
+      transf[mesNome].filiais[filOrig].saida    += total;
+      transf[mesNome].filiais[filOrig].saidaQtd += qtd;
       continue;  // não entra no CMC de compra externa
     }
 
@@ -257,8 +259,10 @@ function processarCompras(rows) {
         return { origem:o, valor:r2(tf.origens[o]) };
       }).sort(function(a,b){ return b.valor - a.valor; });
       // Saldo liquido de transferencia da unidade = entrada (recebeu) - saida (enviou)
-      var entrada = tf.entrada || 0;
-      var saida   = tf.saida   || 0;
+      var entrada    = tf.entrada    || 0;
+      var saida      = tf.saida      || 0;
+      var entradaQtd = tf.entradaQtd || 0;
+      var saidaQtd   = tf.saidaQtd   || 0;
 
       // Consolidar por produto: cada produto vira uma linha com o total,
       // e guarda os lancamentos individuais (data, qtd, valor, origem) dentro.
@@ -284,18 +288,22 @@ function processarCompras(rows) {
       }).sort(function(a,b){ return b.valor - a.valor; });
 
       cmc[mes].transferencias.filiais[fil] = {
-        total:   r2(tf.total),
-        entrada: r2(entrada),
-        saida:   r2(saida),
-        saldo:   r2(entrada - saida),
+        total:       r2(tf.total),
+        entrada:     r2(entrada),
+        saida:       r2(saida),
+        entrada_qtd: r2(entradaQtd),
+        saida_qtd:   r2(saidaQtd),
+        saldo:       r2(entrada - saida),
         origens: origens,
         produtos: produtosConsolidados
       };
       // anexar dentro da filial do CMC: entrada, saida e saldo de transferencia
       if (cmc[mes].filiais && cmc[mes].filiais[fil]) {
-        cmc[mes].filiais[fil].transf_entrada = r2(entrada);
-        cmc[mes].filiais[fil].transf_saida   = r2(saida);
-        cmc[mes].filiais[fil].transf_saldo   = r2(entrada - saida);
+        cmc[mes].filiais[fil].transf_entrada     = r2(entrada);
+        cmc[mes].filiais[fil].transf_saida       = r2(saida);
+        cmc[mes].filiais[fil].transf_saldo       = r2(entrada - saida);
+        cmc[mes].filiais[fil].transf_entrada_qtd = r2(entradaQtd);
+        cmc[mes].filiais[fil].transf_saida_qtd   = r2(saidaQtd);
       }
     });
   });
