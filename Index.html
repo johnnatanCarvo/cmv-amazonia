@@ -958,10 +958,13 @@ function rCMV(){
   var pctCls=(d.pct>35)?'rd':(d.pct>30)?'am':'ac';
 
   // ===== MÉTRICAS =====
+  var cmvAtipico = d.cmv < 0;
   var html='<div class="metrics" style="grid-template-columns:1.4fr 1fr 1fr 1fr 1fr;">'+
     '<div class="metric lead"><div class="metric-l">CMV Real · '+(ML_MAP[mesCMV]||mesCMV)+sufUni+'</div>'+
-      '<div class="metric-v">'+fR2(d.cmv)+'</div>'+
-      '<div class="metric-sub" style="color:var(--fg3)">'+(d.data_ei||'')+' a '+(d.data_ef||'')+'</div></div>'+
+      '<div class="metric-v'+(cmvAtipico?' rd':'')+'">'+fR2(d.cmv)+'</div>'+
+      '<div class="metric-sub" style="color:'+(cmvAtipico?'var(--rd)':'var(--fg3)')+'">'+
+        (cmvAtipico?'&#9888; CMV negativo — confira as contagens de estoque':(d.data_ei||'')+' a '+(d.data_ef||''))+
+      '</div></div>'+
     '<div class="metric"><div class="metric-l">Estoque Inicial</div><div class="metric-v az">'+fR(d.ei)+'</div></div>'+
     '<div class="metric"><div class="metric-l">Compras</div><div class="metric-v am">'+fR(d.compras)+'</div></div>'+
     '<div class="metric"><div class="metric-l">Estoque Final</div><div class="metric-v az">'+fR(d.ef)+'</div></div>'+
