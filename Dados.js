@@ -328,7 +328,9 @@ function processarVendas(rows) {
     var grupo = limpaCelula(r[C_VENDAS.grupo]);
     var valor = numVal(r[C_VENDAS.valor]);
     if (valor <= 0) continue;
-    if (GRUPOS_EXCLUIR_ABC.indexOf(grupo) >= 0) continue;
+    // Comparacao sem diferenciar maiusculas/minusculas: um "Taxas Operacionais"
+    // exportado com capitalizacao diferente nao deve escapar da exclusao.
+    if (GRUPOS_EXCLUIR_ABC.indexOf(grupo.toUpperCase()) >= 0) continue;
 
     var prod   = limpaCelula(r[C_VENDAS.produto]);
     var filial = limpaCelula(r[C_VENDAS.filial]) || 'OUTRA';
@@ -337,6 +339,13 @@ function processarVendas(rows) {
 
     var mes = mesNum(r[C_VENDAS.data]);
     var mn  = mes ? NOMES_MESES[mes] : null;
+    if (!mn) {
+      // Sem mes reconhecido, a linha ainda entra nos totais gerais/por filial
+      // (abaixo) mas nao em nenhum total mensal — Periodo completo pode ficar
+      // maior que a soma dos meses se isso ocorrer. Avisa pra facilitar o diagnostico.
+      Logger.log('AVISO: venda com data nao reconhecida ("' + limpaCelula(r[C_VENDAS.data]) +
+                  '"), produto="' + prod + '".');
+    }
 
     // Consolidado por produto
     if (!porProd[prod]) porProd[prod] = { grupo:grupo, valor:0, qtd:0 };
@@ -832,6 +841,11 @@ function processarCMV(rowsEstoque, rowsCompras) {
       };
     });
 
+    if (cmv[mesNome]) {
+      Logger.log('AVISO: ja existe CMV calculado para ' + mesNome + ' — os dados do periodo ' +
+                  tsEI + ' a ' + tsEF + ' vao substituir o calculo anterior. Isso indica mais de ' +
+                  'duas contagens de estoque terminando no mesmo mes; confira se e intencional.');
+    }
     cmv[mesNome] = {
       ei_total:      r2(ei.total),
       ef_total:      r2(ef.total),

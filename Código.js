@@ -75,9 +75,9 @@ function getPayload(senha) {
     // Faturamento por mês + filial
     var fatMesFilial = (vendas && vendas.by_mes_filial) ? vendas.by_mes_filial : {};
 
-    // Injetar faturamento no CMC (prioridade: vendas; fallback: cmv)
+    // Injetar faturamento no CMC a partir das vendas do mes
     meses.forEach(function(m) {
-      var fat = fatPorMes[m] || (cmv[m] ? cmv[m].faturamento : 0) || 0;
+      var fat = fatPorMes[m] || 0;
       if (fat > 0) {
         cmc[m].faturamento = fat;
         cmc[m].cmc_pct_fat = cmc[m].cmc_total
