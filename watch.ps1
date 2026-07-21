@@ -39,6 +39,14 @@ while ($true) {
     if ($mudou) {
         Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Mudanca detectada, disparando update.bat"
         $estadoAnterior = $estadoAtual
-        Start-Process -FilePath $batPath -WindowStyle Hidden -WorkingDirectory $folder
+        Push-Location $folder
+        try {
+            & $batPath
+        } catch {
+            Write-Host "[$(Get-Date -Format 'HH:mm:ss')] ERRO ao rodar update.bat: $_"
+        } finally {
+            Pop-Location
+        }
+        Write-Host "[$(Get-Date -Format 'HH:mm:ss')] update.bat finalizado"
     }
 }
