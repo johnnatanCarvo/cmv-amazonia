@@ -8,13 +8,19 @@
 var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 
 // ── SEGURANÇA ────────────────────────────────────────────────
-// A senha fica somente aqui no servidor. Nunca é enviada ao navegador.
-// Para alterar a senha, mude apenas o valor abaixo.
-var SENHA_ACESSO = '3248';
+// A senha NAO fica no codigo-fonte (este projeto e versionado no GitHub).
+// Ela mora em Project Settings > Script Properties, chave "SENHA_ACESSO".
+// Para definir ou trocar a senha: Configuracoes do projeto (engrenagem) no
+// editor do Apps Script > Propriedades do script > Adicionar propriedade do script.
 
 // Valida a senha enviada pelo frontend. Retorna true ou false.
 function validarSenha(senha) {
-  return String(senha) === SENHA_ACESSO;
+  var senhaConfigurada = PropertiesService.getScriptProperties().getProperty('SENHA_ACESSO');
+  if (!senhaConfigurada) {
+    Logger.log('SENHA_ACESSO nao configurada em Script Properties.');
+    return false;
+  }
+  return String(senha) === senhaConfigurada;
 }
 
 // Padrões de nome dos arquivos — o script lê TODOS os CSVs
