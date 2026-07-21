@@ -424,9 +424,17 @@ td.hi{font-weight:600;}
       <div>
         <div class="eyebrow">Evolução do Custo Unitário</div>
         <div class="stitle">Variação de Custo</div>
-        <div class="ssub">Custo médio ponderado por produto em cada mês. A variação compara o primeiro e o último mês com dado disponível.</div>
+        <div class="ssub">Custo médio ponderado por produto em cada mês. Escolha quais dois meses comparar na variação.</div>
       </div>
       <div class="sright" id="custo-fonte">Relatório de Compras</div>
+    </div>
+
+    <div class="ctrl">
+      <span class="lbl">Comparar</span>
+      <select id="custo-mes-de" onchange="setCustoComparacao()"></select>
+      <span class="lbl">com</span>
+      <select id="custo-mes-para" onchange="setCustoComparacao()"></select>
+      <button class="gd-close" onclick="custoMesesRecentes()">Meses mais recentes</button>
     </div>
 
     <div class="kpis k4" id="custo-kpis"></div>
@@ -514,6 +522,7 @@ var ML_MAP={'JANEIRO':'Jan','FEVEREIRO':'Fev','MARÇO':'Mar','ABRIL':'Abr','MAIO
 /* ====== ESTADO ====== */
 var DADOS=null, MESES=[], CMC={}, VENDAS={}, CMV={}, mesAtual='', uniAtual='TODAS', grupoAberto=null, charts={};
 var abcOrder='valor', custoCache=null, uniABC='TODAS', mesABC='TODOS';
+var custoMesA='', custoMesB='';
 
 /* ====== HELPERS ====== */
 function fR(v){return 'R$ '+(v||0).toLocaleString('pt-BR',{minimumFractionDigits:0,maximumFractionDigits:0});}
@@ -1369,13 +1378,14 @@ function rABCTable(){
 /* ============================================================
    ABA 3: VARIAÇÃO DE CUSTO
    ============================================================ */
+var CUSTO_CHAVES={'JANEIRO':'jan','FEVEREIRO':'fev','MARÇO':'mar','ABRIL':'abr','MAIO':'mai',
+  'JUNHO':'jun','JULHO':'jul','AGOSTO':'ago','SETEMBRO':'set','OUTUBRO':'out','NOVEMBRO':'nov','DEZEMBRO':'dez'};
+
 function buildCusto(){
   if(custoCache)return custoCache;
   var prods={};
-  var chaves={'JANEIRO':'jan','FEVEREIRO':'fev','MARÇO':'mar','ABRIL':'abr','MAIO':'mai',
-    'JUNHO':'jun','JULHO':'jul','AGOSTO':'ago','SETEMBRO':'set','OUTUBRO':'out','NOVEMBRO':'nov','DEZEMBRO':'dez'};
   MESES.forEach(function(mes){
-    var d=CMC[mes];if(!d)return;var ck=chaves[mes]||mes.toLowerCase().slice(0,3);
+    var d=CMC[mes];if(!d)return;var ck=CUSTO_CHAVES[mes]||mes.toLowerCase().slice(0,3);
     Object.keys(d.grupos).forEach(function(g){
       d.grupos[g].produtos.forEach(function(p){
         if(!p.custo_unit||p.custo_unit<=0)return;
@@ -1386,19 +1396,45 @@ function buildCusto(){
       });
     });
   });
-  var cks=MESES.map(function(m){return chaves[m]||m.toLowerCase().slice(0,3);});
-  var arr=Object.values(prods).map(function(p){
-    var disp=cks.filter(function(c){return p.custos[c]>0;});
-    if(disp.length>=2){
-      var first=p.custos[disp[0]],last=p.custos[disp[disp.length-1]];
-      p.var_pct=(last-first)/first*100;
-      p.first_ck=disp[0];p.last_ck=disp[disp.length-1];
-    }else{p.var_pct=null;}
-    p.n_meses=disp.length;
-    return p;
-  });
-  custoCache={prods:arr,cks:cks};
+  var cks=MESES.map(function(m){return CUSTO_CHAVES[m]||m.toLowerCase().slice(0,3);});
+  custoCache={prods:Object.values(prods),cks:cks};
   return custoCache;
+}
+
+// Recalcula var_pct de cada produto com base nos dois meses escolhidos (custoMesA -> custoMesB).
+// Só calcula se AMBOS os meses tiverem custo (produto comprado nos dois); senao fica null (SC).
+function recalcVarPct(prods){
+  prods.forEach(function(p){
+    var a=p.custos[custoMesA],b=p.custos[custoMesB];
+    p.var_pct=(a>0&&b>0)?(b-a)/a*100:null;
+  });
+}
+
+// Popula os seletores de mes (uma vez) e define o par padrao: os dois meses mais recentes.
+function popularSeletorCusto(cks){
+  var sel=document.getElementById('custo-mes-de');
+  if(sel.dataset.ready)return;
+  var opts=cks.map(function(ck,i){return '<option value="'+ck+'">'+(ML_MAP[MESES[i]]||MESES[i])+'</option>';}).join('');
+  document.getElementById('custo-mes-de').innerHTML=opts;
+  document.getElementById('custo-mes-para').innerHTML=opts;
+  sel.dataset.ready='1';
+  custoMesesRecentes(true);
+}
+
+function custoMesesRecentes(semRender){
+  var c=buildCusto();
+  if(c.cks.length<2)return;
+  custoMesA=c.cks[c.cks.length-2];
+  custoMesB=c.cks[c.cks.length-1];
+  document.getElementById('custo-mes-de').value=custoMesA;
+  document.getElementById('custo-mes-para').value=custoMesB;
+  if(!semRender)rCusto();
+}
+
+function setCustoComparacao(){
+  custoMesA=document.getElementById('custo-mes-de').value;
+  custoMesB=document.getElementById('custo-mes-para').value;
+  rCusto();
 }
 
 function popularGruposCusto(){
@@ -1410,6 +1446,9 @@ function popularGruposCusto(){
 
 function rCusto(){
   var c=buildCusto();
+  popularSeletorCusto(c.cks);
+  if(!custoMesA||!custoMesB){document.getElementById('custo-kpis').innerHTML='<div class="empty">Menos de 2 meses com dados de compra.</div>';return;}
+  recalcVarPct(c.prods);
   var comVar=c.prods.filter(function(p){return p.var_pct!==null;});
   var altas=comVar.filter(function(p){return p.var_pct>0;}).sort(function(a,b){return b.var_pct-a.var_pct;});
   var quedas=comVar.filter(function(p){return p.var_pct<0;}).sort(function(a,b){return a.var_pct-b.var_pct;});
@@ -1448,6 +1487,8 @@ function barOpts(sign){return {indexAxis:'y',responsive:true,maintainAspectRatio
 
 function rCustoTable(){
   var c=buildCusto();
+  if(!custoMesA||!custoMesB)return;
+  recalcVarPct(c.prods);
   var busca=(document.getElementById('custo-busca').value||'').toLowerCase();
   var gr=document.getElementById('custo-grupo').value;
   var filtro=document.getElementById('custo-filtro').value;
@@ -1463,13 +1504,15 @@ function rCustoTable(){
 
   // Cabeçalho dinâmico (uma coluna por mês)
   var thMeses=c.cks.map(function(ck,i){return '<th class="r">'+(ML_MAP[MESES[i]]||MESES[i])+'</th>';}).join('');
-  document.getElementById('custo-head').innerHTML='<tr><th>#</th><th>Produto</th><th>Grupo</th>'+thMeses+'<th class="r">Variação</th></tr>';
+  var lblA=ML_MAP[MESES[c.cks.indexOf(custoMesA)]]||custoMesA;
+  var lblB=ML_MAP[MESES[c.cks.indexOf(custoMesB)]]||custoMesB;
+  document.getElementById('custo-head').innerHTML='<tr><th>#</th><th>Produto</th><th>Grupo</th>'+thMeses+'<th class="r">Variação ('+lblA+'→'+lblB+')</th></tr>';
 
   document.getElementById('custo-count').textContent=data.length+' de '+c.prods.length+' produtos';
   document.getElementById('custo-body').innerHTML=data.slice(0,400).map(function(p,i){
     var tdMeses=c.cks.map(function(ck){
       var v=p.custos[ck];
-      return '<td class="n r" style="color:'+(v>0?'var(--fg)':'var(--fg3)')+'">'+(v>0?fR2(v):'--')+'</td>';
+      return '<td class="n r" style="color:'+(v>0?'var(--fg)':'var(--fg3)')+'">'+(v>0?fR2(v):'SC')+'</td>';
     }).join('');
     var vc=p.var_pct===null?'--':(p.var_pct>0?'+':'')+p.var_pct.toFixed(1)+'%';
     var vcls=p.var_pct===null?'':(p.var_pct>0?'up':'down');
