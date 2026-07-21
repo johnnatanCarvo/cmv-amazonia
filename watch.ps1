@@ -1,39 +1,44 @@
-# Observa Código.js, Dados.js, Index.html e appsscript.json.
-# Ao detectar uma alteracao salva, espera 5s (debounce) e dispara update.bat.
-# Ignora eventos disparados pelo proprio update.bat (checagem do arquivo de lock).
+﻿# Observa Código.js, Dados.js, Index.html e appsscript.json por POLLING.
+# FileSystemWatcher nao e confiavel neste drive (Google Drive/rede), entao
+# a cada $intervaloSeg segundos comparamos o hash dos arquivos-alvo; se
+# algum mudou, disparamos update.bat (que faz clasp push + commit + merge).
 
 $folder = Split-Path -Parent $MyInvocation.MyCommand.Path
-$global:batPath = Join-Path $folder "update.bat"
-$global:lockPath = Join-Path $folder ".autoupdate.lock"
-$global:targets = @("Código.js", "Dados.js", "Index.html", "appsscript.json")
-$global:debounceTimer = $null
+$batPath = Join-Path $folder "update.bat"
+$lockPath = Join-Path $folder ".autoupdate.lock"
+$targets = @("Código.js", "Dados.js", "Index.html", "appsscript.json")
+$intervaloSeg = 20
 
-$fsw = New-Object System.IO.FileSystemWatcher
-$fsw.Path = $folder
-$fsw.Filter = "*.*"
-$fsw.IncludeSubdirectories = $false
-$fsw.EnableRaisingEvents = $true
-
-$action = {
-    $name = $Event.SourceEventArgs.Name
-    if ($global:targets -contains $name -and -not (Test-Path $global:lockPath)) {
-        if ($global:debounceTimer) {
-            $global:debounceTimer.Stop()
-            $global:debounceTimer.Dispose()
+function Get-EstadoArquivos {
+    $estado = @{}
+    foreach ($t in $targets) {
+        $p = Join-Path $folder $t
+        if (Test-Path $p) {
+            $estado[$t] = (Get-FileHash -Path $p -Algorithm MD5).Hash
+        } else {
+            $estado[$t] = $null
         }
-        $global:debounceTimer = New-Object System.Timers.Timer
-        $global:debounceTimer.Interval = 5000
-        $global:debounceTimer.AutoReset = $false
-        Register-ObjectEvent -InputObject $global:debounceTimer -EventName Elapsed -Action {
-            Start-Process -FilePath $global:batPath -WindowStyle Hidden
-        } | Out-Null
-        $global:debounceTimer.Start()
     }
+    return $estado
 }
 
-Register-ObjectEvent -InputObject $fsw -EventName Changed -Action $action | Out-Null
-Register-ObjectEvent -InputObject $fsw -EventName Created -Action $action | Out-Null
-Register-ObjectEvent -InputObject $fsw -EventName Renamed -Action $action | Out-Null
+Write-Host "Observando (polling a cada ${intervaloSeg}s) em $folder ..."
+$estadoAnterior = Get-EstadoArquivos
 
-Write-Host "Observando alteracoes em $folder ..."
-while ($true) { Start-Sleep -Seconds 5 }
+while ($true) {
+    Start-Sleep -Seconds $intervaloSeg
+
+    if (Test-Path $lockPath) { continue }
+
+    $estadoAtual = Get-EstadoArquivos
+    $mudou = $false
+    foreach ($t in $targets) {
+        if ($estadoAtual[$t] -ne $estadoAnterior[$t]) { $mudou = $true }
+    }
+
+    if ($mudou) {
+        Write-Host "[$(Get-Date -Format 'HH:mm:ss')] Mudanca detectada, disparando update.bat"
+        $estadoAnterior = $estadoAtual
+        Start-Process -FilePath $batPath -WindowStyle Hidden -WorkingDirectory $folder
+    }
+}

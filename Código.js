@@ -3,6 +3,7 @@
 //  Code.gs — Ponto de entrada do Apps Script
 //  Versão: 1.1
 // ============================================================
+// teste-watcher-polling: linha temporaria para validar a automacao
 
 // ── CONFIGURAÇÃO ─────────────────────────────────────────────
 var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
