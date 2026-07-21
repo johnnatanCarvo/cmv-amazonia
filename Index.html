@@ -627,14 +627,19 @@ function nomeUni(f){var map={'MARCO':'Marco','PORTO FUTURO':'Porto Futuro','UMAR
 function dadosMes(mes){
   var d=CMC[mes];if(!d)return null;
   var tr=d.transferencias||null;
-  if(uniAtual==='TODAS')return {cmc_total:d.cmc_total,faturamento:d.faturamento||0,grupos:d.grupos,transf:tr,transfUni:null,transfSaldo:tr?tr.total:0,transfEntrada:0,transfSaida:0};
+  if(uniAtual==='TODAS')return {cmc_total:d.cmc_total,faturamento:d.faturamento||0,grupos:d.grupos,transf:tr,transfUni:null,transfSaldo:tr?tr.total:0,transfEntrada:0,transfSaida:0,
+    transfEntradaQtd:0,cmcComTransf:d.cmc_total,cmcPctFatComTransf:d.cmc_pct_fat};
   if(d.filiais&&d.filiais[uniAtual]){
     var f=d.filiais[uniAtual];
     var trUni=(tr&&tr.filiais&&tr.filiais[uniAtual])?tr.filiais[uniAtual]:null;
     return {cmc_total:f.cmc_total,faturamento:f.faturamento||0,grupos:f.grupos,transf:tr,transfUni:trUni,
-      transfSaldo:f.transf_saldo||0,transfEntrada:f.transf_entrada||0,transfSaida:f.transf_saida||0};
+      transfSaldo:f.transf_saldo||0,transfEntrada:f.transf_entrada||0,transfSaida:f.transf_saida||0,
+      transfEntradaQtd:f.transf_entrada_qtd||0,
+      cmcComTransf:(f.cmc_com_transf!==undefined?f.cmc_com_transf:f.cmc_total),
+      cmcPctFatComTransf:(f.cmc_pct_fat_com_transf!==undefined?f.cmc_pct_fat_com_transf:null)};
   }
-  return {cmc_total:0,faturamento:0,grupos:{},transf:null,transfUni:null,transfSaldo:0,transfEntrada:0,transfSaida:0};
+  return {cmc_total:0,faturamento:0,grupos:{},transf:null,transfUni:null,transfSaldo:0,transfEntrada:0,transfSaida:0,
+    transfEntradaQtd:0,cmcComTransf:0,cmcPctFatComTransf:null};
 }
 
 function rMes(){
