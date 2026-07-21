@@ -684,6 +684,18 @@ function rMes(){
   html+='<div class="metric"><div class="metric-l">Produtos</div><div class="metric-v am">'+nProd+'</div>'+
     '<div class="metric-sub" style="color:var(--fg3)">'+grupos.length+' grupos</div></div>';
 
+  // ===== RECEBIDO DE OUTRA UNIDADE (transferência) + CMC COM/SEM TRANSFERÊNCIA =====
+  if(uniAtual!=='TODAS' && d.transfEntrada>0){
+    html+='<div class="metric"><div class="metric-l">Recebido de Outra Unidade</div><div class="metric-v az">'+fR2(d.transfEntrada)+'</div>'+
+      '<div class="metric-sub" style="color:var(--fg3)">'+fQ(d.transfEntradaQtd)+' unid. recebidas</div></div>';
+    html+='<div class="metric"><div class="metric-l">CMC com Transferência</div><div class="metric-v">'+fR2(d.cmcComTransf)+'</div>'+
+      '<div class="metric-sub" style="color:var(--fg3)">sem transferência: '+fR2(d.cmc_total)+'</div></div>';
+    var pctComTransf=d.cmcPctFatComTransf;
+    html+='<div class="metric"><div class="metric-l">CMC com Transf. sobre Faturamento</div>'+
+      '<div class="metric-v '+(pctComTransf>42?'rd':'ac')+'">'+(pctComTransf!==null?fP(pctComTransf):'--')+'</div>'+
+      '<div class="metric-sub" style="color:var(--fg3)">sem transferência: '+(pctFat!==null?fP(pctFat):'--')+'</div></div>';
+  }
+
   document.getElementById('mes-metrics').innerHTML=html;
 
   // ===== EVOLUÇÃO =====
