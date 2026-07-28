@@ -282,10 +282,23 @@ function lerFichaTecnica() {
   }
   var linhas = Utilities.parseCsv(conteudo, '\t');
   Logger.log('Ficha técnica lida: ' + maisRecente.getName() + ' (' + (linhas.length - 1) + ' linhas)');
-  // DIAGNOSTICO TEMPORARIO: ver exatamente como o Apps Script dividiu as colunas.
+  // DIAGNOSTICO TEMPORARIO: ver exatamente como o Apps Script dividiu as colunas
+  // e confirmar se o CONTEUDO do arquivo bate com o esperado.
+  Logger.log('DEBUG ficha - tamanho do conteudo (chars): ' + conteudo.length +
+             ' | tamanho do arquivo (bytes): ' + maisRecente.getSize() +
+             ' | ultima atualizacao: ' + maisRecente.getLastUpdated());
   Logger.log('DEBUG ficha - linha 0 (cabecalho), ' + (linhas[0] ? linhas[0].length : 0) + ' colunas: ' + JSON.stringify(linhas[0]));
   Logger.log('DEBUG ficha - linha 1, ' + (linhas[1] ? linhas[1].length : 0) + ' colunas: ' + JSON.stringify(linhas[1]));
   Logger.log('DEBUG ficha - linha 2, ' + (linhas[2] ? linhas[2].length : 0) + ' colunas: ' + JSON.stringify(linhas[2]));
+  Logger.log('DEBUG ficha - ultima linha (' + (linhas.length-1) + '), ' + (linhas[linhas.length-1] ? linhas[linhas.length-1].length : 0) + ' colunas: ' + JSON.stringify(linhas[linhas.length-1]));
+  // Lista TODOS os arquivos "fichas*" na pasta, pra ver se ha mais de um.
+  var todosFichas = DriveApp.getFolderById(PASTA_ID).getFiles();
+  while (todosFichas.hasNext()) {
+    var tf = todosFichas.next();
+    if (PADROES.fichas.test(tf.getName())) {
+      Logger.log('DEBUG ficha - arquivo encontrado na pasta: ' + tf.getName() + ' (' + tf.getSize() + ' bytes, atualizado ' + tf.getLastUpdated() + ')');
+    }
+  }
   return linhas;
 }
 
