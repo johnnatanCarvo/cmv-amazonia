@@ -291,6 +291,19 @@ function lerFichaTecnica() {
   Logger.log('DEBUG ficha - linha 1, ' + (linhas[1] ? linhas[1].length : 0) + ' colunas: ' + JSON.stringify(linhas[1]));
   Logger.log('DEBUG ficha - linha 2, ' + (linhas[2] ? linhas[2].length : 0) + ' colunas: ' + JSON.stringify(linhas[2]));
   Logger.log('DEBUG ficha - ultima linha (' + (linhas.length-1) + '), ' + (linhas[linhas.length-1] ? linhas[linhas.length-1].length : 0) + ' colunas: ' + JSON.stringify(linhas[linhas.length-1]));
+  // Conta quantas linhas sao "Venda" (produto final) vs "Materia prima" (preparo interno).
+  var contagemTipo = {};
+  var produtosVendaUnicos = {};
+  for (var di = 1; di < linhas.length; di++) {
+    var dr = linhas[di];
+    if (!dr || dr.length < 4) continue;
+    var tp = String(dr[3] || '').trim();
+    contagemTipo[tp] = (contagemTipo[tp] || 0) + 1;
+    if (tp === 'Venda') produtosVendaUnicos[String(dr[1] || '').trim()] = 1;
+  }
+  Logger.log('DEBUG ficha - contagem por Tipo: ' + JSON.stringify(contagemTipo));
+  Logger.log('DEBUG ficha - produtos unicos com Tipo=Venda: ' + Object.keys(produtosVendaUnicos).length +
+             ' | amostra: ' + JSON.stringify(Object.keys(produtosVendaUnicos).slice(0, 10)));
   // Lista TODOS os arquivos "fichas*" na pasta, pra ver se ha mais de um.
   var todosFichas = DriveApp.getFolderById(PASTA_ID).getFiles();
   while (todosFichas.hasNext()) {
