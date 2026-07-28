@@ -302,6 +302,7 @@ td.hi{font-weight:600;}
     <button class="tab" data-sec="abc" onclick="go('abc')">Curva ABC</button>
     <button class="tab" data-sec="custo" onclick="go('custo')">Variação de Custo</button>
     <button class="tab" data-sec="cmv" onclick="go('cmv')">CMV</button>
+    <button class="tab" data-sec="teorico" onclick="go('teorico')">CMV Teórico</button>
     <button class="tab" data-sec="upload" onclick="go('upload')">Relatórios</button>
   </div>
   <div class="nav-r">
@@ -502,6 +503,23 @@ td.hi{font-weight:600;}
     <div id="cmv-content"></div>
   </section>
 
+  <!-- ===== CMV TEÓRICO ===== -->
+  <section id="teorico">
+    <div class="shead">
+      <div>
+        <div class="eyebrow">Custo de Mercadoria Vendida — Teórico</div>
+        <div class="stitle">CMV Teórico</div>
+        <div class="ssub">Quantidade vendida × custo da ficha técnica de cada produto, comparado ao CMV Real do mesmo período. A diferença não indica por si só perda ou desperdício — pode refletir produção não vendida, variação de rendimento ou outros fatores.</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end;">
+        <div class="mseg" id="teorico-mseg"></div>
+        <div class="useg" id="teorico-useg"></div>
+      </div>
+    </div>
+
+    <div id="teorico-content"></div>
+  </section>
+
   <!-- ===== RELATÓRIOS (UPLOAD) ===== -->
   <section id="upload">
     <div class="shead">
@@ -520,6 +538,7 @@ td.hi{font-weight:600;}
           <button data-tipo="compras" onclick="setUploadTipo('compras')">Compras</button>
           <button data-tipo="vendas" onclick="setUploadTipo('vendas')">Vendas</button>
           <button data-tipo="estoque" onclick="setUploadTipo('estoque')">Contagem de Estoque</button>
+          <button data-tipo="fichas" onclick="setUploadTipo('fichas')">Ficha Técnica</button>
         </div>
       </div>
       <div id="upload-drop" class="upload-drop">
@@ -572,11 +591,12 @@ var ML_MAP={'JANEIRO':'Jan','FEVEREIRO':'Fev','MARÇO':'Mar','ABRIL':'Abr','MAIO
 
 /* ====== ESTADO ====== */
 var DADOS=null, MESES=[], CMC={}, VENDAS={}, CMV={}, mesAtual='', uniAtual='TODAS', grupoAberto=null, charts={};
+var CMVTEORICO={}, FICHAS_DISPONIVEL=false, mesTeorico='', uniTeorico='TODAS';
 var abcOrder='valor', custoCache=null, uniABC='TODAS', mesABC='TODOS';
 var custoMesA='', custoMesB='';
 var SENHA_ATUAL='';
 var uploadTipoSelecionado='';
-var UPLOAD_TIPO_LABEL={compras:'Compras',vendas:'Vendas',estoque:'Contagem de Estoque'};
+var UPLOAD_TIPO_LABEL={compras:'Compras',vendas:'Vendas',estoque:'Contagem de Estoque',fichas:'Ficha Técnica'};
 
 /* ====== HELPERS ====== */
 function fR(v){return 'R$ '+(v||0).toLocaleString('pt-BR',{minimumFractionDigits:0,maximumFractionDigits:0});}
@@ -601,6 +621,7 @@ function go(id){
   if(id==='abc')   rABC();
   if(id==='custo') rCusto();
   if(id==='cmv')   rCMV();
+  if(id==='teorico')rTeorico();
   if(id==='upload')carregarListaArquivos();
 }
 
@@ -640,6 +661,7 @@ function fazerLogin(){
       // Sucesso: carregar dados e abrir painel
       SENHA_ATUAL=senha;
       DADOS=res; CMC=res.cmc; VENDAS=res.vendas; CMV=res.cmv||{}; MESES=res.meses||[];
+      CMVTEORICO=res.cmvTeorico||{}; FICHAS_DISPONIVEL=!!res.fichasDisponivel;
       mesAtual=MESES.length?MESES[MESES.length-1]:'';
       var login=document.getElementById('login');
       login.classList.add('hide');
@@ -1580,6 +1602,98 @@ function rCustoTable(){
       '<td class="n r '+vcls+'" style="font-weight:'+w+'">'+vc+'</td></tr>';
   }).join('');
   if(data.length>400)document.getElementById('custo-body').innerHTML+='<tr><td colspan="'+(c.cks.length+4)+'" class="empty">Exibindo os 400 primeiros de '+data.length+'.</td></tr>';
+}
+
+/* ============================================================
+   ABA CMV TEÓRICO
+   ============================================================ */
+function teoricoDados(mes){
+  var t=CMVTEORICO[mes];if(!t)return null;
+  if(uniTeorico==='TODAS')return {
+    teorico:t.teorico_total, semFicha:t.sem_ficha_valor, real:t.real_total,
+    diferenca:t.diferenca, fat:t.faturamento, teoricoPct:t.teorico_pct, realPct:t.real_pct
+  };
+  if(t.filiais&&t.filiais[uniTeorico]){
+    var f=t.filiais[uniTeorico];
+    return {teorico:f.teorico_total, semFicha:f.sem_ficha_valor, real:f.real_total,
+      diferenca:f.diferenca, fat:f.faturamento, teoricoPct:f.teorico_pct, realPct:f.real_pct};
+  }
+  return null;
+}
+
+function setMesTeorico(m){mesTeorico=m;document.querySelectorAll('#teorico-mseg button').forEach(function(b){b.classList.toggle('on',b.dataset.m===m);});rTeorico();}
+function setUniTeorico(u){uniTeorico=u;document.querySelectorAll('#teorico-useg button').forEach(function(b){b.classList.toggle('on',b.textContent===(u==='TODAS'?'Todas':nomeUni(u)));});rTeorico();}
+
+function rTeorico(){
+  var mesesComTeorico=MESES.filter(function(m){return CMVTEORICO[m];});
+  var cont=document.getElementById('teorico-content');
+
+  if(!FICHAS_DISPONIVEL||!mesesComTeorico.length){
+    cont.innerHTML='<div class="card"><div class="empty" style="padding:60px 20px;line-height:1.8;">'+
+      'Nenhuma ficha tecnica cadastrada ainda.<br>'+
+      'Envie o "Relatorio de Detalhes de Fabricacao" na aba Relatorios (tipo "Ficha Tecnica") para calcular o CMV Teorico.</div></div>';
+    document.getElementById('teorico-mseg').style.display='none';
+    document.getElementById('teorico-useg').style.display='none';
+    return;
+  }
+
+  if(!mesTeorico||mesesComTeorico.indexOf(mesTeorico)<0)mesTeorico=mesesComTeorico[mesesComTeorico.length-1];
+
+  var mseg=document.getElementById('teorico-mseg');
+  if(mseg&&!mseg.dataset.ready){
+    mseg.innerHTML=mesesComTeorico.map(function(m){return '<button class="'+(m===mesTeorico?'on':'')+'" data-m="'+m+'" onclick="setMesTeorico(\''+m+'\')">'+(ML_MAP[m]||m)+'</button>';}).join('');
+    mseg.dataset.ready='1';
+  }
+  var useg=document.getElementById('teorico-useg');
+  if(useg&&!useg.dataset.ready){
+    var fils={};mesesComTeorico.forEach(function(m){if(CMVTEORICO[m].filiais)Object.keys(CMVTEORICO[m].filiais).forEach(function(f){fils[f]=1;});});
+    var fl=Object.keys(fils).sort();
+    if(fl.length>1){
+      useg.innerHTML='<button class="on" onclick="setUniTeorico(\'TODAS\')">Todas</button>'+
+        fl.map(function(f){return '<button onclick="setUniTeorico(\''+f+'\')">'+nomeUni(f)+'</button>';}).join('');
+      useg.dataset.ready='1';
+    }else{useg.style.display='none';}
+  }
+
+  var d=teoricoDados(mesTeorico);
+  if(!d){cont.innerHTML='<div class="card"><div class="empty">Sem dados de CMV Teorico para esta selecao.</div></div>';return;}
+
+  var sufUni=uniTeorico==='TODAS'?'':' · '+nomeUni(uniTeorico);
+  var temReal=d.real!==undefined&&d.real!==null;
+  var diferencaTxt=(temReal&&d.diferenca!==undefined&&d.diferenca!==null)?((d.diferenca>=0?'+':'')+fR2(d.diferenca)):'--';
+  var difCls=(temReal&&d.diferenca>0)?'rd':(temReal&&d.diferenca<0)?'ac':'';
+
+  var html='<div class="metrics" style="grid-template-columns:1.4fr 1fr 1fr 1fr 1fr;">'+
+    '<div class="metric lead"><div class="metric-l">CMV Teorico · '+(ML_MAP[mesTeorico]||mesTeorico)+sufUni+'</div>'+
+      '<div class="metric-v">'+fR2(d.teorico)+'</div>'+
+      '<div class="metric-sub" style="color:var(--fg3)">'+(d.teoricoPct!==null&&d.teoricoPct!==undefined?fP(d.teoricoPct)+' do faturamento':'')+'</div></div>'+
+    '<div class="metric"><div class="metric-l">CMV Real (mesmo mes)</div><div class="metric-v az">'+(temReal?fR2(d.real):'--')+'</div>'+
+      '<div class="metric-sub" style="color:var(--fg3)">'+(temReal&&d.realPct!==null&&d.realPct!==undefined?fP(d.realPct)+' do faturamento':'sem CMV real calculado')+'</div></div>'+
+    '<div class="metric"><div class="metric-l">Diferenca (Real menos Teorico)</div><div class="metric-v '+difCls+'">'+diferencaTxt+'</div>'+
+      '<div class="metric-sub" style="color:var(--fg3)">nao e indicador de perda por si so</div></div>'+
+    '<div class="metric"><div class="metric-l">Vendas sem Ficha Tecnica</div><div class="metric-v am">'+fR(d.semFicha)+'</div>'+
+      '<div class="metric-sub" style="color:var(--fg3)">'+(d.semFicha>0?'teorico pode estar subestimado':'todas as vendas tem ficha')+'</div></div>'+
+    '<div class="metric"><div class="metric-l">Faturamento</div><div class="metric-v ac">'+fR(d.fat)+'</div></div>'+
+  '</div>';
+
+  html+='<div class="card"><div class="card-h"><div class="card-t">Teorico x Real</div><div class="card-s">Evolucao no periodo</div></div>'+
+    '<div class="chartbox"><canvas id="ch-teorico"></canvas></div></div>';
+
+  cont.innerHTML=html;
+
+  killChart('ch-teorico');
+  var serieTeorico=mesesComTeorico.map(function(m){var dd=teoricoDados(m);return dd?dd.teorico:0;});
+  var serieReal=mesesComTeorico.map(function(m){var dd=teoricoDados(m);return (dd&&dd.real!==undefined&&dd.real!==null)?dd.real:null;});
+  charts['ch-teorico']=new Chart(document.getElementById('ch-teorico'),{type:'bar',
+    data:{labels:mesesComTeorico.map(function(m){return ML_MAP[m]||m;}),
+      datasets:[
+        {label:'Teorico',data:serieTeorico,backgroundColor:'rgba(214,168,73,.6)',borderRadius:4},
+        {label:'Real',data:serieReal,backgroundColor:AC,borderRadius:4}
+      ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{position:'top',align:'end',labels:{color:cssv('--fg2'),font:{family:'Manrope',size:11},boxWidth:12,padding:10,usePointStyle:true}},tooltip:tooltip()},
+      scales:{x:{grid:{display:false},ticks:{color:cssv('--fg2'),font:{family:'DM Mono',size:11}}},
+        y:{grid:{color:cssv('--ln')},ticks:{color:cssv('--fg2'),font:{family:'DM Mono',size:9},callback:function(v){return 'R$'+(v/1000).toFixed(0)+'K';}}}}}});
 }
 
 /* ============================================================

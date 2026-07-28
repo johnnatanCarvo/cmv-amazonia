@@ -32,7 +32,8 @@ function validarSenha(senha) {
 var PADROES = {
   compras: /compras/i,
   vendas:  /vendas/i,
-  estoque: /estoque|contagem/i
+  estoque: /estoque|contagem/i,
+  fichas:  /^fichas/i
 };
 
 // ── SERVIDOR ─────────────────────────────────────────────────
@@ -54,10 +55,13 @@ function getPayload(senha) {
     var rowsCompras = lerTodosCSVs('compras');
     var rowsVendas  = lerTodosCSVs('vendas');
     var rowsEstoque = lerTodosCSVs('estoque');
+    var rowsFichas  = lerFichaTecnica(); // opcional — [] se ainda nao foi enviada
 
-    var cmc    = processarCompras(rowsCompras);
-    var vendas = processarVendas(rowsVendas);
-    var cmv    = processarCMV(rowsEstoque, rowsCompras);
+    var cmc        = processarCompras(rowsCompras);
+    var vendas     = processarVendas(rowsVendas);
+    var cmv        = processarCMV(rowsEstoque, rowsCompras);
+    var fichasMap  = processarFichas(rowsFichas);
+    var cmvTeorico = calcularCMVTeorico(vendas, fichasMap);
 
     // Meses disponíveis — derivados dos dados de compras
     var mOrdem = ['JANEIRO','FEVEREIRO','MARÇO','ABRIL','MAIO','JUNHO',
@@ -133,14 +137,48 @@ function getPayload(senha) {
             : null;
         });
       }
+
+      // CMV Teórico: percentual sobre faturamento e comparação com o CMV Real do mesmo mês.
+      // "diferenca" e so a subtracao (real - teorico) — NAO e um indicador de perda/
+      // desperdicio por si so (pode refletir producao nao vendida, variacao de
+      // rendimento, etc.). Cabe a quem le interpretar com o contexto do negocio.
+      if (cmvTeorico[m]) {
+        var tObj = cmvTeorico[m];
+        tObj.faturamento = fat;
+        tObj.teorico_pct = (fat > 0)
+          ? Math.round(tObj.teorico_total / fat * 10000) / 100
+          : null;
+        if (cmv[m] && cmv[m].cmv_total !== undefined) {
+          tObj.real_total = cmv[m].cmv_total;
+          tObj.real_pct   = cmv[m].cmv_pct;
+          tObj.diferenca  = Math.round((cmv[m].cmv_total - tObj.teorico_total) * 100) / 100;
+        }
+        if (fatMesFilial[m] && tObj.filiais) {
+          Object.keys(tObj.filiais).forEach(function(fil) {
+            var fatFil = fatMesFilial[m][fil] || 0;
+            var fObj = tObj.filiais[fil];
+            fObj.faturamento = fatFil;
+            fObj.teorico_pct = (fatFil > 0)
+              ? Math.round(fObj.teorico_total / fatFil * 10000) / 100
+              : null;
+            if (cmv[m] && cmv[m].filiais && cmv[m].filiais[fil]) {
+              fObj.real_total = cmv[m].filiais[fil].cmv;
+              fObj.real_pct   = cmv[m].filiais[fil].cmv_pct;
+              fObj.diferenca  = Math.round((cmv[m].filiais[fil].cmv - fObj.teorico_total) * 100) / 100;
+            }
+          });
+        }
+      }
     });
 
     return JSON.stringify({
-      ok:     true,
-      cmc:    cmc,
-      cmv:    cmv,
-      vendas: vendas,
-      meses:  meses
+      ok:              true,
+      cmc:             cmc,
+      cmv:             cmv,
+      vendas:          vendas,
+      meses:           meses,
+      cmvTeorico:      cmvTeorico,
+      fichasDisponivel: Object.keys(fichasMap).length > 0
     });
 
   } catch (err) {
@@ -212,6 +250,41 @@ function lerTodosCSVs(tipo) {
   return todasLinhas;
 }
 
+// Lê o arquivo de ficha técnica mais recente na pasta (nome começa com "fichas").
+// Diferente de compras/vendas/estoque, ficha técnica NÃO acumula por mês —
+// é uma foto do momento do envio, então só lemos o arquivo mais recente,
+// sem concatenar. Retorna [] se ainda não houver nenhuma (recurso opcional).
+function lerFichaTecnica() {
+  var pasta = DriveApp.getFolderById(PASTA_ID);
+  var files = pasta.getFiles();
+  var maisRecente = null;
+
+  while (files.hasNext()) {
+    var f = files.next();
+    var nome = f.getName();
+    if (!nome.toLowerCase().endsWith('.csv')) continue;
+    if (!PADROES.fichas.test(nome)) continue;
+    if (!maisRecente || f.getLastUpdated() > maisRecente.getLastUpdated()) {
+      maisRecente = f;
+    }
+  }
+
+  if (!maisRecente) {
+    Logger.log('Nenhum arquivo de ficha técnica encontrado. CMV Teórico não calculado.');
+    return [];
+  }
+
+  var conteudo;
+  try {
+    conteudo = maisRecente.getBlob().getDataAsString('UTF-8');
+  } catch (enc) {
+    conteudo = maisRecente.getBlob().getDataAsString('ISO-8859-1');
+  }
+  var linhas = Utilities.parseCsv(conteudo, '\t');
+  Logger.log('Ficha técnica lida: ' + maisRecente.getName() + ' (' + (linhas.length - 1) + ' linhas)');
+  return linhas;
+}
+
 // ── UPLOAD DE RELATÓRIOS ──────────────────────────────────────
 
 // Detecta o tipo do arquivo pelo nome, usando os mesmos padrões da leitura.
@@ -246,8 +319,16 @@ function uploadArquivo(senha, nomeArquivoOriginal, conteudoBase64, tipo) {
       return JSON.stringify({ ok: false, erro: 'Arquivo vazio ou não recebido corretamente.' });
     }
 
-    var semExtensao = nomeArquivoOriginal.replace(/\.csv$/i, '');
-    var nomeFinal = tipo + '_' + semExtensao + '.csv';
+    // Ficha técnica é uma FOTO do momento (não acumula por mês como os outros
+    // tipos) — usa sempre o mesmo nome, então um novo envio substitui o
+    // anterior automaticamente, nunca fica mais de uma versão coexistindo.
+    var nomeFinal;
+    if (tipo === 'fichas') {
+      nomeFinal = 'fichas_tecnicas.csv';
+    } else {
+      var semExtensao = nomeArquivoOriginal.replace(/\.csv$/i, '');
+      nomeFinal = tipo + '_' + semExtensao + '.csv';
+    }
 
     var pasta = DriveApp.getFolderById(PASTA_ID);
 

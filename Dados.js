@@ -873,3 +873,77 @@ function processarCMV(rowsEstoque, rowsCompras) {
 
   return cmv;
 }
+
+// ── PROCESSAR FICHA TÉCNICA → CMV TEÓRICO ────────────────────
+//
+// Relatório de Detalhes de Fabricação do Cloudfy: para cada produto vendido,
+// lista os insumos da receita com quantidade e custo. O "Custo unit." do
+// produto (coluna 6) já vem somado a partir dos insumos — não precisamos
+// reprocessar a receita, só ler esse valor por produto.
+//
+// ÍNDICES DO CSV DE FICHA TÉCNICA:
+var C_FICHAS = {
+  produto:    1,   // Nome do produto (ou insumo/preparo)
+  tipo:       3,   // "Venda" (produto final) ou "Matéria prima" (preparo interno)
+  custo_unit: 6    // Custo unitário teórico do produto, já somando os insumos
+};
+
+// Retorna um mapa { "NOME DO PRODUTO": custo_unit_teorico }.
+// Pega o PRIMEIRO custo encontrado por produto (o valor se repete em toda
+// linha de insumo do mesmo produto, então a primeira ocorrência já serve).
+function processarFichas(rows) {
+  var mapa = {};
+  if (!rows || rows.length < 2) return mapa;
+
+  for (var i = 1; i < rows.length; i++) {
+    var r = rows[i];
+    if (!r || r.length < 7) continue;
+
+    var produto = limpaCelula(r[C_FICHAS.produto]);
+    if (!produto || mapa[produto] !== undefined) continue;
+
+    var custo = numVal(r[C_FICHAS.custo_unit]);
+    mapa[produto] = custo;
+  }
+
+  Logger.log('Ficha técnica processada: ' + Object.keys(mapa).length + ' produtos com custo teórico.');
+  return mapa;
+}
+
+// Calcula o CMV Teórico por mês (e por filial): para cada produto vendido,
+// quantidade vendida × custo unitário teórico da ficha técnica.
+// Produtos vendidos SEM ficha técnica cadastrada não entram no teórico —
+// o valor dessas vendas fica separado em "sem_ficha_valor" para deixar
+// claro que o teórico pode estar subestimado nesse caso.
+function calcularCMVTeorico(vendas, fichasMap) {
+  var resultado = {};
+  if (!vendas || !vendas.abc_mes || !fichasMap || !Object.keys(fichasMap).length) return resultado;
+
+  function somarProdutos(produtos) {
+    var teorico = 0, semFicha = 0;
+    produtos.forEach(function(p) {
+      var custo = fichasMap[p.produto];
+      if (custo !== undefined) {
+        teorico += custo * p.qtd;
+      } else {
+        semFicha += p.valor;
+      }
+    });
+    return { teorico_total: r2(teorico), sem_ficha_valor: r2(semFicha) };
+  }
+
+  Object.keys(vendas.abc_mes).forEach(function(mes) {
+    var base = somarProdutos(vendas.abc_mes[mes].produtos);
+    base.filiais = {};
+
+    if (vendas.abc_mes_filial[mes]) {
+      Object.keys(vendas.abc_mes_filial[mes]).forEach(function(fil) {
+        base.filiais[fil] = somarProdutos(vendas.abc_mes_filial[mes][fil].produtos);
+      });
+    }
+
+    resultado[mes] = base;
+  });
+
+  return resultado;
+}
