@@ -955,13 +955,15 @@ function calcularCMVTeorico(vendas, fichasMap) {
     resultado[mes] = base;
   });
 
-  // Diagnostico: compara uma amostra de nomes de produtos vendidos contra as
-  // chaves da ficha tecnica, pra facilitar achar divergencia de nome no log.
-  if (Object.keys(resultado).length) {
-    var amostraVendas = (vendas.abc_geral || []).slice(0, 8).map(function(p) { return p.produto; });
-    var amostraFichas = Object.keys(fichasMap).slice(0, 8);
-    Logger.log('CMV Teorico - amostra produtos VENDIDOS: ' + JSON.stringify(amostraVendas));
-    Logger.log('CMV Teorico - amostra produtos da FICHA TECNICA: ' + JSON.stringify(amostraFichas));
+  // Diagnostico: para os produtos mais vendidos, mostra se o nome EXATO
+  // existe na ficha tecnica ou nao — mais direto que comparar amostras
+  // aleatorias (que podem ser produtos diferentes por coincidencia).
+  if (vendas.abc_geral && vendas.abc_geral.length) {
+    Logger.log('CMV Teorico - checagem dos produtos mais vendidos:');
+    vendas.abc_geral.slice(0, 15).forEach(function(p) {
+      var bate = fichasMap[p.produto] !== undefined;
+      Logger.log('  [' + (bate ? 'OK' : 'SEM FICHA') + '] "' + p.produto + '"');
+    });
   }
 
   return resultado;
