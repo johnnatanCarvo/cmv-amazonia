@@ -2,3 +2,7 @@ node_modules/
 *.log
 .claude/
 .autoupdate.lock
+
+# Projeto Apps Script diferente ("site de demandas") que apareceu dentro
+# desta pasta — nao faz parte do painel Amazonia na Cuia, nao versionar aqui.
+site de demandas/

@@ -211,3 +211,90 @@ function lerTodosCSVs(tipo) {
   Logger.log('Total de linhas combinadas (' + tipo + '): ' + (todasLinhas.length - 1));
   return todasLinhas;
 }
+
+// ── UPLOAD DE RELATÓRIOS ──────────────────────────────────────
+
+// Detecta o tipo do arquivo pelo nome, usando os mesmos padrões da leitura.
+// Retorna null se o nome não bater com nenhum tipo reconhecido.
+function detectarTipoArquivo(nome) {
+  var tipos = Object.keys(PADROES);
+  for (var i = 0; i < tipos.length; i++) {
+    if (PADROES[tipos[i]].test(nome)) return tipos[i];
+  }
+  return null;
+}
+
+// Recebe um arquivo em base64 do navegador e salva na pasta do painel.
+// Só aceita .csv cujo nome bata com compras/vendas/estoque (mesma regra
+// de leitura). Se já existir um arquivo com o MESMO NOME, ele é movido
+// para a lixeira do Drive (recuperável) antes de salvar o novo.
+function uploadArquivo(senha, nomeArquivo, conteudoBase64) {
+  if (!validarSenha(senha)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    if (!nomeArquivo || !nomeArquivo.toLowerCase().endsWith('.csv')) {
+      return JSON.stringify({ ok: false, erro: 'Só são aceitos arquivos .csv.' });
+    }
+    var tipo = detectarTipoArquivo(nomeArquivo);
+    if (!tipo) {
+      return JSON.stringify({
+        ok: false,
+        erro: 'Nome de arquivo não reconhecido. Deve conter "compras", "vendas" ou "estoque"/"contagem".'
+      });
+    }
+    if (!conteudoBase64) {
+      return JSON.stringify({ ok: false, erro: 'Arquivo vazio ou não recebido corretamente.' });
+    }
+
+    var pasta = DriveApp.getFolderById(PASTA_ID);
+
+    // Substitui: manda pra lixeira qualquer arquivo existente com o MESMO nome.
+    var substituido = false;
+    var existentes = pasta.getFilesByName(nomeArquivo);
+    while (existentes.hasNext()) {
+      existentes.next().setTrashed(true);
+      substituido = true;
+    }
+
+    var bytes = Utilities.base64Decode(conteudoBase64);
+    var blob  = Utilities.newBlob(bytes, 'text/csv', nomeArquivo);
+    pasta.createFile(blob);
+
+    Logger.log('Upload: ' + nomeArquivo + ' (' + tipo + ')' + (substituido ? ' — substituiu arquivo anterior' : ''));
+    return JSON.stringify({ ok: true, nome: nomeArquivo, tipo: tipo, substituido: substituido });
+
+  } catch (err) {
+    Logger.log('uploadArquivo ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
+// Lista os CSVs atualmente na pasta do painel (pra exibir na aba de Relatórios).
+function listarArquivos(senha) {
+  if (!validarSenha(senha)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var pasta = DriveApp.getFolderById(PASTA_ID);
+    var files = pasta.getFiles();
+    var lista = [];
+    while (files.hasNext()) {
+      var f = files.next();
+      var nome = f.getName();
+      if (!nome.toLowerCase().endsWith('.csv')) continue;
+      lista.push({
+        nome: nome,
+        tipo: detectarTipoArquivo(nome) || 'outro',
+        tamanho: f.getSize(),
+        atualizado: f.getLastUpdated().toISOString()
+      });
+    }
+    lista.sort(function(a, b) { return b.atualizado.localeCompare(a.atualizado); });
+    return JSON.stringify({ ok: true, arquivos: lista });
+
+  } catch (err) {
+    Logger.log('listarArquivos ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}

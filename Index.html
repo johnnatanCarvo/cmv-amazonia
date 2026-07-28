@@ -102,6 +102,17 @@ input[type=text]:focus,select:focus{outline:none;border-color:var(--acb);}
 input[type=text]{min-width:220px;}
 .lbl{font-size:11px;color:var(--fg3);text-transform:uppercase;letter-spacing:.08em;margin-right:2px;}
 
+/* ===== UPLOAD ===== */
+.upload-drop{border:2px dashed var(--ln2);border-radius:12px;padding:34px 20px;text-align:center;transition:border-color .2s,background .2s;}
+.upload-drop.drag{border-color:var(--ac);background:var(--acd);}
+.upload-drop-txt{font-size:14px;color:var(--fg2);}
+.upload-drop-link{color:var(--ac2);font-weight:600;cursor:pointer;text-decoration:underline;}
+.upload-drop-hint{font-size:11px;color:var(--fg3);margin-top:9px;}
+.upload-item{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--ln);font-size:13px;}
+.upload-item:last-child{border-bottom:none;}
+.upload-item-nome{font-weight:600;}
+.upload-item-status{font-family:'DM Mono',monospace;font-size:12px;color:var(--fg2);}
+
 /* ===== TABLE ===== */
 .twrap{overflow-x:auto;border:1px solid var(--ln);border-radius:10px;}
 table{width:100%;border-collapse:collapse;font-size:13px;}
@@ -291,6 +302,7 @@ td.hi{font-weight:600;}
     <button class="tab" data-sec="abc" onclick="go('abc')">Curva ABC</button>
     <button class="tab" data-sec="custo" onclick="go('custo')">Variação de Custo</button>
     <button class="tab" data-sec="cmv" onclick="go('cmv')">CMV</button>
+    <button class="tab" data-sec="upload" onclick="go('upload')">Relatórios</button>
   </div>
   <div class="nav-r">
     <div class="theme-sw">
@@ -490,6 +502,37 @@ td.hi{font-weight:600;}
     <div id="cmv-content"></div>
   </section>
 
+  <!-- ===== RELATÓRIOS (UPLOAD) ===== -->
+  <section id="upload">
+    <div class="shead">
+      <div>
+        <div class="eyebrow">Base de Dados</div>
+        <div class="stitle">Relatórios</div>
+        <div class="ssub">Envie os CSVs de compras, vendas e contagem de estoque direto para a pasta do painel no Drive. Um arquivo com o mesmo nome substitui o anterior.</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-h"><div class="card-t">Enviar Relatório</div><div class="card-s">.CSV</div></div>
+      <div id="upload-drop" class="upload-drop">
+        <input type="file" id="upload-input" accept=".csv" multiple style="display:none" onchange="handleUploadFiles(this.files)">
+        <div class="upload-drop-txt">Arraste os arquivos .csv aqui ou <span class="upload-drop-link" onclick="document.getElementById('upload-input').click()">clique para selecionar</span></div>
+        <div class="upload-drop-hint">O nome do arquivo precisa conter "compras", "vendas" ou "estoque"/"contagem" — o mesmo padrão que o painel já usa para ler os dados.</div>
+      </div>
+      <div id="upload-fila"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-h"><div class="card-t">Arquivos na Pasta</div><button class="gd-close" onclick="carregarListaArquivos()">Atualizar lista</button></div>
+      <div class="twrap">
+        <table>
+          <thead><tr><th>Arquivo</th><th>Tipo</th><th class="r">Tamanho</th><th class="r">Atualizado em</th></tr></thead>
+          <tbody id="upload-lista-body"><tr><td colspan="4" class="empty">Abra esta aba para carregar.</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
 
 </main>
 
@@ -523,6 +566,7 @@ var ML_MAP={'JANEIRO':'Jan','FEVEREIRO':'Fev','MARÇO':'Mar','ABRIL':'Abr','MAIO
 var DADOS=null, MESES=[], CMC={}, VENDAS={}, CMV={}, mesAtual='', uniAtual='TODAS', grupoAberto=null, charts={};
 var abcOrder='valor', custoCache=null, uniABC='TODAS', mesABC='TODOS';
 var custoMesA='', custoMesB='';
+var SENHA_ATUAL='';
 
 /* ====== HELPERS ====== */
 function fR(v){return 'R$ '+(v||0).toLocaleString('pt-BR',{minimumFractionDigits:0,maximumFractionDigits:0});}
@@ -547,6 +591,7 @@ function go(id){
   if(id==='abc')   rABC();
   if(id==='custo') rCusto();
   if(id==='cmv')   rCMV();
+  if(id==='upload')carregarListaArquivos();
 }
 
 /* ====== INIT VIA APPS SCRIPT ====== */
@@ -583,6 +628,7 @@ function fazerLogin(){
       }
 
       // Sucesso: carregar dados e abrir painel
+      SENHA_ATUAL=senha;
       DADOS=res; CMC=res.cmc; VENDAS=res.vendas; CMV=res.cmv||{}; MESES=res.meses||[];
       mesAtual=MESES.length?MESES[MESES.length-1]:'';
       var login=document.getElementById('login');
@@ -1525,6 +1571,94 @@ function rCustoTable(){
   }).join('');
   if(data.length>400)document.getElementById('custo-body').innerHTML+='<tr><td colspan="'+(c.cks.length+4)+'" class="empty">Exibindo os 400 primeiros de '+data.length+'.</td></tr>';
 }
+
+/* ============================================================
+   ABA RELATÓRIOS (UPLOAD)
+   ============================================================ */
+function fTamanho(bytes){
+  bytes=bytes||0;
+  if(bytes<1024)return bytes+' B';
+  if(bytes<1024*1024)return (bytes/1024).toFixed(1)+' KB';
+  return (bytes/1024/1024).toFixed(1)+' MB';
+}
+
+function handleUploadFiles(files){
+  Array.from(files).forEach(function(file){ enviarArquivo(file); });
+  document.getElementById('upload-input').value='';
+}
+
+function enviarArquivo(file){
+  var id='up-'+Date.now()+'-'+Math.random().toString(36).slice(2);
+  var fila=document.getElementById('upload-fila');
+  fila.insertAdjacentHTML('afterbegin',
+    '<div class="upload-item" id="'+id+'"><span class="upload-item-nome">'+file.name+'</span>'+
+    '<span class="upload-item-status">Lendo arquivo…</span></div>');
+  var item=document.getElementById(id);
+  var statusEl=item.querySelector('.upload-item-status');
+
+  if(!/\.csv$/i.test(file.name)){
+    statusEl.textContent='Só .csv é aceito.';statusEl.style.color='var(--rd)';return;
+  }
+  if(file.size>15*1024*1024){
+    statusEl.textContent='Arquivo muito grande (>15MB).';statusEl.style.color='var(--rd)';return;
+  }
+
+  var reader=new FileReader();
+  reader.onload=function(e){
+    var base64=e.target.result.split(',')[1]||'';
+    statusEl.textContent='Enviando…';statusEl.style.color='var(--fg2)';
+    google.script.run
+      .withSuccessHandler(function(json){
+        var res;try{res=JSON.parse(json);}catch(err){statusEl.textContent='Erro ao ler resposta.';statusEl.style.color='var(--rd)';return;}
+        if(!res.ok){
+          statusEl.textContent=res.erro||'Falha no envio.';statusEl.style.color='var(--rd)';return;
+        }
+        statusEl.textContent='Enviado ('+res.tipo+')'+(res.substituido?' — substituiu o anterior':'');
+        statusEl.style.color='var(--ac2)';
+        carregarListaArquivos();
+      })
+      .withFailureHandler(function(err){
+        statusEl.textContent='Falha: '+(err.message||err);statusEl.style.color='var(--rd)';
+      })
+      .uploadArquivo(SENHA_ATUAL, file.name, base64);
+  };
+  reader.onerror=function(){statusEl.textContent='Erro ao ler o arquivo.';statusEl.style.color='var(--rd)';};
+  reader.readAsDataURL(file);
+}
+
+function carregarListaArquivos(){
+  var body=document.getElementById('upload-lista-body');
+  body.innerHTML='<tr><td colspan="4" class="empty">Carregando…</td></tr>';
+  google.script.run
+    .withSuccessHandler(function(json){
+      var res;try{res=JSON.parse(json);}catch(e){body.innerHTML='<tr><td colspan="4" class="empty">Erro ao carregar.</td></tr>';return;}
+      if(!res.ok){body.innerHTML='<tr><td colspan="4" class="empty">'+(res.erro||'Erro ao carregar.')+'</td></tr>';return;}
+      if(!res.arquivos.length){body.innerHTML='<tr><td colspan="4" class="empty">Nenhum arquivo na pasta.</td></tr>';return;}
+      body.innerHTML=res.arquivos.map(function(a){
+        return '<tr><td class="hi">'+a.nome+'</td><td>'+a.tipo+'</td>'+
+          '<td class="n r">'+fTamanho(a.tamanho)+'</td>'+
+          '<td class="n r" style="color:var(--fg2)">'+new Date(a.atualizado).toLocaleString('pt-BR')+'</td></tr>';
+      }).join('');
+    })
+    .withFailureHandler(function(err){
+      body.innerHTML='<tr><td colspan="4" class="empty">Falha: '+(err.message||err)+'</td></tr>';
+    })
+    .listarArquivos(SENHA_ATUAL);
+}
+
+(function(){
+  var drop=document.getElementById('upload-drop');
+  if(!drop)return;
+  ['dragenter','dragover'].forEach(function(evt){
+    drop.addEventListener(evt,function(e){e.preventDefault();e.stopPropagation();drop.classList.add('drag');});
+  });
+  ['dragleave','drop'].forEach(function(evt){
+    drop.addEventListener(evt,function(e){e.preventDefault();e.stopPropagation();drop.classList.remove('drag');});
+  });
+  drop.addEventListener('drop',function(e){
+    if(e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files.length)handleUploadFiles(e.dataTransfer.files);
+  });
+})();
 
 </script>
 </body>
