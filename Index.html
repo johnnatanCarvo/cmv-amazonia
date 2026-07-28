@@ -1632,6 +1632,44 @@ function teoricoDados(mes){
 function setMesTeorico(m){mesTeorico=m;document.querySelectorAll('#teorico-mseg button').forEach(function(b){b.classList.toggle('on',b.dataset.m===m);});rTeorico();}
 function setUniTeorico(u){uniTeorico=u;document.querySelectorAll('#teorico-useg button').forEach(function(b){b.classList.toggle('on',b.textContent===(u==='TODAS'?'Todas':nomeUni(u)));});rTeorico();}
 
+// Tabela com o % do CMV Teorico (sobre faturamento) de TODOS os meses e
+// TODAS as unidades ao mesmo tempo — independente do mes/unidade selecionados
+// nos seletores do topo (que so afetam os KPIs e a tabela por produto).
+function tabelaTeoricoPctHtml(){
+  var mesesComTeorico=MESES.filter(function(m){return CMVTEORICO[m];});
+  if(!mesesComTeorico.length)return '';
+
+  var unidades={};
+  mesesComTeorico.forEach(function(m){
+    if(CMVTEORICO[m].filiais)Object.keys(CMVTEORICO[m].filiais).forEach(function(f){unidades[f]=1;});
+  });
+  var listaUnidades=Object.keys(unidades).sort();
+
+  function pctCel(pct){
+    if(pct===null||pct===undefined)return '<td class="n r" style="color:var(--fg3)">--</td>';
+    return '<td class="n r" style="color:'+(pct>35?'var(--rd)':'var(--fg)')+'">'+fP(pct)+'</td>';
+  }
+
+  var thead='<tr><th>Unidade</th>'+mesesComTeorico.map(function(m){return '<th class="r">'+(ML_MAP[m]||m)+'</th>';}).join('')+'</tr>';
+
+  var linhaGeral='<tr><td class="hi">Geral (Todas)</td>'+mesesComTeorico.map(function(m){
+    var t=CMVTEORICO[m];
+    return pctCel(t?t.teorico_pct:null);
+  }).join('')+'</tr>';
+
+  var linhasUnidades=listaUnidades.map(function(fil){
+    return '<tr><td>'+nomeUni(fil)+'</td>'+mesesComTeorico.map(function(m){
+      var t=CMVTEORICO[m];
+      var f=t&&t.filiais?t.filiais[fil]:null;
+      return pctCel(f?f.teorico_pct:null);
+    }).join('')+'</tr>';
+  }).join('');
+
+  return '<div class="card"><div class="card-h"><div class="card-t">CMV Teorico (%) por Mes e Unidade</div>'+
+    '<div class="card-s">Sobre faturamento</div></div>'+
+    '<div class="twrap"><table><thead>'+thead+'</thead><tbody>'+linhaGeral+linhasUnidades+'</tbody></table></div></div>';
+}
+
 function rTeorico(){
   var mesesComTeorico=MESES.filter(function(m){return CMVTEORICO[m];});
   var cont=document.getElementById('teorico-content');
@@ -1686,6 +1724,8 @@ function rTeorico(){
 
   html+='<div class="card"><div class="card-h"><div class="card-t">Teorico x Real</div><div class="card-s">Evolucao no periodo</div></div>'+
     '<div class="chartbox"><canvas id="ch-teorico"></canvas></div></div>';
+
+  html+=tabelaTeoricoPctHtml();
 
   html+='<div class="card"><div class="card-h"><div class="card-t">CMV Teorico por Produto</div><div class="card-s" id="teorico-prod-count"></div></div>'+
     '<div class="ctrl">'+
