@@ -1698,7 +1698,8 @@ function rTeorico(){
     '</div>'+
     '<div class="twrap"><table>'+
       '<thead><tr><th>#</th><th>Produto</th><th>Grupo</th><th class="r">Qtd. Vendida</th>'+
-        '<th class="r">Valor Vendido</th><th class="r">Custo Unit. Teorico</th><th class="r">CMV Teorico</th><th>Ficha</th></tr></thead>'+
+        '<th class="r">Valor Vendido</th><th class="r">Custo Unit. Teorico</th><th class="r">CMV Teorico</th>'+
+        '<th class="r">% CMV Teorico</th><th>Ficha</th></tr></thead>'+
       '<tbody id="teorico-prod-body"></tbody>'+
     '</table></div></div>';
 
@@ -1733,6 +1734,7 @@ function rTeoricoTable(){
   });
   document.getElementById('teorico-prod-count').textContent=data.length+' de '+d.produtos.length+' produtos';
   document.getElementById('teorico-prod-body').innerHTML=data.slice(0,400).map(function(p,i){
+    var pct=(p.tem_ficha&&p.valor_vendido>0)?(p.custo_total_teorico/p.valor_vendido*100):null;
     return '<tr><td class="n" style="color:var(--fg3)">'+String(i+1).padStart(3,'0')+'</td>'+
       '<td class="hi">'+p.produto+'</td>'+
       '<td><span class="gdot"><span style="background:'+gc(p.grupo)+'"></span>'+p.grupo+'</span></td>'+
@@ -1740,9 +1742,10 @@ function rTeoricoTable(){
       '<td class="n r">'+fR2(p.valor_vendido)+'</td>'+
       '<td class="n r" style="color:'+(p.tem_ficha?'var(--fg)':'var(--fg3)')+'">'+(p.tem_ficha?fR2(p.custo_unit_teorico):'--')+'</td>'+
       '<td class="n r hi" style="color:'+(p.tem_ficha?'var(--fg)':'var(--fg3)')+'">'+(p.tem_ficha?fR2(p.custo_total_teorico):'--')+'</td>'+
+      '<td class="n r" style="color:'+(pct!==null?(pct>35?'var(--rd)':'var(--fg)'):'var(--fg3)')+'">'+(pct!==null?fP(pct):'--')+'</td>'+
       '<td>'+(p.tem_ficha?'<span class="tag tA">SIM</span>':'<span class="tag tC">NAO</span>')+'</td></tr>';
   }).join('');
-  if(data.length>400)document.getElementById('teorico-prod-body').innerHTML+='<tr><td colspan="8" class="empty">Exibindo os 400 primeiros de '+data.length+'.</td></tr>';
+  if(data.length>400)document.getElementById('teorico-prod-body').innerHTML+='<tr><td colspan="9" class="empty">Exibindo os 400 primeiros de '+data.length+'.</td></tr>';
 }
 
 /* ============================================================
