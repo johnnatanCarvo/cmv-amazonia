@@ -282,6 +282,10 @@ function lerFichaTecnica() {
   }
   var linhas = Utilities.parseCsv(conteudo, '\t');
   Logger.log('Ficha técnica lida: ' + maisRecente.getName() + ' (' + (linhas.length - 1) + ' linhas)');
+  // DIAGNOSTICO TEMPORARIO: ver exatamente como o Apps Script dividiu as colunas.
+  Logger.log('DEBUG ficha - linha 0 (cabecalho), ' + (linhas[0] ? linhas[0].length : 0) + ' colunas: ' + JSON.stringify(linhas[0]));
+  Logger.log('DEBUG ficha - linha 1, ' + (linhas[1] ? linhas[1].length : 0) + ' colunas: ' + JSON.stringify(linhas[1]));
+  Logger.log('DEBUG ficha - linha 2, ' + (linhas[2] ? linhas[2].length : 0) + ' colunas: ' + JSON.stringify(linhas[2]));
   return linhas;
 }
 
