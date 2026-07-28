@@ -1,0 +1,8 @@
+**/**
+!appsscript.json
+!**/*.gs
+!**/*.js
+!**/*.html
+.git/**
+node_modules/**
+site de demandas/**
