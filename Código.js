@@ -225,44 +225,46 @@ function detectarTipoArquivo(nome) {
 }
 
 // Recebe um arquivo em base64 do navegador e salva na pasta do painel.
-// Só aceita .csv cujo nome bata com compras/vendas/estoque (mesma regra
-// de leitura). Se já existir um arquivo com o MESMO NOME, ele é movido
-// para a lixeira do Drive (recuperável) antes de salvar o novo.
-function uploadArquivo(senha, nomeArquivo, conteudoBase64) {
+// O TIPO vem escolhido pelo usuario na tela (compras/vendas/estoque) —
+// o arquivo e renomeado para "<tipo>_<nome original>.csv" antes de salvar,
+// garantindo que o padrao de leitura (PADROES) sempre reconheca o arquivo,
+// independente de como o Cloudfy exportou o nome original.
+// Se ja existir um arquivo com o MESMO NOME FINAL, ele e movido para a
+// lixeira do Drive (recuperavel) antes de salvar o novo.
+function uploadArquivo(senha, nomeArquivoOriginal, conteudoBase64, tipo) {
   if (!validarSenha(senha)) {
     return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
   }
   try {
-    if (!nomeArquivo || !nomeArquivo.toLowerCase().endsWith('.csv')) {
+    if (!nomeArquivoOriginal || !nomeArquivoOriginal.toLowerCase().endsWith('.csv')) {
       return JSON.stringify({ ok: false, erro: 'Só são aceitos arquivos .csv.' });
     }
-    var tipo = detectarTipoArquivo(nomeArquivo);
-    if (!tipo) {
-      return JSON.stringify({
-        ok: false,
-        erro: 'Nome de arquivo não reconhecido. Deve conter "compras", "vendas" ou "estoque"/"contagem".'
-      });
+    if (!tipo || !PADROES[tipo]) {
+      return JSON.stringify({ ok: false, erro: 'Tipo de relatório inválido.' });
     }
     if (!conteudoBase64) {
       return JSON.stringify({ ok: false, erro: 'Arquivo vazio ou não recebido corretamente.' });
     }
 
+    var semExtensao = nomeArquivoOriginal.replace(/\.csv$/i, '');
+    var nomeFinal = tipo + '_' + semExtensao + '.csv';
+
     var pasta = DriveApp.getFolderById(PASTA_ID);
 
-    // Substitui: manda pra lixeira qualquer arquivo existente com o MESMO nome.
+    // Substitui: manda pra lixeira qualquer arquivo existente com o MESMO nome final.
     var substituido = false;
-    var existentes = pasta.getFilesByName(nomeArquivo);
+    var existentes = pasta.getFilesByName(nomeFinal);
     while (existentes.hasNext()) {
       existentes.next().setTrashed(true);
       substituido = true;
     }
 
     var bytes = Utilities.base64Decode(conteudoBase64);
-    var blob  = Utilities.newBlob(bytes, 'text/csv', nomeArquivo);
+    var blob  = Utilities.newBlob(bytes, 'text/csv', nomeFinal);
     pasta.createFile(blob);
 
-    Logger.log('Upload: ' + nomeArquivo + ' (' + tipo + ')' + (substituido ? ' — substituiu arquivo anterior' : ''));
-    return JSON.stringify({ ok: true, nome: nomeArquivo, tipo: tipo, substituido: substituido });
+    Logger.log('Upload: ' + nomeFinal + ' (original: ' + nomeArquivoOriginal + ')' + (substituido ? ' — substituiu arquivo anterior' : ''));
+    return JSON.stringify({ ok: true, nome: nomeFinal, tipo: tipo, substituido: substituido });
 
   } catch (err) {
     Logger.log('uploadArquivo ERROR: ' + err.message + '\n' + err.stack);

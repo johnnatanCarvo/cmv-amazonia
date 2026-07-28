@@ -514,10 +514,18 @@ td.hi{font-weight:600;}
 
     <div class="card">
       <div class="card-h"><div class="card-t">Enviar Relatório</div><div class="card-s">.CSV</div></div>
+      <div class="ctrl">
+        <span class="lbl">Tipo de relatório</span>
+        <div class="mseg" id="upload-tipo-seg">
+          <button data-tipo="compras" onclick="setUploadTipo('compras')">Compras</button>
+          <button data-tipo="vendas" onclick="setUploadTipo('vendas')">Vendas</button>
+          <button data-tipo="estoque" onclick="setUploadTipo('estoque')">Contagem de Estoque</button>
+        </div>
+      </div>
       <div id="upload-drop" class="upload-drop">
         <input type="file" id="upload-input" accept=".csv" multiple style="display:none" onchange="handleUploadFiles(this.files)">
         <div class="upload-drop-txt">Arraste os arquivos .csv aqui ou <span class="upload-drop-link" onclick="document.getElementById('upload-input').click()">clique para selecionar</span></div>
-        <div class="upload-drop-hint">O nome do arquivo precisa conter "compras", "vendas" ou "estoque"/"contagem" — o mesmo padrão que o painel já usa para ler os dados.</div>
+        <div class="upload-drop-hint">Escolha o tipo acima primeiro — o painel renomeia o arquivo automaticamente antes de enviar pro Drive.</div>
       </div>
       <div id="upload-fila"></div>
     </div>
@@ -567,6 +575,8 @@ var DADOS=null, MESES=[], CMC={}, VENDAS={}, CMV={}, mesAtual='', uniAtual='TODA
 var abcOrder='valor', custoCache=null, uniABC='TODAS', mesABC='TODOS';
 var custoMesA='', custoMesB='';
 var SENHA_ATUAL='';
+var uploadTipoSelecionado='';
+var UPLOAD_TIPO_LABEL={compras:'Compras',vendas:'Vendas',estoque:'Contagem de Estoque'};
 
 /* ====== HELPERS ====== */
 function fR(v){return 'R$ '+(v||0).toLocaleString('pt-BR',{minimumFractionDigits:0,maximumFractionDigits:0});}
@@ -1582,6 +1592,11 @@ function fTamanho(bytes){
   return (bytes/1024/1024).toFixed(1)+' MB';
 }
 
+function setUploadTipo(t){
+  uploadTipoSelecionado=t;
+  document.querySelectorAll('#upload-tipo-seg button').forEach(function(b){b.classList.toggle('on',b.dataset.tipo===t);});
+}
+
 function handleUploadFiles(files){
   Array.from(files).forEach(function(file){ enviarArquivo(file); });
   document.getElementById('upload-input').value='';
@@ -1596,6 +1611,9 @@ function enviarArquivo(file){
   var item=document.getElementById(id);
   var statusEl=item.querySelector('.upload-item-status');
 
+  if(!uploadTipoSelecionado){
+    statusEl.textContent='Escolha o tipo de relatório antes de enviar.';statusEl.style.color='var(--rd)';return;
+  }
   if(!/\.csv$/i.test(file.name)){
     statusEl.textContent='Só .csv é aceito.';statusEl.style.color='var(--rd)';return;
   }
@@ -1603,24 +1621,25 @@ function enviarArquivo(file){
     statusEl.textContent='Arquivo muito grande (>15MB).';statusEl.style.color='var(--rd)';return;
   }
 
+  var tipoNoEnvio=uploadTipoSelecionado;
   var reader=new FileReader();
   reader.onload=function(e){
     var base64=e.target.result.split(',')[1]||'';
-    statusEl.textContent='Enviando…';statusEl.style.color='var(--fg2)';
+    statusEl.textContent='Enviando como '+(UPLOAD_TIPO_LABEL[tipoNoEnvio]||tipoNoEnvio)+'…';statusEl.style.color='var(--fg2)';
     google.script.run
       .withSuccessHandler(function(json){
         var res;try{res=JSON.parse(json);}catch(err){statusEl.textContent='Erro ao ler resposta.';statusEl.style.color='var(--rd)';return;}
         if(!res.ok){
           statusEl.textContent=res.erro||'Falha no envio.';statusEl.style.color='var(--rd)';return;
         }
-        statusEl.textContent='Enviado ('+res.tipo+')'+(res.substituido?' — substituiu o anterior':'');
+        statusEl.textContent='Salvo como '+res.nome+(res.substituido?' — substituiu o anterior':'');
         statusEl.style.color='var(--ac2)';
         carregarListaArquivos();
       })
       .withFailureHandler(function(err){
         statusEl.textContent='Falha: '+(err.message||err);statusEl.style.color='var(--rd)';
       })
-      .uploadArquivo(SENHA_ATUAL, file.name, base64);
+      .uploadArquivo(SENHA_ATUAL, file.name, base64, tipoNoEnvio);
   };
   reader.onerror=function(){statusEl.textContent='Erro ao ler o arquivo.';statusEl.style.color='var(--rd)';};
   reader.readAsDataURL(file);
