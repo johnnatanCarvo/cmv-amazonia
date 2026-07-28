@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Dashboard CMV · Delalê</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=Figtree:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>
+<?!= include('Styles'); ?>
+</head>
+<body>
+<div class="app-layout">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-logo">
+      <div id="sidebar-logo-img-wrap" style="flex-shrink:0;height:32px;display:flex;align-items:center;"></div>
+      <div class="sidebar-logo-text">
+        <span class="sidebar-logo-name">Delalê</span>
+        <span class="sidebar-logo-sub">Painel CMV Cloud</span>
+      </div>
+    </div>
+    <nav class="sidebar-nav">
+      <div class="nav-group">
+        <div class="nav-group-label">Dados</div>
+        <div class="nav-item active" id="tab-btn-importar" onclick="trocarAba('importar')"><span class="nav-icon">📁</span><span class="nav-label">Conexão Drive</span></div>
+        <div class="nav-item" id="tab-btn-lancamentos" onclick="trocarAba('lancamentos')"><span class="nav-icon">✏️</span><span class="nav-label">Lançamentos Manuais</span></div>
+      </div>
+      <div class="nav-group">
+        <div class="nav-group-label">Análise</div>
+        <div class="nav-item" id="tab-btn-cmv" onclick="trocarAba('cmv')"><span class="nav-icon">📊</span><span class="nav-label">CMV Consolidado</span></div>
+        <div class="nav-item" id="tab-btn-cmv-produto" onclick="trocarAba('cmv-produto')"><span class="nav-icon">🧾</span><span class="nav-label">CMV por Produto</span></div>
+        <div class="nav-item" id="tab-btn-teorico" onclick="trocarAba('teorico')"><span class="nav-icon">⚖️</span><span class="nav-label">Real vs. Teórico</span></div>
+        <div class="nav-item" id="tab-btn-perdas" onclick="trocarAba('perdas')"><span class="nav-icon">🗑️</span><span class="nav-label">Análise de Perdas</span></div>
+        <div class="nav-item" id="tab-btn-comparativo" onclick="trocarAba('comparativo')"><span class="nav-icon">📅</span><span class="nav-label">Comparativo Mensal Compras (CMC)</span></div>
+        <div class="nav-item" id="tab-btn-abc" onclick="trocarAba('abc')"><span class="nav-icon">📈</span><span class="nav-label">ABC Vendas</span></div>
+        <div class="nav-item" id="tab-btn-abc-compras" onclick="trocarAba('abc-compras')"><span class="nav-icon">🛒</span><span class="nav-label">ABC Compras</span></div>
+      </div>
+    </nav>
+  </aside>
+  <button class="sidebar-toggle" id="sidebar-toggle" onclick="toggleSidebar()">‹</button>
+
+  <div class="app-body">
+    <header class="topbar">
+      <div class="breadcrumb">
+        <span>Delalê</span><span style="color:var(--muted2)">›</span>
+        <span class="breadcrumb-active" id="breadcrumb-active">Conexão Drive</span>
+      </div>
+      <div class="topbar-right">
+        <span class="cache-badge" id="cache-badge">⚡ Cache</span>
+        <div class="mes-filter-wrap" id="mes-filter-wrap" style="display:none;">
+          <span style="font-size:11px;font-weight:600;color:var(--muted);letter-spacing:.5px;">MÊS</span>
+          <select id="mes-global-select" class="drive-select" style="min-width:160px;font-size:13px;" onchange="mudarMesAtivo(this.value)">
+          </select>
+        </div>
+        <button class="theme-toggle" onclick="alternarTema()">🌙 <span id="theme-label">Escuro</span></button>
+      </div>
+    </header>
+
+    <div class="app-content">
+      <div id="alertas"></div>
+
+      <!-- ── CONEXÃO DRIVE ── -->
+      <div class="tab-panel active" id="tab-importar">
+        <div class="section-title">Central de Fechamento de Mês</div>
+        <div class="drive-control-card">
+          <div id="drive-status-msg" style="font-size:13px;color:var(--muted);flex:1;">
+            Conectando ao Google Drive...
+          </div>
+          <button id="btn-reprocessar" class="btn-reprocessar" onclick="carregarTudo(true)" disabled title="Reprocessa todos os arquivos ignorando o cache">🔄 Reprocessar Tudo</button>
+        </div>
+        <!-- Grade de cards de meses carregados -->
+        <div id="meses-cards-grid" style="display:none;margin-top:16px;">
+          <div class="section-title" style="margin-bottom:12px;">Meses Disponíveis</div>
+          <div id="meses-cards" style="display:flex;flex-wrap:wrap;gap:12px;"></div>
+        </div>
+        <div id="drive-loading" class="loading-overlay">
+          <div class="spinner"></div>
+          <h3 id="loading-msg">Carregando dados do Google Drive...</h3>
+          <p id="loading-sub">Aguarde, processando arquivos...</p>
+        </div>
+      </div>
+
+      <!-- ── LANÇAMENTOS MANUAIS ── -->
+      <div class="tab-panel" id="tab-lancamentos">
+        <div class="section-title">Lançamentos Manuais</div>
+        <div class="lanc-intro">
+          ℹ️ Os valores aqui inseridos são <strong>persistidos diretamente na planilha "Lançamentos"</strong> no Google Drive e carregados automaticamente a cada sincronização. Preencha os campos e clique em <strong>Salvar no Drive</strong>.
+        </div>
+        <div id="lanc-status" class="lanc-status-bar empty" style="display:none;"></div>
+        <div class="lanc-grid">
+          <div class="lanc-card">
+            <div class="lanc-card-header">
+              <div><h3>Perdas Manuais por Filial</h3><p>Valores não cobertos pelo arquivo de perdas do Drive</p></div>
+            </div>
+            <div class="lanc-fields" id="lanc-fields-perdas"></div>
+            <div class="lanc-total-row">
+              <span style="font-size:11px;color:var(--muted);font-weight:600;">TOTAL PERDAS</span>
+              <span id="lanc-total-perdas" style="font-weight:700;font-size:14px;color:var(--red);">R$ 0,00</span>
+            </div>
+          </div>
+          <div class="lanc-card">
+            <div class="lanc-card-header">
+              <div><h3>Transferências entre Filiais</h3><p>Sinal positivo = recebeu; negativo = enviou</p></div>
+            </div>
+            <div class="lanc-fields" id="lanc-fields-transf"></div>
+            <div class="lanc-total-row">
+              <span style="font-size:11px;color:var(--muted);font-weight:600;">TOTAL TRANSF.</span>
+              <span id="lanc-total-transf" style="font-weight:700;font-size:14px;color:var(--blue);">R$ 0,00</span>
+            </div>
+          </div>
+        </div>
+        <div class="lanc-card" style="max-width:480px;">
+          <div class="lanc-card-header">
+            <div><h3>🌐 Vendas Online (Site)</h3><p>Faturamento do site — somado ao faturamento da DUQUE</p></div>
+          </div>
+          <div class="lanc-fields">
+            <div class="lanc-field-row">
+              <span>Vendas Site (R$)</span>
+              <input class="lanc-input" id="lanc-site" type="number" step="0.01" min="0" placeholder="0,00" oninput="atualizarTotaisLanc()">
+            </div>
+          </div>
+        </div>
+        <div class="lanc-card" style="max-width:480px;">
+          <div class="lanc-card-header">
+            <div><h3>🏭 Faturamento CD (Preço de Transferência)</h3><p>Reservado para o futuro cálculo de CMV Real Global — não entra na análise de CMV deste dashboard, que é só lojas</p></div>
+          </div>
+          <div class="lanc-fields">
+            <div class="lanc-field-row">
+              <span>Faturamento CD (R$)</span>
+              <input class="lanc-input" id="lanc-fat-cd" type="number" step="0.01" min="0" placeholder="0,00" oninput="atualizarTotaisLanc()">
+            </div>
+          </div>
+        </div>
+        <div style="margin-top:20px;max-width:480px;">
+          <button class="btn-salvar-lanc" id="btn-salvar-lanc" onclick="salvarLancamentosNoDrive()">💾 Salvar no Drive &amp; Recalcular</button>
+          <div class="lanc-saved-badge" id="lanc-saved-badge">✅ Lançamentos salvos e painel recalculado!</div>
+        </div>
+      </div>
+
+      <!-- ── CMV ── -->
+      <div class="tab-panel" id="tab-cmv">
+        <div id="resultado" style="display:none">
+          <div class="section-title">Consolidado Geral</div>
+          <div class="kpi-row" id="kpi-row"></div>
+          <div class="section-title">CMV por Filial</div>
+          <div class="table-wrapper">
+            <table><thead><tr><th>Filial</th><th>Est. Inicial</th><th>Compras</th><th>Transf.</th><th>Est. Final</th><th>Perdas R$</th><th>CMV R$</th><th>Fat. Loja</th><th>Fat. Delivery</th><th>Fat. Total</th><th>CMV %</th></tr></thead>
+            <tbody id="tabela-filial"></tbody></table>
+          </div>
+          <div class="section-title">Visualização Gerencial</div>
+          <div class="charts-grid">
+            <div class="chart-card"><h3>CMV % por Filial</h3><div class="chart-canvas-wrap"><canvas id="chartCmvPct"></canvas></div></div>
+            <div class="chart-card"><h3>CMV Real vs. Teórico por Filial</h3><div class="chart-canvas-wrap"><canvas id="chartCmvTeorico"></canvas></div></div>
+          </div>
+          <div class="section-title">Evolução de CMV Real (% e R$)</div>
+          <div class="chart-card" style="min-height:340px;margin-bottom:24px;"><div class="chart-canvas-wrap"><canvas id="chartEvolucaoCmv"></canvas></div></div>
+        </div>
+        <div class="empty-state" id="cmv-empty"><div class="empty-icon">📊</div><p>Selecione e processe um mês na aba <strong>Conexão Drive</strong>.</p></div>
+      </div>
+
+      <!-- ── CMV POR PRODUTO ── -->
+      <div class="tab-panel" id="tab-cmv-produto">
+        <div class="empty-state" id="cmvprod-empty-state"><div class="empty-icon">🧾</div><p>Selecione e processe um mês na aba <strong>Conexão Drive</strong>.</p></div>
+        <div id="cmvprod-resultado" style="display:none">
+          <div class="section-title">CMV por Produto (Est. Inicial + Compras − Est. Final)</div>
+          <div class="abc-controls">
+            <select class="abc-select" id="cmvprod-filial-select" onchange="renderCmvPorProduto()"><option value="TODAS">Todas as Filiais (Consolidado)</option></select>
+            <input class="abc-search" type="text" id="cmvprod-search" placeholder="🔍 Filtrar produto..." oninput="renderCmvPorProduto()">
+          </div>
+          <div class="table-wrapper">
+            <table><thead><tr><th class="th-c">#</th><th class="th-l">Produto</th><th>Est. Inicial</th><th>Compras</th><th>Est. Final</th><th>CMV</th></tr></thead>
+            <tbody id="cmvprod-tbody"></tbody><tfoot id="cmvprod-tfoot"></tfoot></table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── TEÓRICO ── -->
+      <div class="tab-panel" id="tab-teorico">
+        <div class="empty-state" id="teorico-empty-state"><div class="empty-icon">⚖️</div><p>Aguardando processamento de competência.</p></div>
+        <div id="teorico-resultado" style="display:none">
+          <div class="section-title">Desvios de Receitas (Macro)</div><div class="kpi-row" id="kpi-row-teorico"></div>
+          <div class="section-title">Análise de Fuga por Filial</div>
+          <div class="table-wrapper">
+            <table><thead><tr><th>Filial</th><th>Teórico R$</th><th>Real R$</th><th>Desvio R$</th><th>Fuga</th></tr></thead>
+            <tbody id="tbody-teorico-filial"></tbody><tfoot id="tfoot-teorico-filial"></tfoot></table>
+          </div>
+          <div class="section-title">🕵️ Foco de Auditoria — Top Insumos com Maior Fuga</div>
+          <div class="table-wrapper">
+            <table><thead><tr><th class="th-c">#</th><th class="th-l">Insumo</th><th>Custo Un.</th><th>Qtd. Teórica</th><th>Qtd. Real</th><th>Desvio Qtd</th><th>Desvio R$</th></tr></thead>
+            <tbody id="tbody-teorico-insumos"></tbody></table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── PERDAS ── -->
+      <div class="tab-panel" id="tab-perdas">
+        <div class="empty-state" id="perdas-empty-state"><div class="empty-icon">🗑️</div><p>Nenhum dado de desperdício carregado.</p></div>
+        <div id="perdas-resultado" style="display:none">
+          <div class="section-title">Visão Geral de Desperdícios</div>
+          <div class="kpi-row" id="kpi-row-perdas"></div>
+          <div class="section-title" id="perdas-dim-titulo">Análise por Dimensão</div>
+          <div class="charts-grid">
+            <div class="chart-card"><h3 id="titulo-chart-motivo">🗑️ Perdas em R$ por Motivo</h3><div class="chart-canvas-wrap"><canvas id="chartPerdasMotivo"></canvas></div></div>
+            <div class="chart-card"><h3 id="titulo-chart-grupo">📦 Perdas em Vendas por Grupo</h3><div class="chart-canvas-wrap"><canvas id="chartPerdasGrupo"></canvas></div></div>
+          </div>
+          <div class="charts-grid">
+            <div class="chart-card"><h3 id="titulo-chart-filial">🏪 Custo de Perda por Filial</h3><div class="chart-canvas-wrap"><canvas id="chartPerdasFilial"></canvas></div></div>
+            <div class="chart-card"><h3 id="titulo-chart-temporal">📅 Evolução Diária (Perdas R$)</h3><div class="chart-canvas-wrap"><canvas id="chartPerdasTemporal"></canvas></div></div>
+          </div>
+          <div class="section-title">Top Produtos com Maior Perda</div>
+          <div class="perdas-filtros">
+            <select class="perdas-select" id="perdas-filtro-filial" onchange="renderTabelaPerdas()"><option value="">Todas as Filiais</option></select>
+            <select class="perdas-select" id="perdas-filtro-motivo" onchange="renderTabelaPerdas()"><option value="">Todos os Motivos</option></select>
+            <select class="perdas-select" id="perdas-filtro-grupo" onchange="renderTabelaPerdas()"><option value="">Todos os Grupos</option></select>
+          </div>
+          <div class="table-wrapper">
+            <table>
+              <thead><tr><th class="th-c">#</th><th class="th-l">Produto</th><th class="th-l">Grupo</th><th>Volume Perdido</th><th>Un.</th><th>Custo Unit.</th><th>Perdas R$</th><th>Perdas em Vendas</th><th>Perda KG</th><th>Part. R$</th></tr></thead>
+              <tbody id="tbody-perdas-produtos"></tbody>
+              <tfoot id="tfoot-perdas-produtos"></tfoot>
+            </table>
+          </div>
+          <div class="section-title">Ranking de Motivos</div>
+          <div class="table-wrapper">
+            <table>
+              <thead><tr><th class="th-l">Motivo</th><th>Ocorrências</th><th>Perdas R$</th><th>Perdas em Vendas</th><th>% do Total</th><th>Representatividade</th></tr></thead>
+              <tbody id="tbody-perdas-motivos"></tbody>
+            </table>
+          </div>
+          
+        </div>
+      </div>
+
+      <!-- ── COMPARATIVO ── -->
+      <div class="tab-panel" id="tab-comparativo">
+        <div class="empty-state" id="comp-empty-state"><div class="empty-icon">📅</div><p>Sincronize pelo menos <strong>dois meses</strong> para visualizar o comparativo.</p></div>
+        <div id="comp-resultado" style="display:none">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
+            <div class="section-title" style="margin-bottom:0;">Comparativo de Compras por Grupo</div>
+            <button onclick="limparCacheComparativo()" style="background:transparent;border:1.5px solid var(--border);border-radius:8px;padding:7px 14px;font-size:11px;color:var(--muted);cursor:pointer;font-family:var(--font-body);font-weight:600;transition:all .15s;" onmouseover="this.style.borderColor='var(--amber)';this.style.color='var(--amber)';" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)';">🗑️ Limpar histórico</button>
+          </div>
+          <div class="kpi-row" id="kpi-row-comp"></div>
+          <div class="table-wrapper comp-scroll" style="margin-bottom:28px;">
+            <table class="comp-table" id="comp-table"></table>
+          </div>
+          <div class="section-title" style="margin-top:8px;">Evolução CMC — Custo de Mercadoria Comprada (% e R$)</div>
+          <div class="chart-card" style="min-height:340px;">
+            <div class="chart-canvas-wrap"><canvas id="chartEvolucaoCmc"></canvas></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── ABC VENDAS ── -->
+      <div class="tab-panel" id="tab-abc">
+        <div class="empty-state" id="abc-empty-state"><div class="empty-icon">📈</div><p>Selecione um mês para estruturar as Curvas ABC.</p></div>
+        <div id="abc-resultado" style="display:none">
+          <div class="section-title">Curva ABC de Faturamento por Produto</div>
+          <!-- KPIs do painel ABC — filtráveis pela filial e canal selecionados -->
+          <div class="kpi-row" id="abc-kpi-row" style="margin-bottom:20px;">
+            <div class="kpi-card blue" id="abc-kpi-faturamento">
+              <span class="kpi-label">Faturamento do Período</span>
+              <div class="kpi-value" id="abc-kpi-fat-val">—</div>
+              <div class="kpi-sub" id="abc-kpi-fat-sub">Aguardando dados...</div>
+            </div>
+            <div class="kpi-card green" id="abc-kpi-ticket">
+              <span class="kpi-label">Ticket Médio por Produto</span>
+              <div class="kpi-value" id="abc-kpi-ticket-val">—</div>
+              <div class="kpi-sub" id="abc-kpi-ticket-sub">Faturamento ÷ qtde de produtos vendidos</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;padding:12px 16px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);flex-wrap:wrap;">
+            <span class="abc-ifood-label">Canal de Venda</span>
+            <div class="abc-ifood-toggle">
+              <button class="abc-ifood-btn active" onclick="setModoIfood(this,'consolidado')">🏪+🛵 Consolidado</button>
+              <button class="abc-ifood-btn" onclick="setModoIfood(this,'fisico')">🏪 Só Lojas Físicas</button>
+              <button class="abc-ifood-btn" onclick="setModoIfood(this,'ifood')">🛵 Só iFood</button>
+            </div>
+            <span id="abc-ifood-nota" style="font-size:11px;color:var(--muted);margin-left:4px;"></span>
+          </div>
+          <div class="abc-controls">
+            <select class="abc-select" id="abc-filial-select" onchange="renderABC()"><option value="TODAS">Todas as Filiais</option></select>
+            <input class="abc-search" type="text" id="abc-search" placeholder="🔍 Filtrar produto..." oninput="renderABC()">
+            <div class="topn-group">
+              <button class="topn-btn active" onclick="setTopN(this,20,'vendas')">Top 20</button>
+              <button class="topn-btn" onclick="setTopN(this,50,'vendas')">Top 50</button>
+              <button class="topn-btn" onclick="setTopN(this,0,'vendas')">Todos</button>
+            </div>
+          </div>
+          <div class="table-wrapper">
+            <table><thead><tr><th class="th-c">#</th><th class="th-l">Produto</th><th>Faturamento</th><th>Part. %</th><th>Acum. % ¹</th><th class="th-c">CMV Unit.</th><th class="th-c">CMV %</th><th>Classe</th><th class="th-c">vs. mês ant.</th></tr></thead>
+            <tbody id="abc-tbody"></tbody></table>
+          </div>
+          <p style="font-size:10px;color:var(--muted);padding:0 4px 12px;">¹ Acumulado % calculado sobre o portfólio exibido. Classificação A/B/C sempre baseada no portfólio completo.</p>
+        </div>
+      </div>
+
+      <!-- ── ABC COMPRAS ── -->
+      <div class="tab-panel" id="tab-abc-compras">
+        <div class="empty-state" id="abc-compras-empty-state"><div class="empty-icon">🛒</div><p>Aguardando dados estruturados do Drive.</p></div>
+        <div id="abc-compras-resultado" style="display:none">
+          <div class="section-title">Curva ABC de Desembolso por Insumo</div>
+          <div class="abc-controls">
+            <input class="abc-search" type="text" id="abc-compras-search" placeholder="🔍 Filtrar insumo..." oninput="renderABCCompras()">
+            <div class="topn-group">
+              <button class="topn-btn active" onclick="setTopN(this,20,'compras')">Top 20</button>
+              <button class="topn-btn" onclick="setTopN(this,50,'compras')">Top 50</button>
+              <button class="topn-btn" onclick="setTopN(this,0,'compras')">Todos</button>
+            </div>
+          </div>
+          <div class="table-wrapper">
+            <table><thead><tr>
+              <th class="th-c">#</th><th class="th-l">Insumo</th><th>Qtde Comprada</th>
+              <th title="Passe o mouse para ver a evolução do preço">Preço Médio ℹ️</th>
+              <th>Total Pago</th><th>Part. %</th><th>Classe</th><th class="th-c">vs. mês ant.</th>
+            </tr></thead>
+            <tbody id="abc-compras-tbody"></tbody></table>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /app-content -->
+  </div><!-- /app-body -->
+</div><!-- /app-layout -->
+
+<div id="kpi-tooltip-float"></div>
+<div id="price-tooltip">
+  <div style="font-size:10px;color:var(--muted);margin-bottom:8px;text-align:center;font-family:var(--font-body);text-transform:uppercase;letter-spacing:1.5px;font-weight:700;">Evolução Preço Médio</div>
+  <div style="position:relative;height:140px;width:100%"><canvas id="sparklineCanvas"></canvas></div>
+</div>
+
+<?!= include('Script_Core'); ?>
+<?!= include('Script_Graficos'); ?>
+<?!= include('Script_ABC'); ?>
+</body>
+</html>

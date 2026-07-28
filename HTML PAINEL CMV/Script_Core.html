@@ -1,0 +1,955 @@
+<script>
+// ════════════════════════════════════════════════════════════════════
+//  Script_Core.html — Estado global · Formatadores · Utilitários ·
+//  Lançamentos (formulário) · Inicialização · Carga do Drive ·
+//  Cálculo principal do CMV
+//  (carregado antes de Script_Graficos.html e Script_ABC.html)
+// ════════════════════════════════════════════════════════════════════
+
+const LOGO_CONFIG = {
+  url: 'https://drive.google.com/uc?export=view&id=1zyJ8lNGywLRhg5H1urDKmkMzzwhASZHP',
+  largura: 'auto',
+  altura: '28px'
+};
+
+// ─── ESTADO GLOBAL ────────────────────────────────────────────────────────────
+let dados = { ei: null, ef: null, compras: null, vendas: null, teorico: null, perdas: null };
+let dadosPorMes = {};       // Todos os meses: { 'MAIO 2026': pacote, ... }
+let mesAtivoNome = null;    // Label do mês selecionado
+
+// Fonte primária: variável em memória — preenchida no sync e no init da página
+let lancamentosManuaisAtivos = { perdas: {}, transf: {}, vendas_site: 0 };
+
+let abcDadosVendas = {}, abcDadosCompras = {};
+let abcTopNVendas = 20, abcTopNCompras = 20;
+
+// FIX: instâncias de charts com null explícito após destroy
+let chartCmvPct      = null;
+let chartCmvTeorico  = null;
+let chartEvolucaoCmv = null;
+let chartEvolucaoCmc = null;
+let chartPerdasMotivo   = null;
+let chartPerdasGrupo    = null;
+let chartPerdasFilial   = null;
+let chartPerdasTemporal = null;
+let sparklineChart      = null;
+
+let decompDetalhes   = [];
+let perdasDetalhadas = [];
+let dState = { root: 'Total', p: null, f: null };
+let _kpiResultados = [];
+let _kpiVendasSite = 0;
+let _kpiTooltipConteudo = { fat: '', site: '' };
+let _abcModoIfood   = 'consolidado';
+let _abcVendasModoAtual = {};
+let _abcQtdProd       = {};
+let _abcCustoProd     = {}; // custo unitário dinâmico: teorico > perdas > fixo
+let _kpiSparkCharts  = {};
+// Dados brutos do CD (Estoque/Produção), reservados pro futuro CMV Real Global — ver _calcularInterno()
+let _dadosBrutosCD  = null;
+
+// Histórico compartilhado (Comparativo Mensal, Sparklines, Ranking ABC anterior).
+// Vem do servidor (PropertiesService, via Persistencia.gs) — substitui os antigos
+// localStorage, que ficavam isolados por navegador/dispositivo. Carregado uma vez
+// em carregarTudo() e mantido em memória; toda escrita atualiza aqui E persiste
+// no servidor via _persistirHistorico().
+let _histServidor = { HIST_CMV: {}, HIST_COMPRAS: {}, HIST_CMV_FILIAL: {}, ABC_HIST: {} };
+
+function _persistirHistorico(chave) {
+  google.script.run
+    .withFailureHandler(err => console.warn('[Histórico] Falha ao salvar "' + chave + '": ' + err.message))
+    .salvarHistoricoServidor(chave, _histServidor[chave]);
+}
+
+const FILIAIS_CONFIG = [
+  { chave: 'BOSQUE GRÃO-PARÁ', termos: ['bosque','grao','grão'] },
+  { chave: 'DUQUE',            termos: ['duque'] },
+  { chave: 'METRÓPOLE',        termos: ['metropole','metrópole'] },
+  { chave: 'PÁTIO BELÉM',      termos: ['patio','pátio'] },
+];
+const FILIAIS_ORDEM = FILIAIS_CONFIG.map(f => f.chave); // as 4 lojas (vendas / EI-EF com "Centro est." = LOJA)
+
+// CD DELALE — Centro de Distribuição/Produção (Centro est. = CENTRAL, PRODUÇÃO ou CÂMARA FRIA).
+// DECISÃO DA DIRETORIA (reunião jul/2026): o CD não aparece como linha na tabela/gráficos
+// "CMV por Filial" — esse recorte é só as 4 lojas. Mas o custo do CD continua entrando no
+// CMV Consolidado (KPIs), já que faz parte do custo real da rede — ver breakdown no tooltip
+// do card "CMV Consolidado" (renderKpis, Script_Graficos.html) e o detalhe do cálculo em
+// _calcularInterno() mais abaixo.
+const FILIAL_CD = 'CD DELALE';
+// Usada só na tela de Lançamentos Manuais: perdas/faturamento do CD são capturados aqui e
+// entram no CMV Consolidado (perdas) ou ficam reservados pro futuro CMV Real Global (faturamento).
+const FILIAIS_ORDEM_LANC = [...FILIAIS_ORDEM, FILIAL_CD];
+
+// ─── CUSTO MÉDIO POR PRODUTO (Ficha Técnica — Relatório de Detalhe de Fabricação) ─────
+// Fonte: relatório de perdas por produto do Cloudfy — custo unitário médio ponderado
+// ⚠️ FALLBACK DE ÚLTIMA INSTÂNCIA: só é usado quando o produto não aparece em
+// dados.produtosMestre (Manutenção de Produtos) nem em dados.teorico nem em dados.perdas
+// do mês (ver ordem de prioridade em compilarBasesAbc(), Script_ABC.html). Como é fixo
+// no código, reajustes de ficha técnica não se refletem aqui automaticamente — exige
+// editar e republicar. Mantido como está por ora (decisão de arquitetura pendente:
+// mover pra uma fonte dinâmica, ex. aba própria na planilha, é uma melhoria futura).
+const CUSTO_UNITARIO_PRODUTO = {"ADC BORDA CASADINHO":0.59,"ADC BORDA CHURROS":0.62,"ADC BORDA CROCANTE":1.05,"ADC BORDA NUTELLA":2.75,"ADC CHANTILLY":2.01,"ADC CREME DE LEITE":0.47,"ADC DE MORANGO":3.67,"ADC LEITE":0.72,"ADC LEITE CONDENSADO":0.5,"ADC LEITE VEGETAL":2.03,"AGUA COM GAS 500 ML":1.47,"AGUA DE COCO":5.0,"AGUA MINERAL GFA 500 ML":1.59,"BANDEJA 20 DOCINHOS NAMORADOS":10.59,"BOLO BRIGADEIRO FATIA":6.02,"BOLO BRIGADEIRO GRANDE":30.95,"BOLO BRIGADEIRO GRANDE COM 10 DOCINHOS":34.15,"BOLO BRIGADEIRO GRANDE COM 20 DOCINHOS":37.35,"BOLO CALDA QUENTE FATIA":5.7,"BOLO CENOURA GRANDE":29.23,"BOLO CENOURA GRANDE COM 10 DOCINHOS":32.43,"BOLO COPA GRANDE":41.31,"BOLO DE CENOURA FATIA":5.85,"BOLO DE CHOCOLATE VEGANO":8.68,"BOLO DE DOCE DE LEITE COM NOZES FATIA":5.21,"BOLO DE LIMAO COM MIRTILO":33.04,"BOLO DE LIMAO COM MIRTILO FATIA":3.3,"BOLO DE MARACUJA":15.74,"BOLO DE MILHO":15.22,"BOLO DE NOZES":52.08,"BOLO FORMIGUEIRO":14.46,"BOLO GELADO DE NINHO FATIA":4.66,"BOLO MESCLADO FATIA":4.96,"BOLO MESCLADO OURO":59.59,"BOLO PE DE MOLEQUE FATIA":4.38,"BOLO PRESTIGIO FATIA":4.21,"BOLO VULCAO COM MORANGO FATIA":10.52,"BOLO VULCAO FATIA":5.94,"BOLO VULCAO GRANDE":28.91,"BOLO VULCAO GRANDE COM 10 DOCINHOS":32.11,"BROWNIE CASADINHO COM 3 DOCES":4.52,"BROWNIE CASADINHO COM MORANGO":3.81,"BROWNIE DOCE DE LEITE":3.6,"BROWNIE RECHEADO BRIGADEIRO":3.59,"BROWNIE RECHEADO CASADINHO":3.5,"BROWNIE RECHEADO DOCE DE LEITE":3.51,"BURGUER BACON":3.57,"CADERNO RELIGIOSOS":50.0,"CAFE BOMBOM":2.61,"CAFE COADO DESCAFEINADO":0.55,"CAFE COADO NO HARIO V60":1.69,"CAFE COM LEITE":1.88,"CAFE COM LEITE BORDA DE CHURROS":1.88,"CAFE COM LEITE VEGETAL":3.19,"CAFE FRUTO MINEIRO 1 KG":95.14,"CAFE FRUTO MINEIRO 250 G":23.79,"CAFE MACCHIATO":1.26,"CAFE MACCHIATO VEGETAL":1.48,"CAFE PRIMAVERA":1.57,"CAIXA COM ROSA NAMORADOS":17.4,"CAIXINHA CUPCAKE AVULSO":1.25,"CAPPUCCINO DA VOVO":5.09,"CAPPUCCINO RUSTICO":4.81,"CAPPUCCINO RUSTICO VEGETAL":5.7,"CAPPUCCINO TRADICIONAL":2.44,"CAPPUCCINO TRADICIONAL COM LEITE VEGETAL":3.74,"CENTO DOCES COPA":45.36,"CHEESECAKE BASCO":0.28,"CHOCOLATE QUENTE CASADINHO":1.87,"CHOCOLATE QUENTE CREMOSO":4.6,"CHOCOLATE QUENTE CREMOSO COM LEITE VEGETAL":4.87,"CHOCOLATE QUENTE CROCANTE":5.15,"CHOCOLATE QUENTE NUTELLA":1.68,"CHOCOLATE QUENTE TRADICIONAL":1.28,"CHOCOLATE QUENTE TRADICIONAL VEGETAL":2.59,"COCA COLA LATA 350 ML":3.35,"COCA COLA ORIGINAL KS 290 ML":3.0,"COCA COLA PET 600 ML":4.32,"COCA COLA ZERO 600 ML":3.6,"COCA COLA ZERO ACUCAR LT 350 ML":3.26,"COCA COLA ZERO KS 290 ML":2.85,"COXINHA DE BRIGADEIRO COM MORANGO":1.89,"COXINHA DE FRANGO":8.0,"COXINHA DE NINHO COM MORANGO":2.68,"COXINHA DE NINHO MORANGO E NUTELLA":3.79,"COXINHA DE PISTACHE COM MORANGO":8.0,"CRUNCH CAKE":6.61,"CUPCAKE BICHO DE PE":3.87,"CUPCAKE BRIGADEIRO DE PANELA":2.69,"CUPCAKE BRIGADEIRO TRUFADO":3.0,"CUPCAKE CASADINHO":4.55,"CUPCAKE CONFETE":3.2,"CUPCAKE DIA DOS NAMORADOS":4.95,"CUPCAKE FLOR DE NINHO":2.79,"CUPCAKE MARSHMALLOW":2.61,"CUPCAKE MEIO AMARGO":6.42,"CUPCAKE MORANGUINHO":2.0,"CUPCAKE NATALINO BAUNILHA":13.6,"CUPCAKE NINHO COM NUTELLA":2.33,"CUPCAKE NINHO MORANGO":2.75,"CUPCAKE RASPAS DE CHOCOLATE":3.14,"CUPCAKE UVINHA":3.13,"DELL VALE UVA 290 ML":3.52,"DOCINHO BICHO DO PE ENCOMENDA":0.36,"DOCINHO BRIGADEIRO":0.71,"DOCINHO BRIGADEIRO ENCOMENDA":0.32,"DOCINHO CASADINHO":0.6,"DOCINHO CASADINHO SENSACAO":16.34,"DOCINHO COCO ENCOMENDA":0.56,"DOCINHO DE PISTACHE":9.4,"DOCINHO GOURMET BACURI":16.34,"DOCINHO GOURMET BRIGADEIRO BELGA":16.34,"DOCINHO GOURMET BRULLE":16.34,"DOCINHO GOURMET CAFE":16.34,"DOCINHO GOURMET CHURROS":16.34,"DOCINHO GOURMET COCO QUEIMADO":16.34,"DOCINHO GOURMET CUPUACU":16.34,"DOCINHO GOURMET MEIO AMARGO":16.34,"DOCINHO GOURMET NINHO COM NUTELLA":16.34,"DOCINHO GOURMET PACOCA":16.34,"DOCINHO GOURMET ROMEU E JULIETA":16.34,"DOCINHO QUEIJO ENCOMENDA":0.4,"DOCINHO TRES AMORES":0.6,"DOCINHO UVINHA":0.69,"DOCINHOS CASADINHO ENCOMENDAS":0.31,"DOCINHOS NINHO ENCOMENDAS":0.52,"DOCINHOS TRES AMORES ENCOMENDAS":0.32,"DOCINHOS UVINHA ENCOMENDAS":0.36,"EMB CAIXA DELALE UND":12.0,"EMPADA DE CAMARAO":1.88,"EMPADA DE FRANGO":1.99,"EMPADA DE JAMBU COM QUEIJO CUIA":2.1,"EMPADA DE PALMITO E CREME DE MILHO VEGANO":2.36,"EMPADAO DE FRANGO COM CATUPIRY FATIA":4.28,"EMPADAO DE FRANGO COM CATUPIRY INTEIRO":42.77,"ESFIRRA DE CARNE":3.27,"ESFIRRA MARGUERITA":2.86,"ESPRESSO AMERICANO":1.14,"ESPRESSO CARIOCA":1.14,"ESPRESSO CURTO":1.14,"ESPRESSO DUPLO":2.28,"ESPRESSO LONGO":1.14,"FANTA LARANJA LATA 350 ML":2.85,"FANTA UVA LATA 350 ML":2.85,"FOLAR DE CALABRESA":5.72,"FRAPUCCINO DE CARAMELO":6.33,"GUARANA JESUS":3.35,"GUARANA TUCHAUA LATA 350 ML":2.52,"KIT DOCINHOS":11.44,"KIT SALVA VIDAS COPA":15.59,"MACARON DE BRIGADEIRO":3.99,"MACARON DE CUPUACU":2.71,"MACARON DE PISTACHE":8.69,"MACARON DOCE DE LEITE":2.96,"MACARON MARACUJA":2.99,"MILKSHAKE DE BRIGADEIRO":4.14,"MILKSHAKE DE MORANGO":8.1,"MILKSHAKE DE NUTELLA":10.79,"MILKSHAKE DE OVOMALTINE":4.14,"MINI BOLO COPA":17.92,"MINI BOLO DAS MAES":27.61,"MINI BOLO DE CENOURA E CHOCOLATE":17.14,"MINI BOLO DE CHOCOLATE":17.2,"MINI BOLO DE MILHO":1.63,"MINI BOLO DIA DOS NAMORADOS":16.38,"MINI BOLO VULCAO DE CHOCOLATE E NINHO":18.06,"MINI CUPCAKE COPA":1.0,"NHA BENTA CHOCOLATE FATIA":5.38,"OVO NO POTE":6.24,"PAOZINHO DE BATATA COM QUEIJO CUIA":2.84,"PAOZINHO SEM GLUTEN DE FRANGO":4.95,"PF BRIGADEIRO UVINHA 13G UND":0.28,"PORCAO DE LEITE INTEGRAL 120 ML":0.72,"PORCAO DE LEITE VEGETAL 120 ML":2.03,"PORCAO DE MORANGO":0.36,"PUDIM DE LEITE":2.06,"SALADA DE FRUTAS":5.6,"SCHWEPPES CITRUS LATA":2.95,"SODA ITALIANA FRUTAS VERMELHAS":6.64,"SODA ITALIANA TANGERINA":6.85,"SPRITE LATA":2.85,"SPRITE ZERO ACUCAR":2.77,"SUCO ABACAXI -COM- ACUCAR 300 ML":4.7,"SUCO ABACAXI -SEM- ACUCAR 300 ML":4.7,"SUCO ACEROLA -COM- ACUCAR 300 ML":4.7,"SUCO ACEROLA -SEM- ACUCAR 300 ML":4.7,"SUCO CAJU 300 ML":4.7,"SUCO CUPUACU 300 ML":4.7,"SUCO GOIABA -COM- ACUCAR 300 ML":4.7,"SUCO GOIABA -SEM- ACUCAR 300 ML":4.7,"SUCO MARACUJA -COM- ACUCAR 300 ML":4.7,"SUCO MARACUJA -SEM- ACUCAR 300 ML":4.7,"SUCO TAPEREBA 300 ML":4.7,"TACA MOUSSE DE OREO":11.0,"TACA MOUSSE TRADICIONAL":10.94,"TARTELETE DE LIMAO":1.88,"TARTELETE DE MORANGO":5.05,"TORTA ABACAXI (20 CM)":100.27,"TORTA ABACAXI (30 CM)":142.57,"TORTA DE ABACAXI FATIA":10.03,"TORTA DE CUPUACU (20 CM)":56.78,"TORTA DE CUPUACU (30 CM)":107.78,"TORTA DE CUPUACU FATIA":5.68,"TORTA DE MORANGO (30 CM)":146.39,"TORTA DE MORANGO FATIA":10.45,"TORTA MORANGO (20 CM)":89.35,"TORTA NEGA MALUCA (20 CM)":97.85,"TORTA NEGA MALUCA (30 CM)":150.96,"TORTA NEGA MALUCA FATIA":10.78,"TORTA PARAENSE (20 CM)":40.33,"TORTA PARAENSE (30 CM)":65.59,"TORTA PARAENSE FATIA":4.68,"TORTA SALGADA FATIA":5.38,"TORTA SALGADA INTEIRA":37.66,"TORTA SENSACAO (20 CM)":132.66,"TORTA SENSACAO (30 CM)":139.24,"TRANCA DE QUEIJO E PRESUNTO":5.09,"TRAVESSA BRIGADEIRO 1KG COPA":40.48,"TUCHAUA KS 290 ML":2.44,"UNHA DE CARANGUEJO":9.0,"VINHO TINTO":11.4};
+
+function getCustoUnitario(nomeProduto) {
+  if (!nomeProduto) return null;
+  // Busca na tabela dinâmica (teorico > perdas > fixo) — exata
+  if (_abcCustoProd[nomeProduto] !== undefined) return _abcCustoProd[nomeProduto];
+  // Busca case-insensitive
+  const upper = nomeProduto.toUpperCase().trim();
+  for (const [k, v] of Object.entries(_abcCustoProd)) {
+    if (k.toUpperCase().trim() === upper) return v;
+  }
+  return null;
+}
+
+const MES_CORES    = ['#1E2D4A','#C8504E','#0D9488','#D97706','#7C3AED','#3563E9'];
+const MES_CORES_BG = ['rgba(30,45,74,.04)','rgba(200,80,78,.04)','rgba(13,148,136,.04)','rgba(217,119,6,.04)','rgba(124,58,237,.04)','rgba(53,99,233,.04)'];
+
+const MESES_ORD = {JANEIRO:1,FEVEREIRO:2,'MARÇO':3,MARCO:3,ABRIL:4,MAIO:5,JUNHO:6,JULHO:7,AGOSTO:8,SETEMBRO:9,OUTUBRO:10,NOVEMBRO:11,DEZEMBRO:12};
+
+// ─── FORMATADORES ─────────────────────────────────────────────────────────────
+const fmtR   = v => 'R$ ' + (v||0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmtPct = v => (v||0).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + '%';
+const fmtNum = v => (v||0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 3 });
+
+// ─── UTILITÁRIOS ─────────────────────────────────────────────────────────────
+function normalizarFilial(nome) {
+  if (!nome) return null;
+  const n = nome.toString().toUpperCase().trim();
+  for (const cfg of FILIAIS_CONFIG) {
+    if (cfg.termos.some(t => n.includes(t.toUpperCase()))) return cfg.chave;
+  }
+  return n;
+}
+
+// Define se uma linha do Estoque Inicial/Final pertence à LOJA física ou ao CD DELALE,
+// com base na coluna "Centro est." (LOJA = loja; CENTRAL/PRODUÇÃO/CÂMARA FRIA = CD).
+// Sem a coluna (arquivo antigo), mantém o comportamento anterior (tudo na filial).
+function _destinoPorCentroEst(row, filialNormalizada) {
+  const centro = findStr(row, ['centro est.','centro est','centro de estoque','centro']).toUpperCase().trim();
+  if (!centro) return filialNormalizada;
+  return centro === 'LOJA' ? filialNormalizada : FILIAL_CD;
+}
+// Regra de negócio: compras da Duque vão pro CD, EXCETO Água de Coco (fica na própria Duque)
+function _destinoCompra(filialOrigem, produto) {
+  if (filialOrigem !== 'DUQUE') return filialOrigem;
+  return String(produto||'').toUpperCase().includes('AGUA DE COCO') ? 'DUQUE' : FILIAL_CD;
+}
+
+// ── CMV por Produto (Est. Inicial + Compras − Est. Final) ──────────────────
+let _cmvProdutoBase = {}; // { filial: { produto: {qtdCompras, ei, qtdEi, compras, ef, qtdEf} } }
+function compilarCmvPorProduto() {
+  _cmvProdutoBase = {};
+  const add = (filial, produto, campo, valor) => {
+    if (!_cmvProdutoBase[filial]) _cmvProdutoBase[filial] = {};
+    if (!_cmvProdutoBase[filial][produto]) _cmvProdutoBase[filial][produto] = {qtdCompras:0, ei:0, qtdEi:0, compras:0, ef:0, qtdEf:0};
+    _cmvProdutoBase[filial][produto][campo] += valor;
+  };
+  if (dados.ei) dados.ei.forEach(r => {
+    const tp = findStr(r, ['tp. movto.','tp. movto']).toLowerCase();
+    if (!tp.includes('invent')) return;
+    const f = normalizarFilial(findStr(r,['filial'])); if(!f) return;
+    const destino = _destinoPorCentroEst(r, f);
+    const prod = findStr(r,['produto']); if (!prod) return;
+    add(destino, prod, 'ei', findVal(r,['custo total']));
+    add(destino, prod, 'qtdEi', findQtd(r, ['movimento']));
+  });
+  if (dados.ef) dados.ef.forEach(r => {
+    const tp = findStr(r, ['tp. movto.','tp. movto']).toLowerCase();
+    if (!tp.includes('invent')) return;
+    const f = normalizarFilial(findStr(r,['filial'])); if(!f) return;
+    const destino = _destinoPorCentroEst(r, f);
+    const prod = findStr(r,['produto']); if (!prod) return;
+    add(destino, prod, 'ef', findVal(r,['custo total']));
+    add(destino, prod, 'qtdEf', findQtd(r, ['movimento']));
+  });
+  if (dados.compras) dados.compras.forEach(r => {
+    const f = normalizarFilial(findStr(r,['filial'])); if(!f) return;
+    const prod = findStr(r,['produto']); if (!prod) return;
+    const destino = _destinoCompra(f, prod);
+    add(destino, prod, 'compras', findVal(r,['total','valor total','custo total','total (r$)']));
+    add(destino, prod, 'qtdCompras', findQtd(r));
+  });
+}
+// Soma o valor de Transferências do relatório Cloudfy por filial.
+// Regra: só Tp. movto. = 'Transferência' (ignora 'Saldo anterior....') e só Centro est. = 'LOJA'
+// (exclui Produção/Central da Duque, que é o CD/Matriz híbrido — essas movimentações não
+// entram como transferência de loja, ficam de fora do cálculo).
+// Sinal: Entradas > 0 → soma (entrou produto na loja); Saidas != 0 → subtrai (saiu produto da loja).
+// Normaliza código de referência pra string sem decimais (evita "100126" != "100126.0")
+function _normCodigo(v) {
+  const s = String(v||'').trim();
+  const n = parseFloat(s.replace(',','.'));
+  return isNaN(n) ? s : String(Math.round(n));
+}
+
+// Mapa Cód. ref. -> Custo médio, vindo do relatório "Manutenção de Produtos" (fonte confiável)
+function _mapaCustoMedioMestre() {
+  const mapa = {};
+  if (!dados.produtosMestre) return mapa;
+  dados.produtosMestre.forEach(r => {
+    const cod   = _normCodigo(findStr(r, ['cód. ref.','cod. ref.']));
+    const custo = findVal(r, ['custo médio','custo medio']);
+    if (cod && custo > 0) mapa[cod] = custo;
+  });
+  return mapa;
+}
+
+// Detecta se o relatório de Transferências deste mês está com o bug conhecido do Cloudfy
+// (custo unit. errado nas linhas de Entrada). Compara o custo unit. de cada linha de Entrada
+// contra o Custo médio do mestre — se a maioria bater (até 20% de desvio, que é variação
+// normal do custo médio), o relatório está confiável este mês.
+let _transferenciasRelatorioConfiavel = null; // guarda o resultado do diagnóstico do mês atual
+function _relatorioTransferenciasConfiavel(custoMedioMapa) {
+  const porFilial = {}; // { filial: true/false } — diagnóstico individual por filial
+  if (!dados.transferencias) return porFilial;
+  const LIMIAR_DESVIO = 0.20;      // 20% de tolerância por linha
+  const LIMIAR_DIVERGENCIA = 0.40; // até 40% das linhas podem divergir e ainda considerar confiável
+  const statsPorFilial = {}; // { filial: {comparaveis, divergentes} }
+
+  dados.transferencias.forEach(r => {
+    const tipo = findStr(r, ['tp. movto.','tp. movto']).toLowerCase();
+    if (!tipo.startsWith('transfer')) return;
+    const centro = findStr(r, ['centro est.','centro est']).toUpperCase().trim();
+    if (centro !== 'LOJA') return;
+    const qtdEntrada = findVal(r, ['entradas']);
+    if (qtdEntrada <= 0) return; // o bug histórico é só nas linhas de Entrada
+
+    const filial = normalizarFilial(findStr(r, ['filial']));
+    if (!filial) return;
+
+    const cod = _normCodigo(findStr(r, ['cód. ref.','cod. ref.']));
+    const custoMedio = custoMedioMapa[cod];
+    if (!custoMedio) return;
+    const custoUnitRelatorio = findVal(r, ['custo unit.','custo unitario']);
+    if (!custoUnitRelatorio) return;
+
+    const st = statsPorFilial[filial] || (statsPorFilial[filial] = {comparaveis:0, divergentes:0});
+    st.comparaveis++;
+    const desvio = Math.abs(custoUnitRelatorio - custoMedio) / custoMedio;
+    if (desvio > LIMIAR_DESVIO) st.divergentes++;
+  });
+
+  Object.keys(statsPorFilial).forEach(f => {
+    const st = statsPorFilial[f];
+    porFilial[f] = st.comparaveis === 0 ? false : (st.divergentes / st.comparaveis) < LIMIAR_DIVERGENCIA;
+  });
+
+  return porFilial; // filiais sem linhas comparáveis não entram aqui e caêm no fallback seguro (mestre)
+}
+
+// Soma o valor de Transferências do relatório Cloudfy por filial.
+// Detecta automaticamente, POR FILIAL, se o custo unit. do relatório está confiável este mês:
+//  - Confiável  → usa o Custo total do próprio relatório (é o custo médio real do mês, mais preciso).
+//  - Bugado     → usa quantidade x Custo médio do mestre "Manutenção de Produtos" (fallback seguro).
+// Cada filial é avaliada de forma independente: se só 3 das 4 lojas estiverem com o custo
+// corrompido, apenas essas 3 usam o fallback — a filial confiável continua usando o próprio
+// Custo total do relatório, que é mais preciso.
+// Regra mantida em ambos os casos: só Tp. movto. = 'Transferência' e Centro est. = 'LOJA'.
+function _mapaTransferenciasRelatorio() {
+  const mapa = {};
+  if (!dados.transferencias) return mapa;
+  const custoMedioMapa = _mapaCustoMedioMestre();
+  const confiavelPorFilial = _relatorioTransferenciasConfiavel(custoMedioMapa);
+  _transferenciasRelatorioConfiavel = confiavelPorFilial;
+  const resumoDiag = Object.keys(confiavelPorFilial).length
+    ? Object.keys(confiavelPorFilial).map(f => f + ':' + (confiavelPorFilial[f] ? 'OK' : 'BUG')).join(', ')
+    : 'sem dados comparáveis';
+  console.log('[Transferências] Diagnóstico por filial este mês → ' + resumoDiag);
+
+  dados.transferencias.forEach(r => {
+    const tipo = findStr(r, ['tp. movto.','tp. movto']).toLowerCase();
+    if (!tipo.startsWith('transfer')) return; // ignora "Saldo anterior...."
+
+    const centro = findStr(r, ['centro est.','centro est']).toUpperCase().trim();
+    if (centro !== 'LOJA') return;
+
+    const filial = normalizarFilial(findStr(r, ['filial']));
+    if (!filial) return;
+
+    const qtdEntrada = findVal(r, ['entradas']);
+    const qtdSaida    = findVal(r, ['saidas']); // já vem negativo no arquivo
+    let valor;
+
+    const confiavel = confiavelPorFilial[filial] === true; // sem info da filial → fallback seguro
+    if (confiavel) {
+      const custoTotal = findVal(r, ['custo total']);
+      valor = qtdEntrada > 0 ? custoTotal : (qtdSaida !== 0 ? -custoTotal : 0);
+    } else {
+      const cod = _normCodigo(findStr(r, ['cód. ref.','cod. ref.']));
+      const custoMedio = custoMedioMapa[cod];
+      if (!custoMedio) return; // sem custo médio confiável no mestre, ignora a linha
+      valor = (qtdEntrada + qtdSaida) * custoMedio;
+    }
+
+    mapa[filial] = (mapa[filial] || 0) + valor;
+  });
+  return mapa;
+}
+function parseNumber(val) {
+  if (val === undefined || val === null || val === '') return 0;
+  if (typeof val === 'number') return val;
+  let str = String(val).replace(/[R$\s]/g, '').trim();
+  if (str.includes(',') && str.includes('.')) str = str.replace(/\./g, '').replace(',', '.');
+  else if (str.includes(',')) str = str.replace(',', '.');
+  return parseFloat(str) || 0;
+}
+
+function findVal(row, keysPossiveis) {
+  for (const k of keysPossiveis) {
+    const targetKey = k.toLowerCase().trim();
+    if (row[targetKey] !== undefined && row[targetKey] !== null && String(row[targetKey]).trim() !== '') {
+      return parseNumber(row[targetKey]);
+    }
+  }
+  return 0;
+}
+
+function findStr(row, keysPossiveis) {
+  for (const k of keysPossiveis) {
+    const targetKey = k.toLowerCase().trim();
+    if (row[targetKey] !== undefined && row[targetKey] !== null && String(row[targetKey]).trim() !== '') {
+      return String(row[targetKey]).trim();
+    }
+  }
+  return '';
+}
+
+// Busca quantidade com fallback amplo: tenta primeiro os aliases prioritários do contexto (ex.:
+// "Movimento" no relatório de Estoque Inicial/Final), depois os aliases genéricos e, por fim,
+// qualquer coluna cujo nome contenha "qtd" ou "quant" — cobre variações de cabeçalho do Cloudfy
+// não previstas nas listas fixas.
+function findQtd(row, aliasesPrioritarios) {
+  const aliases = (aliasesPrioritarios||[]).concat(['qtd.','qtd','quantidade','qtde.','qtde','qtd estoque','qtde estoque','quantidade estoque','saldo qtd.','saldo qtd','saldo']);
+  const v = findVal(row, aliases);
+  if (v) return v;
+  for (const k in row) {
+    if (/qtd|quant/.test(k)) {
+      const n = parseNumber(row[k]);
+      if (n) return n;
+    }
+  }
+  return 0;
+}
+
+function decodeHtmlEntities(str) {
+  return String(str).replace(/&quot;/g,'"').replace(/&amp;/g,'&').replace(/&#39;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>');
+}
+
+function extrairDtLabel(rawDate) {
+  if (!rawDate) return '?';
+  if (typeof rawDate === 'string' && rawDate.includes('T')) {
+    const d = new Date(rawDate);
+    return String(d.getDate()).padStart(2,'0') + '/' + String(d.getMonth()+1).padStart(2,'0');
+  }
+  if (rawDate instanceof Date) {
+    return String(rawDate.getDate()).padStart(2,'0') + '/' + String(rawDate.getMonth()+1).padStart(2,'0');
+  }
+  const s = String(rawDate).trim();
+  return s.length >= 5 ? s.substring(0, 5) : '?';
+}
+
+function _mesAtualDrive() {
+  return mesAtivoNome || '—';
+}
+
+function _svgLogoFallback() {
+  return `<svg width="32" height="28" viewBox="0 0 32 28" xmlns="http://www.w3.org/2000/svg"><rect width="32" height="28" rx="5" fill="#C8504E"/><text x="16" y="19" text-anchor="middle" font-family="sans-serif" font-size="11" font-weight="700" fill="white">D</text></svg>`;
+}
+
+// ─── DETECÇÃO CRONOLÓGICA DO MÊS ANTERIOR ────────────────────────────────────
+function getChronologicalPreviousMonth(currentMonthLabel) {
+  const meses = Object.keys(dadosPorMes);
+  const idx = meses.indexOf(currentMonthLabel.toUpperCase().trim());
+  if (idx !== -1 && idx < meses.length - 1) return meses[idx + 1];
+  return null;
+}
+
+// ─── LANÇAMENTOS — LEITURA ────────────────────────────────────────────────────
+// Fonte única: lancamentosManuaisAtivos, em memória — sincronizada a partir do servidor
+// (planilha "Lançamentos", via carregarLancamentosPlanilha) sempre que o mês é carregado
+// ou os lançamentos são salvos. O antigo fallback em localStorage foi removido: ele era
+// uma cópia redundante da mesma informação já persistida no servidor, e por ficar isolado
+// por navegador/dispositivo, podia mostrar valores desatualizados ou divergentes entre
+// pessoas diferentes acessando o dashboard.
+function getLancamento(tipo, filial) {
+  const v = parseFloat(lancamentosManuaisAtivos?.[tipo]?.[filial]);
+  return isNaN(v) ? 0 : v;
+}
+
+function getLancamentoVendasSite() {
+  const v = parseFloat(lancamentosManuaisAtivos?.vendas_site);
+  return isNaN(v) ? 0 : v;
+}
+
+// Faturamento do CD DELALE calculado fora do dashboard (preço de transferência já com
+// rateio de custos fixos aplicado). Lançamento manual mensal, continua sendo capturado
+// como insumo pro futuro cálculo de CMV Real Global — não é mais usado no CMV exibido
+// neste dashboard (que agora é só lojas).
+function getLancamentoFatCD() {
+  const v = parseFloat(lancamentosManuaisAtivos?.fat_cd_transf);
+  return isNaN(v) ? 0 : v;
+}
+
+// ─── LANÇAMENTOS — FORMULÁRIO ─────────────────────────────────────────────────
+
+// Constrói os campos do formulário de lançamentos
+function inicializarFormularioLancamentos() {
+  const containerP = document.getElementById('lanc-fields-perdas');
+  const containerT = document.getElementById('lanc-fields-transf');
+  if (!containerP || !containerT) return;
+
+  containerP.innerHTML = FILIAIS_ORDEM_LANC.map(f =>
+    `<div class="lanc-field-row">
+       <span>${f}</span>
+       <input class="lanc-input" id="lanc-perdas-${_idFilial(f)}" type="number" step="0.01" min="0" placeholder="0,00" oninput="atualizarTotaisLanc()">
+     </div>`
+  ).join('');
+
+  // Transferência é editável só pras 4 lojas. A do CD DELALE não é lançada aqui: é
+  // calculada automaticamente como o espelho negativo da soma das transferências das
+  // lojas, e entra no CMV Consolidado (embora o CD não apareça como linha na tabela
+  // "CMV por Filial") — a linha abaixo é só informativa.
+  containerT.innerHTML = FILIAIS_ORDEM.map(f =>
+    `<div class="lanc-field-row">
+       <span>${f}</span>
+       <input class="lanc-input" id="lanc-transf-${_idFilial(f)}" type="number" step="0.01" placeholder="0,00" oninput="atualizarTotaisLanc()">
+     </div>`
+  ).join('') + `
+     <div class="lanc-field-row" style="opacity:.7;">
+       <span>${FILIAL_CD}</span>
+       <span style="font-size:11px;color:var(--muted);font-style:italic;">calculado automaticamente (saldo das lojas)</span>
+     </div>`;
+}
+
+function _idFilial(f) {
+  return f.toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,'');
+}
+
+// Preenche o formulário com os valores já carregados do servidor pro mês ativo
+function preencherFormularioLancamentos() {
+  const mes = _mesAtualDrive();
+  if (mes === '—') return;
+
+  const fonte = lancamentosManuaisAtivos;
+
+  FILIAIS_ORDEM_LANC.forEach(f => {
+    const idF = _idFilial(f);
+    const elP = document.getElementById('lanc-perdas-' + idF);
+    const elT = document.getElementById('lanc-transf-' + idF);
+    if (elP) { const v = parseFloat(fonte?.perdas?.[f]); elP.value = (!isNaN(v) && v > 0) ? v : ''; }
+    if (elT) { const v = parseFloat(fonte?.transf?.[f]); elT.value = (!isNaN(v) && v !== 0) ? v : ''; }
+  });
+
+  const elSite = document.getElementById('lanc-site');
+  if (elSite) { const v = parseFloat(fonte?.vendas_site); elSite.value = (!isNaN(v) && v > 0) ? v : ''; }
+
+  const elFatCD = document.getElementById('lanc-fat-cd');
+  if (elFatCD) { const v = parseFloat(fonte?.fat_cd_transf); elFatCD.value = (!isNaN(v) && v > 0) ? v : ''; }
+
+  atualizarTotaisLanc();
+  _atualizarStatusLancamentos(mes, fonte);
+}
+
+function _atualizarStatusLancamentos(mes, fonte) {
+  const el = document.getElementById('lanc-status');
+  if (!el) return;
+  const temDados = fonte && (
+    Object.values(fonte.perdas || {}).some(v => v > 0) ||
+    Object.values(fonte.transf || {}).some(v => v !== 0) ||
+    parseFloat(fonte.vendas_site) > 0 ||
+    parseFloat(fonte.fat_cd_transf) > 0
+  );
+  el.style.display = 'flex';
+  if (temDados) {
+    el.className = 'lanc-status-bar loaded';
+    el.innerHTML = '✅ Lançamentos carregados da planilha para <strong>' + mes + '</strong>. Edite e salve para atualizar.';
+  } else {
+    el.className = 'lanc-status-bar empty';
+    el.innerHTML = '⚠️ Nenhum lançamento encontrado para <strong>' + mes + '</strong>. Preencha os campos abaixo.';
+  }
+}
+
+function atualizarTotaisLanc() {
+  let totP = 0, totT = 0;
+  FILIAIS_ORDEM_LANC.forEach(f => {
+    const idF = _idFilial(f);
+    totP += parseFloat(document.getElementById('lanc-perdas-' + idF)?.value) || 0;
+    totT += parseFloat(document.getElementById('lanc-transf-' + idF)?.value) || 0;
+  });
+  document.getElementById('lanc-total-perdas').textContent = fmtR(totP);
+  document.getElementById('lanc-total-transf').textContent = fmtR(totT);
+}
+
+// Lê os inputs e monta o objeto de lançamentos
+function _lerInputsLancamentos() {
+  const obj = { perdas: {}, transf: {}, vendas_site: 0 };
+  FILIAIS_ORDEM_LANC.forEach(f => {
+    const idF = _idFilial(f);
+    const p = parseFloat(document.getElementById('lanc-perdas-' + idF)?.value) || 0;
+    const t = parseFloat(document.getElementById('lanc-transf-' + idF)?.value) || 0;
+    if (p !== 0) obj.perdas[f] = p;
+    if (t !== 0) obj.transf[f] = t;
+  });
+  obj.vendas_site = parseFloat(document.getElementById('lanc-site')?.value) || 0;
+  obj.fat_cd_transf = parseFloat(document.getElementById('lanc-fat-cd')?.value) || 0;
+  return obj;
+}
+
+function salvarLancamentosNoDrive() {
+  const mes = _mesAtualDrive();
+  if (mes === '—') { mostrarAlerta('Sincronize um mês antes de salvar os lançamentos.'); return; }
+
+  const btn   = document.getElementById('btn-salvar-lanc');
+  const badge = document.getElementById('lanc-saved-badge');
+  btn.disabled    = true;
+  btn.textContent = '⏳ Salvando...';
+  badge.style.display = 'none';
+
+  const obj = _lerInputsLancamentos();
+
+  google.script.run
+    .withSuccessHandler(function() {
+      // Atualiza memória imediatamente
+      lancamentosManuaisAtivos = obj;
+      // Atualiza também no dadosPorMes (para trocar de mês não sobrescrever)
+      if (dadosPorMes[mes]) dadosPorMes[mes].lancamentosManuais = obj;
+
+      btn.disabled    = false;
+      btn.textContent = '💾 Salvar no Drive & Recalcular';
+      badge.style.display = 'block';
+      setTimeout(() => { badge.style.display = 'none'; }, 4000);
+
+      _atualizarStatusLancamentos(mes, obj);
+
+      // Recalcula o painel com os novos valores
+      if (dados.ei || dados.ef || dados.compras || dados.vendas) {
+        executarCalculosPainel();
+      }
+    })
+    .withFailureHandler(function(err) {
+      btn.disabled    = false;
+      btn.textContent = '💾 Salvar no Drive & Recalcular';
+      mostrarAlerta('Erro ao salvar lançamentos: ' + err.message);
+    })
+    .salvarLancamentosPlanilha(mes, obj);
+}
+
+// ─── INICIALIZAÇÃO ────────────────────────────────────────────────────────────
+window.addEventListener('load', () => {
+  // ── Logo ─────────────────────────────────────────────────────────────────
+  try {
+    const logoWrap = document.getElementById('sidebar-logo-img-wrap');
+    if (LOGO_CONFIG.url && LOGO_CONFIG.url.trim()) {
+      const img = document.createElement('img');
+      img.src = LOGO_CONFIG.url; img.className = 'logo-img';
+      img.style.height = LOGO_CONFIG.altura; img.style.width = LOGO_CONFIG.largura;
+      img.alt = 'Logo Delalê';
+      img.onerror = () => { try { logoWrap.innerHTML = _svgLogoFallback(); } catch(_){} };
+      logoWrap.appendChild(img);
+    } else { logoWrap.innerHTML = _svgLogoFallback(); }
+  } catch(eLogo) { console.warn('[Init] Logo:', eLogo.message); }
+
+  // ── Chart.js defaults ────────────────────────────────────────────────────
+  try {
+    if (typeof Chart !== 'undefined' && Chart.defaults?.font) {
+      Chart.defaults.font.family = "'Figtree', sans-serif";
+      Chart.defaults.font.size   = 12;
+      Chart.defaults.color       = '#64748B';
+      Chart.defaults.borderColor = '#E0E4F0';
+      if (Chart.defaults.plugins?.legend?.labels) {
+        Chart.defaults.plugins.legend.labels.usePointStyle = true;
+        Chart.defaults.plugins.legend.labels.padding       = 16;
+      }
+    }
+  } catch(eChart) { console.warn('[Init] Chart defaults:', eChart.message); }
+
+  // ── Formulário de lançamentos ─────────────────────────────────────────────
+  try { inicializarFormularioLancamentos(); } catch(eForm) { console.warn('[Init] Form:', eForm.message); }
+
+// ── Aguarda google.script estar disponível ────────────────────────────────
+  _aguardarGoogleScript(0);
+});
+
+function _aguardarGoogleScript(tentativa) {
+  const MAX = 20; // tenta por até 10s (20 × 500ms)
+  if (typeof google !== 'undefined' && google.script && google.script.run) {
+    carregarTudo(false);
+    return;
+  }
+  if (tentativa >= MAX) {
+    document.getElementById('drive-status-msg').textContent =
+      '⚠️ Abra pelo link do Web App no Google Apps Script. Não funciona abrindo o HTML diretamente.';
+    return;
+  }
+  setTimeout(() => _aguardarGoogleScript(tentativa + 1), 500);
+}
+
+// ─── CARGA DO DRIVE — NOVA ARQUITETURA MULTI-MÊS ────────────────────────────
+
+// Carrega TODOS os meses de uma vez. Substitui puxarDadosDrive.
+function carregarTudo(forcar) {
+  const statusEl  = document.getElementById('drive-status-msg');
+  const loadingEl = document.getElementById('drive-loading');
+  const subEl     = document.getElementById('loading-sub');
+  const btnReproc = document.getElementById('btn-reprocessar');
+  const cardsGrid = document.getElementById('meses-cards-grid');
+
+  if (forcar && Object.keys(dadosPorMes).length > 0) {
+    if (!confirm('Reprocessar vai ignorar o cache e reler todos os arquivos do Drive. Pode demorar alguns minutos. Continuar?')) return;
+  }
+
+  statusEl.textContent = forcar ? 'Reprocessando arquivos (sem cache)...' : 'Carregando dados do Drive...';
+  loadingEl.style.display = 'flex';
+  if (subEl) subEl.textContent = forcar ? 'Ignorando cache — lendo arquivos...' : 'Verificando cache e sincronizando...';
+  btnReproc.disabled = true;
+  if (cardsGrid) cardsGrid.style.display = 'none';
+
+  const inicio = Date.now();
+
+  google.script.run
+    .withSuccessHandler(function(todosOsDados) {
+      const elapsed = Date.now() - inicio;
+      loadingEl.style.display = 'none';
+      btnReproc.disabled = false;
+
+      if (!todosOsDados || Object.keys(todosOsDados).length === 0) {
+        statusEl.textContent = '⚠️ Nenhuma pasta de mês encontrada na raiz do Drive. Verifique a estrutura de pastas.';
+        mostrarAlerta('Nenhuma pasta de mês encontrada. Certifique-se de que existem subpastas como "4. ABRIL 2026" dentro da pasta raiz CMV.');
+        return;
+      }
+
+      dadosPorMes = todosOsDados;
+      const meses = Object.keys(dadosPorMes);
+
+      // Popula seletor global no topbar
+      const sel = document.getElementById('mes-global-select');
+      sel.innerHTML = meses.map(m => `<option value="${m}">${m}</option>`).join('');
+      document.getElementById('mes-filter-wrap').style.display = 'flex';
+
+      // Renderiza cards de meses
+      _renderizarCardsMeses(meses);
+      if (cardsGrid) cardsGrid.style.display = 'block';
+
+      const badge = document.getElementById('cache-badge');
+      if (elapsed < 8000 && !forcar) {
+        badge.style.display = 'inline-block';
+        badge.textContent = `⚡ Cache (${(elapsed/1000).toFixed(1)}s)`;
+      } else { badge.style.display = 'none'; }
+
+      statusEl.textContent = `✅ ${meses.length} mês(es) carregado(s) em ${(elapsed/1000).toFixed(1)}s. Use o seletor acima para alternar entre meses.`;
+
+      // Carrega o histórico compartilhado (Comparativo Mensal/Sparklines/Ranking ABC
+      // anterior) ANTES de ativar o mês, pra já nascer com os deltas "vs mês anterior"
+      // certos na primeira renderização.
+      google.script.run
+        .withSuccessHandler(function(historico) {
+          _histServidor = historico || { HIST_CMV: {}, HIST_COMPRAS: {}, HIST_CMV_FILIAL: {}, ABC_HIST: {} };
+          mudarMesAtivo(meses[0]);
+        })
+        .withFailureHandler(function(err) {
+          console.warn('[Histórico] Falha ao carregar do servidor, seguindo sem histórico: ' + err.message);
+          mudarMesAtivo(meses[0]);
+        })
+        .carregarHistoricoServidor();
+    })
+    .withFailureHandler(function(err) {
+      loadingEl.style.display = 'none';
+      btnReproc.disabled = false;
+      const msg = err.message || JSON.stringify(err);
+      statusEl.textContent = '❌ Erro: ' + msg;
+      mostrarAlerta('Falha ao carregar dados: ' + msg);
+      console.error('[CMV] carregarTudo failure:', err);
+    })
+    .obterTodosOsDados(forcar);
+}
+
+// Muda o mês ativo e recalcula o painel instantaneamente
+function mudarMesAtivo(nomeLabel) {
+  if (!nomeLabel || !dadosPorMes[nomeLabel]) return;
+
+  mesAtivoNome = nomeLabel;
+  dados = dadosPorMes[nomeLabel];
+
+  // Sincroniza lançamentos em memória (fonte: servidor, planilha "Lançamentos")
+  lancamentosManuaisAtivos = dados.lancamentosManuais || { perdas: {}, transf: {}, vendas_site: 0 };
+
+  // Atualiza selects
+  const sel = document.getElementById('mes-global-select');
+  if (sel) sel.value = nomeLabel;
+
+  // Marca card ativo
+  document.querySelectorAll('.mes-card').forEach(c => {
+    c.classList.toggle('ativo', c.dataset.mes === nomeLabel);
+  });
+
+  // Atualiza formulário de lançamentos
+  preencherFormularioLancamentos();
+
+  // Recalcula o painel
+  if (dados.ei || dados.ef || dados.compras || dados.vendas) {
+    executarCalculosPainel();
+    trocarAba('cmv');
+  }
+}
+
+// Renderiza cards de meses na aba Drive
+function _renderizarCardsMeses(meses) {
+  const container = document.getElementById('meses-cards');
+  if (!container) return;
+  container.innerHTML = meses.map(m => {
+    const pac = dadosPorMes[m];
+    const temErro = !!pac?.erro;
+    const arquivos = [pac?.ei?'EI':'', pac?.ef?'EF':'', pac?.compras?'Compras':'', pac?.vendas?'Vendas':'', pac?.teorico?'Teórico':'', pac?.perdas?'Perdas':''].filter(Boolean);
+    return `<div class="mes-card ${temErro?'erro':''}" data-mes="${m}" onclick="mudarMesAtivo('${m}')">
+      <div class="mes-card-nome">${m}</div>
+      <div class="mes-card-info">${temErro ? '⚠️ Erro: '+pac.erro : arquivos.join(' · ') || 'Sem arquivos'}</div>
+      <div class="mes-card-badge">${temErro ? 'Erro' : arquivos.length + ' arquivo(s)'}</div>
+    </div>`;
+  }).join('');
+}
+
+// ─── CÁLCULOS PRINCIPAIS ──────────────────────────────────────────────────────
+function executarCalculosPainel() {
+  try { _calcularInterno(); }
+  catch(e) { mostrarAlerta('Erro ao calcular painel: ' + e.message); console.error('[CMV]', e); }
+}
+
+function _calcularInterno() {
+  _deduplicarHistoricoServidor();
+  const eiMapa = {}, efMapa = {}, compMapa = {}, vendMapa = {}, teoricoMapa = {};
+  const vendFisicaMapa = {}, vendDeliveryMapa = {};
+
+  // EI/EF: "Centro est." = LOJA fica na própria filial; CENTRAL/PRODUÇÃO/CÂMARA FRIA → CD DELALE
+  if (dados.ei) dados.ei.forEach(r => {
+    const tp = findStr(r, ['tp. movto.','tp. movto']).toLowerCase();
+    if (tp.includes('invent')) {
+      const f = normalizarFilial(findStr(r,['filial'])); if(!f) return;
+      const destino = _destinoPorCentroEst(r, f);
+      eiMapa[destino] = (eiMapa[destino]||0) + findVal(r,['custo total']);
+    }
+  });
+
+  if (dados.ef) dados.ef.forEach(r => {
+    const tp = findStr(r, ['tp. movto.','tp. movto']).toLowerCase();
+    if (tp.includes('invent')) {
+      const f = normalizarFilial(findStr(r,['filial'])); if(!f) return;
+      const destino = _destinoPorCentroEst(r, f);
+      efMapa[destino] = (efMapa[destino]||0) + findVal(r,['custo total']);
+    }
+  });
+
+  // Compras: cada loja compra seu próprio insumo — EXCETO "DELALE - DUQUE", cuja compra
+  // hoje é toda feita pelo CD (Produção/Central) e vai pra CD DELALE, SALVO compras de
+  // "Água de Coco", que ficam registradas na própria loja Duque.
+  if (dados.compras) dados.compras.forEach(r => {
+    const f = normalizarFilial(findStr(r,['filial'])); if(!f) return;
+    const prod = findStr(r,['produto']);
+    const destino = _destinoCompra(f, prod);
+    compMapa[destino] = (compMapa[destino]||0) + findVal(r,['total','valor total','custo total','total (r$)']);
+  });
+
+  // Vendas: continuam por loja (CD não vende diretamente). A quebra Loja Física x Delivery
+  // é só para exibição — o CMV% segue calculado sobre o faturamento TOTAL da filial,
+  // já que o custo (produção/estoque) não é rastreado separadamente por canal.
+  if (dados.vendas) dados.vendas.forEach(r => {
+    const filialOrig = findStr(r,['filial']);
+    const f = normalizarFilial(filialOrig); if(!f) return;
+    const valor = findVal(r,['total','valor total','faturamento']);
+    vendMapa[f] = (vendMapa[f]||0) + valor;
+    if (filialOrig.toUpperCase().includes('DELIVERY')) vendDeliveryMapa[f] = (vendDeliveryMapa[f]||0) + valor;
+    else vendFisicaMapa[f] = (vendFisicaMapa[f]||0) + valor;
+  });
+
+  if (dados.teorico) Object.assign(teoricoMapa, calcularTeoricoMapa(dados.teorico));
+
+  let totalPerdasRs=0, totalPerdasVend=0, totalPerdasVol=0, totalPerdasKg=0;
+  const mapaPerdasFilial={}, mapaPerdasFilialSist={};
+  decompDetalhes=[]; perdasDetalhadas=[];
+
+  if (dados.perdas) {
+    dados.perdas.forEach(r => {
+      const perdasRs   = Math.abs(findVal(r,['perdas em r$']));
+      const perdasVend = Math.abs(findVal(r,['perdas em vendas']));
+      const volume     = Math.abs(findVal(r,['perdas em volume']));
+      const perdaKg    = Math.abs(findVal(r,['perda em kg']));
+      const custoUnit  = Math.abs(findVal(r,['custo']));
+      if (perdasRs===0 && perdasVend===0 && volume===0) return;
+      const filial  = normalizarFilial(findStr(r,['filial'])) || 'NÃO IDENTIFICADA';
+      const produto = findStr(r,['produto']) || 'Sem Nome';
+      const motivo  = findStr(r,['motivo']) || 'Não Informado';
+      const grupo   = findStr(r,['grupo']) || 'Sem Grupo';
+      const unidade = findStr(r,['unidade']) || '';
+      const dtLabel = extrairDtLabel(findStr(r,['data']) || '');
+      mapaPerdasFilial[filial]     = (mapaPerdasFilial[filial]||0) + perdasRs;
+      mapaPerdasFilialSist[filial] = (mapaPerdasFilialSist[filial]||0) + perdasRs;
+      totalPerdasRs+=perdasRs; totalPerdasVend+=perdasVend; totalPerdasVol+=volume; totalPerdasKg+=perdaKg;
+      decompDetalhes.push({filial,produto,motivo,custo:perdasRs});
+      perdasDetalhadas.push({filial,produto,motivo,grupo,volume,unidade,custoUnit,perdasRs,perdasVend,perdaKg,dtLabel});
+    });
+  }
+
+  // Divisão Loja x CD dentro da Duque: o relatório de Perdas normal traz "DUQUE" com Loja e CD
+  // JUNTOS (não tem coluna Centro est. pra separar). O relatório "Rel movimentação de estoque
+  // Por Produto" tem essa coluna — usamos a PROPORÇÃO dele pra dividir o total que já está em
+  // "DUQUE", sem adicionar valor novo (é rateio, não soma).
+  if (dados.perdasCD) {
+    let totalLojaDuque = 0, totalNaoLojaDuque = 0;
+    const linhasPerdaCD = []; // produtos reais perdidos no CD, vindos do Rel. de Movimentação
+    dados.perdasCD.forEach(r => {
+      const tipo = findStr(r, ['tp. movto.','tp. movto']).toLowerCase();
+      if (!tipo.startsWith('perda')) return;
+      const filial = normalizarFilial(findStr(r,['filial']));
+      if (filial !== 'DUQUE') return; // só a Duque mistura Loja/CD nesse jeito
+      const centro = findStr(r, ['centro est.','centro est']).toUpperCase().trim();
+      const custoTotal = Math.abs(findVal(r, ['custo total']));
+      if (centro === 'LOJA') { totalLojaDuque += custoTotal; return; }
+      totalNaoLojaDuque += custoTotal;
+      linhasPerdaCD.push({
+        produto: findStr(r,['produto']) || 'Sem Nome',
+        motivo:  findStr(r,['tp. movto.','tp. movto']) || 'Não Informado',
+        grupo:   findStr(r,['grupo']) || 'Sem Grupo',
+        dtLabel: extrairDtLabel(findStr(r,['data']) || ''),
+        custo:   custoTotal
+      });
+    });
+
+    const totalMovimento = totalLojaDuque + totalNaoLojaDuque;
+    if (totalMovimento > 0) {
+      const propCD = totalNaoLojaDuque / totalMovimento;
+      const duqueBrutoAtual = mapaPerdasFilial['DUQUE'] || 0; // Loja + CD juntos, vindo do relatório de Perdas
+      const parcelaCD = duqueBrutoAtual * propCD;
+
+      mapaPerdasFilial['DUQUE']       = duqueBrutoAtual - parcelaCD;
+      mapaPerdasFilialSist['DUQUE']   = (mapaPerdasFilialSist['DUQUE']||0) - parcelaCD;
+      mapaPerdasFilial[FILIAL_CD]     = (mapaPerdasFilial[FILIAL_CD]||0) + parcelaCD;
+      mapaPerdasFilialSist[FILIAL_CD] = (mapaPerdasFilialSist[FILIAL_CD]||0) + parcelaCD;
+      // totalPerdasRs não muda — é realocação entre filiais, não dinheiro novo.
+
+      // Ajuste agregado (some/subtrai da Duque pra não contar em dobro). Fica de fora
+      // da tabela "Top Produtos" (flag ajuste:true), mas continua nos gráficos/tabelas
+      // por filial e por motivo, que precisam do total batendo.
+      decompDetalhes.push({filial:'DUQUE', produto:'Ajuste: Rateio p/ CD (Produção/Central)', motivo:'Rateio Loja↔CD', custo:-parcelaCD});
+      perdasDetalhadas.push({filial:'DUQUE', produto:'Ajuste: Rateio p/ CD', motivo:'Rateio Loja↔CD', grupo:'Ajuste', volume:0, unidade:'', custoUnit:0, perdasRs:-parcelaCD, perdasVend:0, perdaKg:0, dtLabel:'—', ajuste:true});
+
+      // Produtos reais perdidos no CD, um por um. Reescala pra bater exatamente com
+      // parcelaCD (o relatório de Perdas é a fonte oficial do total; o de Movimentação
+      // só empresta a proporção por produto).
+      const fatorAjuste = totalNaoLojaDuque > 0 ? (parcelaCD / totalNaoLojaDuque) : 0;
+      linhasPerdaCD.forEach(l => {
+        const perdasRsAjustado = l.custo * fatorAjuste;
+        decompDetalhes.push({filial:FILIAL_CD, produto:l.produto, motivo:l.motivo, custo:perdasRsAjustado});
+        perdasDetalhadas.push({filial:FILIAL_CD, produto:l.produto, motivo:l.motivo, grupo:l.grupo, volume:0, unidade:'', custoUnit:0, perdasRs:perdasRsAjustado, perdasVend:0, perdaKg:0, dtLabel:l.dtLabel});
+      });
+    }
+  }
+
+  // Adiciona perdas manuais dos lançamentos (lojas + CD)
+  FILIAIS_ORDEM_LANC.forEach(f => {
+    const perdaMan = getLancamento('perdas', f);
+    if (perdaMan <= 0) return;
+    mapaPerdasFilial[f] = (mapaPerdasFilial[f]||0) + perdaMan;
+    totalPerdasRs += perdaMan;
+    decompDetalhes.push({filial:f, produto:'Ajuste Manual', motivo:'Ajuste Manual', custo:perdaMan});
+    perdasDetalhadas.push({filial:f, produto:'Ajuste Manual', motivo:'Ajuste Manual', grupo:'Lançamento Manual', volume:0, unidade:'', custoUnit:0, perdasRs:perdaMan, perdasVend:0, perdaKg:0, dtLabel:'—'});
+  });
+
+  // Vendas site somadas na DUQUE (loja física)
+  const vendasSiteTotal = getLancamentoVendasSite();
+  if (vendasSiteTotal > 0) {
+    vendMapa['DUQUE'] = (vendMapa['DUQUE']||0) + vendasSiteTotal;
+    vendFisicaMapa['DUQUE'] = (vendFisicaMapa['DUQUE']||0) + vendasSiteTotal;
+  }
+
+  // ── Linhas das 4 lojas ──────────────────────────────────────────────────
+  const transfRelatorioMapa = _mapaTransferenciasRelatorio();
+  const resultadosLojas = FILIAIS_ORDEM.map(f => {
+    const ei=eiMapa[f]||0, ef=efMapa[f]||0, c=compMapa[f]||0, fat=vendMapa[f]||0;
+    const teoricoRs   = teoricoMapa[f]||0;
+    const perdaManual = getLancamento('perdas', f);
+    const transf      = getLancamento('transf', f) + (transfRelatorioMapa[f]||0); // manual + relatório Cloudfy
+    const perdaSist   = mapaPerdasFilialSist[f]||0;
+    const perda       = perdaManual + perdaSist;
+    const cmv         = ei + c + transf - ef - perda;
+    const pct         = fat>0 ? (cmv/fat*100) : 0;
+    const teoricoPct  = fat>0 ? (teoricoRs/fat*100) : 0;
+    return {
+      filial:f, ei, ef, c, perda, transf, cmv, fat, pct, mg:fat-cmv, teoricoRs, teoricoPct,
+      fatFisica: vendFisicaMapa[f]||0, fatDelivery: vendDeliveryMapa[f]||0
+    };
+  }).filter(r => r.fat>0 || r.c>0 || r.ei>0);
+
+  // ── CD DELALE — fora da tabela "CMV por Filial", mas entra no CMV Consolidado ──
+  // DECISÃO DA DIRETORIA (reunião jul/2026, ajustada): o CD não aparece como linha na
+  // tabela/gráficos "CMV por Filial" — só as 4 lojas. Mas o custo do CD (Estoque/Produção)
+  // é parte real do CMV consolidado da rede, então volta a somar no "tot" (CMV Consolidado,
+  // Lucro Bruto etc.). O faturamento do CD NÃO soma no tot.fat — é preço de transferência
+  // interno, somar duplicaria a receita já contada nas lojas.
+  const eiCD = eiMapa[FILIAL_CD]||0, efCD = efMapa[FILIAL_CD]||0, cCD = compMapa[FILIAL_CD]||0;
+  const perdaSistCD   = mapaPerdasFilialSist[FILIAL_CD]||0;
+  const perdaManualCD = getLancamento('perdas', FILIAL_CD);
+  const perdaCD        = perdaManualCD + perdaSistCD;
+  // Transferência do CD é o espelho negativo da soma das transferências das lojas
+  // (o que sai do CD entra como transferência na loja, e vice-versa).
+  const transfLojasSum = resultadosLojas.reduce((s,r)=>s+r.transf,0);
+  const transfCD        = -transfLojasSum;
+  const cmvCD           = eiCD + cCD + transfCD - efCD - perdaCD;
+  _dadosBrutosCD = {
+    ei: eiCD, ef: efCD, c: cCD, perda: perdaCD, transf: transfCD, cmv: cmvCD,
+    fatManualTransferencia: getLancamentoFatCD()
+  };
+
+  const resultados = resultadosLojas; // tabela/gráficos "CMV por Filial": só lojas
+
+  // ── CMV Consolidado — lojas + CD ────────────────────────────────────────────
+  const totLojas = resultadosLojas.reduce((acc,r) => ({
+    ei:acc.ei+r.ei, ef:acc.ef+r.ef, c:acc.c+r.c, transf:acc.transf+r.transf,
+    perda:acc.perda+r.perda, cmv:acc.cmv+r.cmv, fat:acc.fat+r.fat,
+    teoricoRs:acc.teoricoRs+r.teoricoRs
+  }), {ei:0,ef:0,c:0,transf:0,perda:0,cmv:0,fat:0,teoricoRs:0});
+
+  const tot = {
+    ei: totLojas.ei + eiCD,
+    ef: totLojas.ef + efCD,
+    c:  totLojas.c  + cCD,
+    transf: totLojas.transf + transfCD,
+    perda:  totLojas.perda  + perdaCD,
+    cmv:    totLojas.cmv    + cmvCD,
+    fat: totLojas.fat, // faturamento do CD não soma aqui (evita duplicar receita)
+    teoricoRs: totLojas.teoricoRs
+  };
+  tot.mg         = tot.fat - tot.cmv;
+  tot.pct        = tot.fat>0 ? tot.cmv/tot.fat*100 : 0;
+  tot.teoricoPct = tot.fat>0 ? tot.teoricoRs/tot.fat*100 : 0;
+  tot.mgPct      = tot.fat>0 ? tot.mg/tot.fat*100 : 0;
+
+  _kpiResultados = resultadosLojas;
+  _kpiVendasSite = vendasSiteTotal;
+
+  renderKpis(tot);
+  renderTabela(resultados, tot);
+  renderGraficosMestre(resultados, tot);
+  processarPainelTeorico(resultadosLojas, tot);
+  compilarCmvPorProduto();
+  popularFiltroFilialCmvProduto();
+  renderCmvPorProduto();
+
+  if (perdasDetalhadas.length > 0) {
+    document.getElementById('perdas-empty-state').style.display = 'none';
+    document.getElementById('perdas-resultado').style.display   = 'block';
+    renderPainelPerdas(totalPerdasRs, totalPerdasVend, totalPerdasVol, totalPerdasKg, tot.fat);
+  } else {
+    document.getElementById('perdas-empty-state').style.display = 'block';
+    document.getElementById('perdas-resultado').style.display   = 'none';
+  }
+
+  compilarBasesAbc();
+
+  document.getElementById('resultado').style.display = 'block';
+  document.getElementById('cmv-empty').style.display = 'none';
+
+  const labelMesAtual = _mesAtualDrive();
+  salvarHistoricoCompras(labelMesAtual, dados.compras);
+  salvarHistoricoCmvFilial(labelMesAtual, resultados, tot);
+}
+</script>

@@ -1,0 +1,692 @@
+<script>
+// ════════════════════════════════════════════════════════════════════
+//  Script_Graficos.html — Sparklines · Comparativo Mensal · KPIs ·
+//  Tabela CMV · Gráficos · Painel de Perdas · Painel Teórico ·
+//  Árvore de Decomposição
+//  (depende de variáveis/funções definidas em Script_Core.html)
+// ════════════════════════════════════════════════════════════════════
+
+// ─── HISTÓRICO / SNAPSHOTS ────────────────────────────────────────────────────
+// Lê/escreve em _histServidor (memória, populado 1x no carregarTudo a partir do
+// PropertiesService — ver Persistencia.gs). Toda escrita chama _persistirHistorico()
+// pra manter o servidor sincronizado e o histórico compartilhado entre sessões/pessoas.
+function salvarSnapshotMes(labelMes, tot) {
+  const labelNorm = _normalizarLabelMes(labelMes) || String(labelMes||'').trim().toUpperCase();
+  if (!labelNorm) return;
+  _histServidor.HIST_CMV[labelNorm] = { fat:tot.fat, cmv:tot.cmv, pct:tot.pct, mg:tot.mg, mgPct:tot.mgPct };
+  _persistirHistorico('HIST_CMV');
+}
+
+function obterMesAnterior(labelMesAtual) {
+  const mesAnt = getChronologicalPreviousMonth(labelMesAtual);
+  if (!mesAnt) return null;
+  const mesAntNorm = _normalizarLabelMes(mesAnt) || mesAnt.trim().toUpperCase();
+  return _histServidor.HIST_CMV[mesAntNorm] || _histServidor.HIST_CMV[mesAnt] || null;
+}
+function obterSnapMesAnterior(labelMesAtual) {
+  const mesAnt = getChronologicalPreviousMonth(labelMesAtual);
+  if (!mesAnt) return null;
+  const mesAntNorm = _normalizarLabelMes(mesAnt) || mesAnt.trim().toUpperCase();
+  return _histServidor.HIST_CMV_FILIAL[mesAntNorm] || _histServidor.HIST_CMV_FILIAL[mesAnt] || null;
+}
+
+function _deltaPctPontosHtml(atualPct, anteriorPct) {
+  if (anteriorPct === null || anteriorPct === undefined) return '';
+  const diff = atualPct - anteriorPct;
+  if (Math.abs(diff) < 0.05) return '';
+  const positivo = diff < 0; // CMV% menor é melhor
+  const cor  = positivo ? 'var(--green)' : 'var(--red)';
+  const seta = diff > 0 ? '▲' : '▼';
+  return `<span style="font-size:10px;color:${cor};font-weight:700;margin-left:6px;white-space:nowrap;">${seta} ${Math.abs(diff).toFixed(1)}pp</span>`;
+}
+
+
+function _deltaHtml(atual, anterior, inverso) {
+  if (anterior === null || anterior === undefined || anterior === 0) return '';
+  const diff    = atual - anterior;
+  const diffPct = Math.abs(diff/anterior*100).toFixed(1);
+  const positivo = inverso ? diff < 0 : diff > 0;
+  const cor  = positivo ? 'var(--green)' : 'var(--red)';
+  const seta = diff > 0 ? '▲' : '▼';
+  return `<div style="font-size:11px;color:${cor};margin-top:6px;font-weight:700;">${seta} ${diffPct}% vs mês ant.</div>`;
+}
+
+// ─── SPARKLINES ───────────────────────────────────────────────────────────────
+function _sortMeses(arr) {
+  return arr.slice().sort((a, b) => {
+    const pa = a.toUpperCase().split(/\s+/).filter(Boolean);
+    const pb = b.toUpperCase().split(/\s+/).filter(Boolean);
+    const ya = parseInt(pa[pa.length-1]) || 0;
+    const yb = parseInt(pb[pb.length-1]) || 0;
+    if (ya !== yb) return ya - yb;
+    const mesA = pa.map(p => MESES_ORD[p]).find(v => v > 0) || 0;
+    const mesB = pb.map(p => MESES_ORD[p]).find(v => v > 0) || 0;
+    return mesA - mesB;
+  });
+}
+
+function renderSparklines() {
+  try {
+    const hist  = _histServidor.HIST_CMV;
+    const meses = _sortMeses(Object.keys(hist));
+    if (meses.length < 2) return;
+    const labels = meses.map(m => { const p=m.split(' '); return p.map(x=>MESES_ORD[x]?x.substring(0,3):null).find(Boolean)||m.substring(0,3); });
+    const fat = meses.map(m => hist[m]?.fat  || 0);
+    const cmv = meses.map(m => hist[m]?.cmv  || 0);
+    const pct = meses.map(m => hist[m]?.pct  || 0);
+    const mg  = meses.map(m => hist[m]?.mg   || 0);
+    const _spark = (data, color) => ({
+      type:'line', data:{labels,datasets:[{data,borderColor:color,backgroundColor:color+'18',borderWidth:1.5,pointRadius:0,fill:true,tension:0.4}]},
+      options:{responsive:true,maintainAspectRatio:false,animation:false,plugins:{legend:{display:false},tooltip:{enabled:false}},scales:{x:{display:false},y:{display:false}}}
+    });
+    [{id:'spark-fat',data:fat,color:'#3563E9'},{id:'spark-cmv',data:cmv,color:'#DC4C4C'},{id:'spark-pct',data:pct,color:'#C8504E'},{id:'spark-mg',data:mg,color:'#0D9488'}]
+    .forEach(({id,data,color}) => {
+      const canvas = document.getElementById(id);
+      if (!canvas) return;
+      // FIX: destroy explícito + null
+      if (_kpiSparkCharts[id]) { _kpiSparkCharts[id].destroy(); _kpiSparkCharts[id] = null; }
+      _kpiSparkCharts[id] = new Chart(canvas, _spark(data, color));
+    });
+  } catch(e) { console.warn('[Sparklines]', e); }
+}
+
+// ─── COMPARATIVO MENSAL ───────────────────────────────────────────────────────
+function _normalizarLabelMes(label) {
+  // Remove prefixo numérico (ex: "4. " ou "04 ") e normaliza para maiúsculas
+  return String(label||'').replace(/^\d+[\s\.]+/, '').trim().toUpperCase();
+}
+
+function salvarHistoricoCompras(labelMes, dadosCompras) {
+  if (!dadosCompras || dadosCompras.length === 0) return;
+  const labelNorm = _normalizarLabelMes(labelMes);
+  if (!labelNorm) return;
+  const grupos={};
+  let total=0;
+  dadosCompras.forEach(r => {
+    const g=(findStr(r,['grupo'])||'').toUpperCase().trim();
+    if (!g || g.startsWith('#')) return;
+    const v=findVal(r,['total','valor total','custo total','total (r$)']);
+    if (v>0) { grupos[g]=(grupos[g]||0)+v; total+=v; }
+  });
+  const snap={};
+  Object.entries(grupos).forEach(([g,v]) => { snap[g]={valor:v,pct:total>0?(v/total*100):0}; });
+  _histServidor.HIST_COMPRAS[labelNorm]={grupos:snap,total};
+  _persistirHistorico('HIST_COMPRAS');
+}
+
+function salvarHistoricoCmvFilial(labelMes, resultados, tot) {
+  if (!resultados || resultados.length===0) return;
+  const labelNorm = _normalizarLabelMes(labelMes);
+  if (!labelNorm) return;
+  const snap={};
+  resultados.forEach(r => { snap[r.filial]={fat:r.fat,cmv:r.cmv,pct:r.pct,mg:r.mg,perda:r.perda}; });
+  snap['__TOTAL__']={fat:tot.fat,cmv:tot.cmv,pct:tot.pct,mg:tot.mg,perda:tot.perda};
+  _histServidor.HIST_CMV_FILIAL[labelNorm]=snap;
+  _persistirHistorico('HIST_CMV_FILIAL');
+}
+
+function renderComparativoMensal() {
+  const histC=_histServidor.HIST_COMPRAS;
+  const histF=_histServidor.HIST_CMV_FILIAL;
+  // Deduplicar compras: normaliza chave e mantém o maior total
+  const histCFinal={};
+  Object.entries(histC).forEach(([k,v])=>{
+    const kn=_normalizarLabelMes(k)||k.trim().toUpperCase();
+    if(!histCFinal[kn]||(v.total||0)>(histCFinal[kn].total||0))histCFinal[kn]=v;
+  });
+  // Deduplicar CMV: normaliza chave
+  const histFFinal={};
+  Object.entries(histF).forEach(([k,v])=>{
+    const kn=_normalizarLabelMes(k)||k.trim().toUpperCase();
+    if(!histFFinal[kn])histFFinal[kn]=v;
+  });
+  const meses=_sortMeses(Object.keys(histCFinal));
+  const emptyEl=document.getElementById('comp-empty-state');
+  const resultEl=document.getElementById('comp-resultado');
+  if (meses.length<1) { emptyEl.style.display='block'; resultEl.style.display='none'; return; }
+  emptyEl.style.display='none'; resultEl.style.display='block';
+
+  const totais=meses.map(m=>histCFinal[m]?.total||0);
+  document.getElementById('kpi-row-comp').innerHTML=meses.map((m,i)=>{
+    const v=totais[i]; const prev=i>0?totais[i-1]:null; const delta=prev>0?((v-prev)/prev*100):null;
+    const cor=MES_CORES[i%MES_CORES.length];
+    return `<div class="kpi-card" style="border-top:3px solid ${cor};">
+      <div class="kpi-label" style="color:${cor};">${m}</div>
+      <div class="kpi-value" style="font-size:20px;">${fmtR(v)}</div>
+      ${delta!==null?`<div style="font-size:11px;margin-top:6px;color:${delta>0?'var(--red)':'var(--green)'};font-weight:700;">${delta>0?'▲':'▼'} ${Math.abs(delta).toFixed(1)}% vs anterior</div>`:'<div style="font-size:11px;margin-top:6px;color:var(--muted2);">Mês base</div>'}
+    </div>`;
+  }).join('');
+
+  const todosGrupos=new Set();
+  meses.forEach(m=>Object.keys(histCFinal[m]?.grupos||{}).forEach(g=>todosGrupos.add(g)));
+  // Ordena grupos pelo maior valor total de compras entre todos os meses
+  const grupos=[...todosGrupos].sort((a,b)=>{
+    const totA=Math.max(...meses.map(m=>histCFinal[m]?.grupos?.[a]?.valor||0));
+    const totB=Math.max(...meses.map(m=>histCFinal[m]?.grupos?.[b]?.valor||0));
+    return totB-totA;
+  });
+  const maxValor={};
+  grupos.forEach(g=>{maxValor[g]=Math.max(...meses.map(m=>histCFinal[m]?.grupos?.[g]?.valor||0),1);});
+
+  const _thStyle=(i)=>`background:${MES_CORES[i%MES_CORES.length]};color:#fff;`;
+  const _bgCol=(i)=>`background:${MES_CORES_BG[i%MES_CORES_BG.length]};`;
+  const _bgDelta=`background:rgba(0,0,0,.025);`;
+
+  let th1=`<tr><th rowspan="2" style="text-align:left;padding-left:18px;min-width:180px;background:var(--brand-dark);color:#fff;">GRUPO DE INSUMOS</th>`;
+  meses.forEach((m,i)=>{ th1+=`<th colspan="2" style="${_thStyle(i)}">${m}</th>`; if(i<meses.length-1) th1+=`<th style="${_bgDelta}color:var(--muted);font-size:9px;letter-spacing:1px;">Δ%</th>`; });
+  th1+=`</tr>`;
+
+  let th2=`<tr>`;
+  meses.forEach((m,i)=>{ th2+=`<th style="${_thStyle(i)}opacity:.8;">VALOR R$</th><th style="${_thStyle(i)}opacity:.8;">PART. %</th>`; if(i<meses.length-1) th2+=`<th style="${_bgDelta}"></th>`; });
+  th2+=`</tr>`;
+
+  let tbody='<tbody>';
+  grupos.forEach(g=>{
+    tbody+=`<tr><td style="font-size:12px;font-weight:600;">${g}</td>`;
+    meses.forEach((m,i)=>{
+      const cur=histCFinal[m]?.grupos?.[g]; const bg=_bgCol(i); const barW=cur?Math.round((cur.valor/maxValor[g])*64):0; const cor=MES_CORES[i%MES_CORES.length];
+      tbody+=`<td style="${bg}text-align:right;">${cur?fmtR(cur.valor):'<span style="color:var(--muted2)">—</span>'}</td>`;
+      tbody+=`<td style="${bg}text-align:right;">${cur?`<div style="display:flex;align-items:center;justify-content:flex-end;gap:6px;"><div style="height:5px;width:${barW}px;background:${cor};border-radius:3px;opacity:.7;"></div><span style="font-size:11px;font-weight:600;">${cur.pct.toFixed(1)}%</span></div>`:'<span style="color:var(--muted2)">—</span>'}</td>`;
+      if(i<meses.length-1){
+        const next=histCFinal[meses[i+1]]?.grupos?.[g]; const hasDelta=cur&&next;
+        if(hasDelta){const d=next.pct-cur.pct;const pos=d>0.05;const neg=d<-0.05;const bgD=pos?'background:rgba(220,76,76,.08);':neg?'background:rgba(13,148,136,.08);':'';const corD=pos?'var(--red)':neg?'var(--green)':'var(--muted2)';const setD=pos?'▲':neg?'▼':'—';const lbl=Math.abs(d)>=0.05?Math.abs(d).toFixed(1)+'pp':'';tbody+=`<td style="${_bgDelta}${bgD}text-align:center;"><span style="font-size:10px;font-weight:700;color:${corD};">${setD} ${lbl}</span></td>`;}
+        else tbody+=`<td style="${_bgDelta}text-align:center;color:var(--muted2);font-size:10px;">—</td>`;
+      }
+    });
+    tbody+=`</tr>`;
+  });
+  tbody+='</tbody>';
+
+  let tfoot=`<tfoot><tr class="comp-tfoot-row"><td style="padding-left:18px;">TOTAL COMPRAS (CMC)</td>`;
+  meses.forEach((m,i)=>{
+    const t=histCFinal[m]?.total||0; tfoot+=`<td style="text-align:right;" colspan="2">${fmtR(t)}</td>`;
+    if(i<meses.length-1){const tn=histCFinal[meses[i+1]]?.total||0;const d=t>0?((tn-t)/t*100):0;tfoot+=`<td style="text-align:center;color:${d>0?'#FCA5A5':'#6EE7B7'};font-size:11px;">${d>0?'▲':'▼'} ${Math.abs(d).toFixed(1)}%</td>`;}
+  });
+  tfoot+=`</tr></tfoot>`;
+  document.getElementById('comp-table').innerHTML=`<thead>${th1}${th2}</thead>${tbody}${tfoot}`;
+
+renderEvolucaoCmc(histCFinal, histFFinal, meses);
+}
+
+function renderEvolucaoCmc(histCFinal, histFFinal, meses) {
+  if (chartEvolucaoCmc) { chartEvolucaoCmc.destroy(); chartEvolucaoCmc = null; }
+  const canvas = document.getElementById('chartEvolucaoCmc');
+  if (!canvas || meses.length===0) return;
+  const labels = meses.map(m => { const p=m.split(' '); return p.map(x=>MESES_ORD[x]?x.substring(0,3):null).find(Boolean)||m.substring(0,3); });
+  const cmcRs  = meses.map(m => histCFinal[m]?.total || 0);
+  const cmcPct = meses.map(m => {
+    const fat = histFFinal[m]?.['__TOTAL__']?.fat || 0;
+    const total = histCFinal[m]?.total || 0;
+    return fat>0 ? (total/fat*100) : 0;
+  });
+  chartEvolucaoCmc = new Chart(canvas, {
+    data:{labels,datasets:[
+      {type:'bar',label:'CMC R$',data:cmcRs,backgroundColor:'#1E2D4Acc',borderRadius:6,yAxisID:'y'},
+      {type:'line',label:'CMC %',data:cmcPct,borderColor:'#C8504E',backgroundColor:'#C8504E22',tension:0.35,pointRadius:4,yAxisID:'y1'},
+      {type:'line',label:'Meta 29%',data:labels.map(()=>29),borderColor:'#0D9488',borderDash:[6,4],pointRadius:0,borderWidth:2,yAxisID:'y1'}
+    ]},
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{position:'bottom',labels:{padding:12,font:{size:11}}}},
+      scales:{
+        x:{grid:{display:false}},
+        y:{position:'left',ticks:{callback:v=>'R$'+(v/1000).toFixed(0)+'k'}},
+        y1:{position:'right',grid:{drawOnChartArea:false},ticks:{callback:v=>v.toFixed(1)+'%'}}
+      }
+    }
+  });
+}
+
+function _labelMesValido(label) {
+  const partes = String(label||'').toUpperCase().split(/\s+/).filter(Boolean);
+  return partes.some(p => MESES_ORD[p] > 0) && partes.some(p => /^\d{4}$/.test(p));
+}
+
+function _deduplicarHistoricoServidor() {
+  // Remove entradas duplicadas e chaves inválidas/corrompidas do histórico em memória
+  try {
+    let alterou = false;
+    [['HIST_COMPRAS','total'], ['HIST_CMV_FILIAL',null], ['HIST_CMV','fat']].forEach(([key, campoDesempate]) => {
+      const raw = _histServidor[key] || {};
+      const limpo = {};
+      Object.entries(raw).forEach(([k,v]) => {
+        const kn = _normalizarLabelMes(k);
+        if (!kn || !_labelMesValido(kn)) { alterou = true; return; } // descarta lixo (ex: chaves corrompidas)
+        if (!limpo[kn]) { limpo[kn] = v; }
+        else {
+          alterou = true;
+          if (campoDesempate && (v[campoDesempate]||0) > (limpo[kn][campoDesempate]||0)) limpo[kn] = v;
+        }
+      });
+      if (JSON.stringify(limpo) !== JSON.stringify(raw)) alterou = true;
+      _histServidor[key] = limpo;
+    });
+    if (alterou) ['HIST_COMPRAS','HIST_CMV_FILIAL','HIST_CMV'].forEach(_persistirHistorico);
+  } catch(e) { console.warn('[Histórico] Deduplicação:', e.message); }
+}
+
+function limparCacheComparativo() {
+  _histServidor.HIST_COMPRAS = {};
+  _histServidor.HIST_CMV_FILIAL = {};
+  google.script.run
+    .withSuccessHandler(() => { renderComparativoMensal(); mostrarAlerta('Histórico limpo.','aviso'); })
+    .withFailureHandler(err => mostrarAlerta('Erro ao limpar histórico: ' + err.message))
+    .limparHistoricoServidor(['HIST_COMPRAS','HIST_CMV_FILIAL']);
+}
+
+// ─── RENDER KPIs ──────────────────────────────────────────────────────────────
+document.addEventListener('mouseover', e => {
+  const ic=e.target.closest('.kpi-info-icon[data-kpi-tt]'); if(!ic) return;
+  const html=_kpiTooltipConteudo[ic.dataset.kpiTt]; if(!html) return;
+  const tt=document.getElementById('kpi-tooltip-float');
+  tt.innerHTML=html; tt.style.display='block'; _posicionarKpiTooltip(e,tt);
+});
+document.addEventListener('mousemove', e => {
+  const tt=document.getElementById('kpi-tooltip-float');
+  if(tt.style.display==='block'&&e.target.closest('.kpi-info-icon[data-kpi-tt]')) _posicionarKpiTooltip(e,tt);
+});
+document.addEventListener('mouseout', e => {
+  const ic=e.target.closest('.kpi-info-icon[data-kpi-tt]');
+  if(ic&&!ic.contains(e.relatedTarget)) document.getElementById('kpi-tooltip-float').style.display='none';
+});
+function _posicionarKpiTooltip(e,tt) {
+  const w=300,h=tt.offsetHeight||200;let l=e.clientX+14,t=e.clientY+14;
+  if(l+w>window.innerWidth-8)l=e.clientX-w-14;if(t+h>window.innerHeight-8)t=e.clientY-h-14;
+  tt.style.left=l+'px';tt.style.top=t+'px';
+}
+
+function renderKpis(tot) {
+  const badgeClass=tot.pct<=35?'badge-ok':tot.pct<=40?'badge-warn':'badge-bad';
+  const labelMes=_mesAtualDrive(); const ant=obterMesAnterior(labelMes);
+  salvarSnapshotMes(labelMes,tot);
+  const maxFat=Math.max(..._kpiResultados.map(r=>r.fat),1);
+  const rowsFat=_kpiResultados.map(r=>{
+    const pct=tot.fat>0?(r.fat/tot.fat*100).toFixed(1):'0.0';
+    const barW=Math.round(r.fat/maxFat*80);
+    return `<div class="kpi-tooltip-row"><span class="kpi-tooltip-label">${r.filial}</span><div class="kpi-tooltip-bar-wrap"><div class="kpi-tooltip-bar" style="width:${barW}px;"></div><span class="kpi-tooltip-val">${pct}%</span></div></div>`;
+  }).join('');
+  _kpiTooltipConteudo['fat']=`<div class="kpi-tooltip-title">Dispersão por unidade</div>${rowsFat}`;
+
+  // Breakdown do CMV Consolidado por centro de estoque: lojas (soma das 4) vs. CD
+  // (Produção/Estoque) — o CD não aparece como linha na tabela "CMV por Filial", mas o
+  // custo dele é parte real do CMV consolidado da rede (ver _calcularInterno).
+  const cmvCD    = _dadosBrutosCD?.cmv || 0;
+  const cmvLojas = tot.cmv - cmvCD;
+  const maxCmvCentro = Math.max(cmvLojas, cmvCD, 1);
+  const rowsCmvCentro = [
+    { label:'Lojas (4 unidades)', val: cmvLojas },
+    { label:'CD (Produção/Estoque)', val: cmvCD }
+  ].map(({label,val}) => {
+    const pct = tot.cmv!==0 ? (val/tot.cmv*100).toFixed(1) : '0.0';
+    const barW = Math.round(Math.abs(val)/maxCmvCentro*80);
+    return `<div class="kpi-tooltip-row"><span class="kpi-tooltip-label">${label}</span><div class="kpi-tooltip-bar-wrap"><div class="kpi-tooltip-bar" style="width:${barW}px;"></div><span class="kpi-tooltip-val">${fmtR(val)} (${pct}%)</span></div></div>`;
+  }).join('');
+  _kpiTooltipConteudo['cmv']=`<div class="kpi-tooltip-title">CMV Consolidado por centro de estoque</div>${rowsCmvCentro}`;
+
+  document.getElementById('kpi-row').innerHTML=`
+    <div class="kpi-card"><div class="kpi-label">Faturamento Global<i class="kpi-info-icon" data-kpi-tt="fat" title="">i</i></div><div class="kpi-value">${fmtR(tot.fat)}</div>${_deltaHtml(tot.fat,ant?.fat??null,false)}</div>
+    <div class="kpi-card red"><div class="kpi-label">CMV Consolidado<i class="kpi-info-icon" data-kpi-tt="cmv" title="">i</i></div><div class="kpi-value">${fmtR(tot.cmv)}</div>${_deltaHtml(tot.cmv,ant?.cmv??null,true)}</div>
+    <div class="kpi-card"><div class="kpi-label">Margem Relativa (CMV %)</div><div class="kpi-value">${fmtPct(tot.pct)}</div><div class="kpi-sub"><span class="kpi-badge ${badgeClass}">${tot.pct<=35?'Saudável':'Atenção'}</span></div>${_deltaHtml(tot.pct,ant?.pct??null,true)}</div>
+    <div class="kpi-card green"><div class="kpi-label">Lucro Bruto</div><div class="kpi-value">${fmtR(tot.mg)}</div><div class="kpi-sub">${fmtPct(tot.mgPct)} de margem</div>${_deltaHtml(tot.mg,ant?.mg??null,false)}</div>`;
+}
+
+function _linhaFilialHtml(r, snapAnt) {
+  const cls = r.pct<=35?'row-ok':r.pct<=40?'row-warn':'row-bad';
+  const fatTotalLinha = r.fatFisica + r.fatDelivery;
+  const pctAnt = snapAnt?.[r.filial]?.pct;
+  const deltaPct = _deltaPctPontosHtml(r.pct, pctAnt);
+  return `<tr class="${cls}"><td>${r.filial}</td><td>${fmtR(r.ei)}</td><td>${fmtR(r.c)}</td><td style="${r.transf!==0?'color:var(--blue)':''}">${r.transf>0?'+':''}${fmtR(r.transf)}</td><td>${fmtR(r.ef)}</td><td style="color:var(--red)">${fmtR(r.perda)}</td><td><strong>${fmtR(r.cmv)}</strong></td><td>${fmtR(r.fatFisica)}</td><td>${fmtR(r.fatDelivery)}</td><td><strong>${fmtR(fatTotalLinha)}</strong></td><td><span class="cmv-percent ${r.pct<=35?'cmv-ok':r.pct<=40?'cmv-warn':'cmv-bad'}">${fmtPct(r.pct)}</span>${deltaPct}</td></tr>`;
+}
+
+// res = só as 4 lojas (CD não aparece como linha aqui — ver tooltip do card "CMV
+// Consolidado" pro breakdown lojas x CD). Sem linha de total: o "tot" já inclui o
+// custo do CD, então misturaria lojas com CD numa tabela que é só de lojas.
+function renderTabela(res, tot) {
+  const snapAnt = obterSnapMesAnterior(_mesAtualDrive());
+  document.getElementById('tabela-filial').innerHTML = res.map(r=>_linhaFilialHtml(r, snapAnt)).join('');
+}
+
+// ─── FIX: destroy correto com null ────────────────────────────────────────────
+function _destroyChart(varName) {
+  const chartMap = {
+    chartCmvPct, chartCmvTeorico, chartEvolucaoCmv,
+    chartPerdasMotivo, chartPerdasGrupo, chartPerdasFilial, chartPerdasTemporal
+  };
+  const ch = chartMap[varName] || Chart.getChart(varName);
+  if (ch) { try { ch.destroy(); } catch(e) {} }
+  // Também por canvas ID
+  if (typeof varName === 'string') {
+    const existing = Chart.getChart(varName);
+    if (existing) { try { existing.destroy(); } catch(e) {} }
+  }
+}
+
+function renderGraficosMestre(res, tot) {
+  // FIX: destroy + null explícito
+  if(chartCmvPct)     { chartCmvPct.destroy();     chartCmvPct     = null; }
+  if(chartCmvTeorico) { chartCmvTeorico.destroy();  chartCmvTeorico = null; }
+
+  const labels=res.map(r=>r.filial);
+  chartCmvPct=new Chart(document.getElementById('chartCmvPct'),{type:'bar',data:{labels,datasets:[{label:'CMV %',data:res.map(r=>r.pct),backgroundColor:'#C8504Ecc',borderRadius:8}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false},ticks:{maxRotation:20}},y:{ticks:{callback:v=>v.toFixed(1)+'%'}}}}});
+
+  // CMV Real vs. Teórico por Filial (substitui "Composição Estrutural") — res já é só lojas
+  chartCmvTeorico=new Chart(document.getElementById('chartCmvTeorico'),{type:'bar',data:{labels:res.map(r=>r.filial),datasets:[
+    {label:'CMV Real',data:res.map(r=>r.cmv),backgroundColor:'#C8504Ecc',borderRadius:6},
+    {label:'CMV Teórico',data:res.map(r=>r.teoricoRs),backgroundColor:'#4A6FA5cc',borderRadius:6}
+  ]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{position:'bottom',labels:{padding:12,font:{size:11}}}},scales:{x:{grid:{display:false},ticks:{maxRotation:20}},y:{ticks:{callback:v=>'R$'+(v/1000).toFixed(0)+'k'}}}}});
+
+  renderEvolucaoCmv();
+}
+
+function renderEvolucaoCmv() {
+  if (chartEvolucaoCmv) { chartEvolucaoCmv.destroy(); chartEvolucaoCmv = null; }
+  const hist = _histServidor.HIST_CMV;
+  const meses = _sortMeses(Object.keys(hist));
+  if (meses.length === 0) return;
+  const labels = meses.map(m => { const p=m.split(' '); return p.map(x=>MESES_ORD[x]?x.substring(0,3):null).find(Boolean)||m.substring(0,3); });
+  const cmvRs  = meses.map(m => hist[m]?.cmv || 0);
+  const cmvPct = meses.map(m => hist[m]?.pct || 0);
+  chartEvolucaoCmv = new Chart(document.getElementById('chartEvolucaoCmv'), {
+    data:{labels,datasets:[
+      {type:'bar',label:'CMV R$',data:cmvRs,backgroundColor:'#1E2D4Acc',borderRadius:6,yAxisID:'y'},
+      {type:'line',label:'CMV %',data:cmvPct,borderColor:'#C8504E',backgroundColor:'#fff',borderWidth:2.5,tension:0.35,pointRadius:5,pointBackgroundColor:'#fff',pointBorderColor:'#C8504E',pointBorderWidth:2,yAxisID:'y1'}
+    ]},
+    plugins:[ChartDataLabels],
+    options:{responsive:true,maintainAspectRatio:false,
+      // FIX: padding no topo evita que o rótulo da linha (%) seja cortado no ponto mais alto
+      layout:{padding:{top:28,bottom:2}},
+      plugins:{
+        legend:{position:'bottom',labels:{padding:12,font:{size:11}}},
+        datalabels:{
+          clamp:true, // FIX: mantém o rótulo sempre dentro da área do gráfico
+          clip:false,
+          color:ctx=>ctx.datasetIndex===0?'#fff':'#fff',
+          backgroundColor:ctx=>ctx.datasetIndex===0?'transparent':'#C8504E',
+          borderRadius:4,
+          padding:ctx=>ctx.datasetIndex===0?0:{top:3,bottom:3,left:6,right:6},
+          font:{size:ctx=>ctx.datasetIndex===0?11:12,weight:'700'},
+          formatter:(v,ctx)=>ctx.datasetIndex===0?fmtR(v):fmtPct(v),
+          anchor:ctx=>ctx.datasetIndex===0?'start':'center',
+          align:ctx=>ctx.datasetIndex===0?'end':'top',
+          offset:ctx=>ctx.datasetIndex===0?6:10
+        }
+      },
+      scales:{
+        x:{grid:{display:false}},
+        y:{display:false},
+        y1:{display:false}
+      }}
+  });
+}
+
+function renderPainelPerdas(totalRs,totalVend,totalVol,totalKg,faturamento) {
+  const pctFat=faturamento>0?(totalRs/faturamento*100):0;
+  const pctVend=faturamento>0?(totalVend/faturamento*100):0;
+  document.getElementById('kpi-row-perdas').innerHTML=`
+    <div class="kpi-card red"><div class="kpi-label">Custo de Perda (CMV)</div><div class="kpi-value">${fmtR(totalRs)}</div><div class="kpi-sub">${fmtPct(pctFat)} do faturamento</div></div>
+    <div class="kpi-card purple"><div class="kpi-label">Impacto em Vendas Perdidas</div><div class="kpi-value">${fmtR(totalVend)}</div><div class="kpi-sub">${fmtPct(pctVend)} do faturamento</div></div>
+    <div class="kpi-card gold"><div class="kpi-label">Volume Total Descartado</div><div class="kpi-value">${fmtNum(totalVol)}</div><div class="kpi-sub">unidades / ${fmtNum(totalKg)} kg</div></div>`;
+  const filiais=[...new Set(perdasDetalhadas.map(p=>p.filial))].sort();
+  const motivos=[...new Set(perdasDetalhadas.filter(p=>!p.ajuste).map(p=>p.motivo))].sort();
+  const grupos=[...new Set(perdasDetalhadas.filter(p=>!p.ajuste).map(p=>p.grupo))].sort();
+  const selF=document.getElementById('perdas-filtro-filial');
+  const selM=document.getElementById('perdas-filtro-motivo');
+  const selG=document.getElementById('perdas-filtro-grupo');
+  selF.innerHTML='<option value="">Todas as Filiais</option>'+filiais.map(v=>`<option>${v}</option>`).join('');
+  selM.innerHTML='<option value="">Todos os Motivos</option>'+motivos.map(v=>`<option>${v}</option>`).join('');
+  selG.innerHTML='<option value="">Todos os Grupos</option>'+grupos.map(v=>`<option>${v}</option>`).join('');
+
+  const mesLabel = _normalizarLabelMes(mesAtivoNome) || mesAtivoNome || '';
+  document.getElementById('perdas-dim-titulo').textContent   = 'Análise por Dimensão — ' + mesLabel;
+  document.getElementById('titulo-chart-motivo').textContent = '🗑️ Perdas em R$ por Motivo — ' + mesLabel;
+  document.getElementById('titulo-chart-grupo').textContent  = '📦 Perdas em Vendas por Grupo — ' + mesLabel;
+  document.getElementById('titulo-chart-filial').textContent = '🏪 Custo de Perda por Filial — ' + mesLabel;
+  document.getElementById('titulo-chart-temporal').textContent = '📅 Evolução Diária (Perdas R$) — ' + mesLabel;
+
+  renderGraficosPerdas();
+  renderTabelaPerdas();
+  renderTabelaMotivos();
+}
+
+function renderGraficosPerdas() {
+  // FIX: destroy + null explícito
+  if(chartPerdasMotivo)   { chartPerdasMotivo.destroy();   chartPerdasMotivo   = null; }
+  if(chartPerdasGrupo)    { chartPerdasGrupo.destroy();    chartPerdasGrupo    = null; }
+  if(chartPerdasFilial)   { chartPerdasFilial.destroy();   chartPerdasFilial   = null; }
+  if(chartPerdasTemporal) { chartPerdasTemporal.destroy(); chartPerdasTemporal = null; }
+
+  const agMotivo={};
+  perdasDetalhadas.forEach(p=>{agMotivo[p.motivo]=(agMotivo[p.motivo]||0)+p.perdasRs;});
+  const sortMotivo=Object.entries(agMotivo).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  chartPerdasMotivo=new Chart(document.getElementById('chartPerdasMotivo'),{type:'bar',data:{labels:sortMotivo.map(e=>e[0]),datasets:[{label:'Perdas R$',data:sortMotivo.map(e=>e[1]),backgroundColor:'#C8504Ecc',borderRadius:6}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{callback:v=>'R$'+(v/1000).toFixed(1)+'k'}},y:{grid:{display:false}}}}});
+
+  const agGrupo={};
+  perdasDetalhadas.forEach(p=>{agGrupo[p.grupo]=(agGrupo[p.grupo]||0)+p.perdasVend;});
+  const sortGrupo=Object.entries(agGrupo).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  chartPerdasGrupo=new Chart(document.getElementById('chartPerdasGrupo'),{type:'bar',data:{labels:sortGrupo.map(e=>e[0]),datasets:[{label:'Vendas Perdidas',data:sortGrupo.map(e=>e[1]),backgroundColor:'#7C3AEDcc',borderRadius:6}]},options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{ticks:{callback:v=>'R$'+(v/1000).toFixed(1)+'k'}},y:{grid:{display:false}}}}});
+
+  const agFilial={};
+  perdasDetalhadas.forEach(p=>{agFilial[p.filial]={rs:(agFilial[p.filial]?.rs||0)+p.perdasRs,vend:(agFilial[p.filial]?.vend||0)+p.perdasVend};});
+  const labFilial=Object.keys(agFilial);
+  const snapAntPerdas = obterSnapMesAnterior(_mesAtualDrive());
+  chartPerdasFilial=new Chart(document.getElementById('chartPerdasFilial'),{
+    type:'bar',
+    data:{labels:labFilial,datasets:[
+      {label:'Custo Perda R$',data:labFilial.map(f=>agFilial[f].rs),backgroundColor:'#C8504Ecc',borderRadius:5},
+      {label:'Vendas Perdidas',data:labFilial.map(f=>agFilial[f].vend),backgroundColor:'#7C3AEDcc',borderRadius:5}
+    ]},
+    plugins:[ChartDataLabels],
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      plugins:{
+        legend:{position:'bottom',labels:{padding:12,font:{size:11}}},
+        datalabels:{
+          anchor:'end', align:'top', color:'#333', font:{size:10,weight:'700',lineHeight:1},
+          formatter:(v,ctx)=>{
+            if (v<=0) return '';
+            if (ctx.datasetIndex===1) return fmtR(v); // Vendas Perdidas: só o valor
+            const f = labFilial[ctx.dataIndex];
+            const ant = snapAntPerdas?.[f]?.perda;
+            const linha1 = fmtR(v);
+            if (!ant || ant<=0) return linha1;
+            const diffPct = ((v-ant)/ant*100);
+            return [linha1, (diffPct>=0?'▲':'▼')+Math.abs(diffPct).toFixed(0)+'%'];
+          }
+        }
+      },
+      scales:{
+        x:{grid:{display:false},title:{display:false},ticks:{maxRotation:0,minRotation:0,autoSkip:false,font:{size:10}}},
+        y:{display:false}
+      }
+    }
+  });
+
+  const agData={};
+  perdasDetalhadas.forEach(p=>{agData[p.dtLabel]=(agData[p.dtLabel]||0)+p.perdasRs;});
+  const sortData=Object.entries(agData).sort((a,b)=>a[0].localeCompare(b[0]));
+  chartPerdasTemporal=new Chart(document.getElementById('chartPerdasTemporal'),{type:'line',data:{labels:sortData.map(e=>e[0]),datasets:[{label:'Perdas R$ / dia',data:sortData.map(e=>e[1]),borderColor:'#C8504E',backgroundColor:'#C8504E22',fill:true,tension:0.35,pointRadius:4}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{grid:{display:false}},y:{ticks:{callback:v=>'R$'+(v/1000).toFixed(1)+'k'}}}}});
+}
+
+function renderTabelaPerdas() {
+  const filtFilial=document.getElementById('perdas-filtro-filial').value;
+  const filtMotivo=document.getElementById('perdas-filtro-motivo').value;
+  const filtGrupo =document.getElementById('perdas-filtro-grupo').value;
+  const filtrado=perdasDetalhadas.filter(p=>!p.ajuste&&(!filtFilial||p.filial===filtFilial)&&(!filtMotivo||p.motivo===filtMotivo)&&(!filtGrupo||p.grupo===filtGrupo));
+  const agProd={};
+  filtrado.forEach(p=>{if(!agProd[p.produto])agProd[p.produto]={grupo:p.grupo,unidade:p.unidade,custoUnit:p.custoUnit,volume:0,perdasRs:0,perdasVend:0,perdaKg:0};agProd[p.produto].volume+=p.volume;agProd[p.produto].perdasRs+=p.perdasRs;agProd[p.produto].perdasVend+=p.perdasVend;agProd[p.produto].perdaKg+=p.perdaKg;});
+  const arr=Object.entries(agProd).sort((a,b)=>b[1].perdasRs-a[1].perdasRs).slice(0,50);
+  const totRs=arr.reduce((s,[,v])=>s+v.perdasRs,0);const totVend=arr.reduce((s,[,v])=>s+v.perdasVend,0);const totVol=arr.reduce((s,[,v])=>s+v.volume,0);const totKg=arr.reduce((s,[,v])=>s+v.perdaKg,0);const maxRs=arr.length>0?arr[0][1].perdasRs:1;
+  document.getElementById('tbody-perdas-produtos').innerHTML=arr.map(([prod,v],idx)=>{
+    const pct=totRs>0?(v.perdasRs/totRs*100):0;const barW=maxRs>0?(v.perdasRs/maxRs*100):0;
+    return `<tr><td class="td-c">${idx+1}</td><td class="td-l">${prod}</td><td class="td-l" style="color:var(--muted);font-size:11px;">${v.grupo}</td><td>${v.volume>0?fmtNum(v.volume):'—'}</td><td class="td-c" style="color:var(--muted);font-size:11px;">${v.unidade}</td><td>${v.custoUnit>0?fmtR(v.custoUnit):'—'}</td><td style="color:var(--red);font-weight:600;">${fmtR(v.perdasRs)}</td><td style="color:var(--purple);font-weight:600;">${v.perdasVend>0?fmtR(v.perdasVend):'—'}</td><td>${v.perdaKg>0?fmtNum(v.perdaKg):'—'}</td><td><div class="prog-bar-wrap"><span style="font-size:11px;min-width:36px;text-align:right;">${pct.toFixed(1)}%</span><div class="prog-bar"><div class="prog-bar-fill" style="width:${barW}%"></div></div></div></td></tr>`;
+  }).join('');
+  document.getElementById('tfoot-perdas-produtos').innerHTML=`<tr class="tfoot-row"><td></td><td>TOTAL (${arr.length} produtos)</td><td></td><td>${fmtNum(totVol)}</td><td></td><td></td><td style="color:var(--red)">${fmtR(totRs)}</td><td style="color:var(--purple)">${fmtR(totVend)}</td><td>${fmtNum(totKg)}</td><td></td></tr>`;
+}
+
+function renderTabelaMotivos() {
+  const agMotivo={};
+  perdasDetalhadas.forEach(p=>{if(!agMotivo[p.motivo])agMotivo[p.motivo]={qtd:0,rs:0,vend:0};agMotivo[p.motivo].qtd++;agMotivo[p.motivo].rs+=p.perdasRs;agMotivo[p.motivo].vend+=p.perdasVend;});
+  const arr=Object.entries(agMotivo).sort((a,b)=>b[1].rs-a[1].rs);const totRs=arr.reduce((s,[,v])=>s+v.rs,0);const maxRs=arr.length>0?arr[0][1].rs:1;
+  document.getElementById('tbody-perdas-motivos').innerHTML=arr.map(([mot,v])=>{
+    const pct=totRs>0?(v.rs/totRs*100):0;const barW=maxRs>0?(v.rs/maxRs*100):0;
+    return `<tr><td class="td-l">${mot}</td><td>${v.qtd}</td><td style="color:var(--red);font-weight:600;">${fmtR(v.rs)}</td><td style="color:var(--purple)">${v.vend>0?fmtR(v.vend):'—'}</td><td>${pct.toFixed(1)}%</td><td><div class="prog-bar-wrap"><div class="prog-bar"><div class="prog-bar-fill ${pct>50?'':pct>25?'amber':'green'}" style="width:${barW}%"></div></div></div></td></tr>`;
+  }).join('');
+}
+
+// ─── TEÓRICO ──────────────────────────────────────────────────────────────────
+// Verifica se a linha de "Produto" do relatório Teórico é, na verdade, um item
+// intermediário da cadeia de produção (MP=matéria-prima, PP=processado, PF=fabricado/
+// semi-pronto) em vez de um produto final vendido ao cliente. O relatório traz uma linha
+// de "Produto" pra CADA elo dessa cadeia, com "Qtd. Venda" representando produção interna
+// nesses casos — não venda real. Sem esse filtro, o mesmo custo é somado 2-3x (uma vez em
+// cada nível: MP → PP/PF → produto final), inflando o CMV Teórico bem acima do Real.
+function _ehProdutoIntermediario(produto) {
+  const nome = String(produto||'').replace(/^\d+\s*-\s*/, '').trim().toUpperCase();
+  return nome.startsWith('PF ') || nome.startsWith('PP ') || nome.startsWith('MP ');
+}
+
+function calcularTeoricoMapa(dadosTeorico) {
+  const mapa={};const vistos=new Set();
+  dadosTeorico.forEach(r=>{
+    const fo=findStr(r,['filial']);const fn=normalizarFilial(fo);if(!fn)return;
+    const produto=findStr(r,['produto']);
+    if(_ehProdutoIntermediario(produto))return; // pula MP/PP/PF — não é venda real ao cliente
+    const chave=fo+'||'+produto;
+    if(vistos.has(chave))return;vistos.add(chave);
+    const custoUnit=findVal(r,['custo unit. produto','custo unitário produto','custo unit produto']);
+    const qtdVenda=findVal(r,['qtd. venda','qtd venda','qtd.venda','quantidade venda','qtd. vendida']);
+    if(custoUnit>0&&qtdVenda>0) mapa[fn]=(mapa[fn]||0)+(custoUnit*qtdVenda);
+  });
+  return mapa;
+}
+
+function obterColunasDetectadas() {
+  if(!dados.teorico||dados.teorico.length===0)return[];
+  return Object.keys(dados.teorico[0]);
+}
+
+function processarPainelTeorico(resultados,tot) {
+  const emptyEl=document.getElementById('teorico-empty-state');const resultEl=document.getElementById('teorico-resultado');
+  if(!dados.teorico||dados.teorico.length===0||tot.teoricoRs===0){
+    const cols=obterColunasDetectadas();
+    const diagHtml=cols.length>0?`<details style="margin-top:14px;text-align:left;max-width:600px;margin-left:auto;margin-right:auto;"><summary style="cursor:pointer;font-size:11px;color:var(--muted);margin-bottom:8px;">🔍 Colunas detectadas (${cols.length})</summary><div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:12px;font-size:11px;font-family:monospace;line-height:1.8;word-break:break-all;">${cols.map(c=>`<span style="display:inline-block;background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:1px 6px;margin:2px;">${c}</span>`).join('')}</div></details>`:'';
+    emptyEl.innerHTML=`<div class="empty-icon">⚖️</div><p>Arquivo teórico carregado, mas <strong>nenhuma coluna de valor foi reconhecida</strong>.</p>${diagHtml}`;
+    emptyEl.style.display='block';resultEl.style.display='none';return;
+  }
+  emptyEl.style.display='none';resultEl.style.display='block';
+  const desvioTotal=tot.cmv-tot.teoricoRs;const fugaPct=tot.pct-tot.teoricoPct;
+  document.getElementById('kpi-row-teorico').innerHTML=`<div class="kpi-card gold"><div class="kpi-label">Ficha Técnica (Teórico)</div><div class="kpi-value">${fmtR(tot.teoricoRs)}</div><div class="kpi-sub">${fmtPct(tot.teoricoPct)} planejado</div></div><div class="kpi-card red"><div class="kpi-label">Apuração Real</div><div class="kpi-value">${fmtR(tot.cmv)}</div><div class="kpi-sub">${fmtPct(tot.pct)} consumido</div></div><div class="kpi-card ${desvioTotal>0?'red':'green'}"><div class="kpi-label">Desvio Absoluto</div><div class="kpi-value">${fmtR(desvioTotal)}</div></div><div class="kpi-card"><div class="kpi-label">Índice de Fuga</div><div class="kpi-value">${fugaPct.toFixed(2)} pp</div></div>`;
+  document.getElementById('tbody-teorico-filial').innerHTML=resultados.map(r=>{const dif=r.cmv-r.teoricoRs;return`<tr><td>${r.filial}</td><td>${fmtR(r.teoricoRs)}</td><td><strong>${fmtR(r.cmv)}</strong></td><td style="color:${dif>0?'var(--red)':'var(--green)'}"><strong>${fmtR(dif)}</strong></td><td>${(r.pct-r.teoricoPct).toFixed(2)} pp</td></tr>`;}).join('');
+  const mapaInsumos={};const _vistosIns=new Set();
+  dados.teorico.forEach(r=>{
+    const filial=normalizarFilial(findStr(r,['filial']))||'';
+    const insumo=findStr(r,['insumo','produto','descrição']).toString().trim();
+    // Chave por CÓDIGO do insumo, não pelo nome: o relatório tem casos reais de insumos
+    // distintos (códigos diferentes) com o campo "Insumo" em branco — deduplicar só pelo
+    // nome faz 2 de cada 3 insumos nessa situação serem descartados por engano (chave igual).
+    const codIns=findStr(r,['cód. insumo','cod. insumo','codigo insumo','código insumo']).toString().trim();
+    const chaveIns=filial+'||'+(codIns||insumo);
+    if(!mapaInsumos[chaveIns])mapaInsumos[chaveIns]={filial,insumo,custo:findVal(r,['custo unit. insumo','custo unitário','custo un.','custo unit.','custo unid.','preco unitario','preço unitário']),tQtd:0,rQtd:0,difRs:0};
+    if(!_vistosIns.has(chaveIns)){
+      _vistosIns.add(chaveIns);
+      // Alias correto (sem acento, batendo com o cabeçalho já normalizado) vem primeiro —
+      // antes dependia só do fallback funcionar por coincidência de ordem de coluna.
+      let tq=findVal(r,['cmv teorico insumo (qtd.)','cmv teórico insumo (qtd.)','cmv teórico qtd','qtd teórica','qtd teorica','qtde teórica','qtde teorica','qtd. teórica','quantidade teórica','quantidade teorica']);
+      if(!tq)for(const k of Object.keys(r)){const kl=k.toLowerCase();if((kl.includes('teóric')||kl.includes('teoric'))&&(kl.includes('qtd')||kl.includes('quant'))){tq=parseNumber(r[k]);if(tq>0)break;}}
+      let rq=findVal(r,['cmv real insumo (qtd.)','cmv real qtd','qtd real','qtde real','qtd. real','quantidade real','consumo real (qtd.)','consumo real']);
+      if(!rq)for(const k of Object.keys(r)){const kl=k.toLowerCase();if(kl.includes('real')&&(kl.includes('qtd')||kl.includes('quant'))){rq=parseNumber(r[k]);if(rq>0)break;}}
+      let dv=findVal(r,['diferenca (r$)','diferença (r$)','desvio (r$)','diferença r$','desvio r$','variação (r$)','variacao (r$)','fuga (r$)','dif. r$']);
+      if(!dv)for(const k of Object.keys(r)){const kl=k.toLowerCase();if((kl.includes('dif')||kl.includes('desv')||kl.includes('fuga')||kl.includes('varia'))&&kl.includes('r$')){dv=parseNumber(r[k]);if(dv>0)break;}}
+      mapaInsumos[chaveIns].tQtd=tq;mapaInsumos[chaveIns].rQtd=rq;mapaInsumos[chaveIns].difRs=dv;
+    }
+  });
+  document.getElementById('tbody-teorico-insumos').innerHTML=Object.values(mapaInsumos).sort((a,b)=>b.difRs-a.difRs).slice(0,35).map((r,idx)=>`<tr><td class="td-c">${idx+1}</td><td class="td-l">${r.insumo}</td><td>${fmtR(r.custo)}</td><td>${r.tQtd.toFixed(1)}</td><td>${r.rQtd.toFixed(1)}</td><td style="color:var(--brand-secondary)">+${(r.rQtd-r.tQtd).toFixed(1)}</td><td style="color:var(--brand-primary);font-weight:600;">+${fmtR(r.difRs)}</td></tr>`).join('');
+}
+
+// ─── ÁRVORE DE DECOMPOSIÇÃO ───────────────────────────────────────────────────
+function initDecompTree() {
+  dState={root:'Total',p:null,f:null};
+  const totalCusto=decompDetalhes.reduce((s,d)=>s+d.custo,0);
+  document.getElementById('tree-col-root').innerHTML=`<div class="tree-col-title">Perda Total</div><div class="tree-item active" onclick="clickTreeLeaf('root','Total')"><div class="tree-item-bg" style="width:100%"></div><div class="tree-item-content"><div class="tree-item-title">Custo Desperdiçado</div><div class="tree-item-val">${fmtR(totalCusto)}</div></div></div>`;
+  clickTreeLeaf('root','Total');
+}
+function clickTreeLeaf(level,val) {
+  if(level==='root'){renderSubColunaTree('produto',decompDetalhes,'produto','Produtos Afetados');document.getElementById('tree-col-filial').innerHTML='';document.getElementById('tree-col-motivo').innerHTML='';}
+  else if(level==='produto'){dState.p=val;renderSubColunaTree('filial',decompDetalhes.filter(d=>d.produto===val),'filial','Lojas / Hubs');document.getElementById('tree-col-motivo').innerHTML='';}
+  else if(level==='filial'){renderSubColunaTree('motivo',decompDetalhes.filter(d=>d.produto===dState.p&&d.filial===val),'motivo','Motivos Declarados');}
+  setTimeout(desenharLinhasConexaoTree,60);
+}
+function renderSubColunaTree(colId,subLista,key,titulo) {
+  const agrg={};subLista.forEach(d=>{const k=d[key]||'Não Mapeado';agrg[k]=(agrg[k]||0)+d.custo;});
+  const arr=Object.entries(agrg).sort((a,b)=>b[1]-a[1]);const mx=arr.length>0?arr[0][1]:1;
+  document.getElementById('tree-col-'+colId).innerHTML=`<div class="tree-col-title">${titulo}</div>`+arr.map(([k,v])=>`<div class="tree-item" onclick="this.parentElement.querySelectorAll('.tree-item').forEach(e=>e.classList.remove('active'));this.classList.add('active');clickTreeLeaf('${colId}','${k.replace(/'/g,"\\'")}')"><div class="tree-item-bg" style="width:${(v/mx*100)}%"></div><div class="tree-item-content"><div class="tree-item-title">${k}</div><div class="tree-item-val">${fmtR(v)}</div></div></div>`).join('');
+}
+function desenharLinhasConexaoTree() {
+  const svg=document.getElementById('tree-svg'),container=document.getElementById('tree-container');if(!svg||!container)return;
+  svg.setAttribute('width',container.scrollWidth);svg.setAttribute('height',container.scrollHeight);svg.innerHTML='';
+  const cols=Array.from(document.querySelectorAll('.tree-col'));const svgRect=svg.getBoundingClientRect();
+  for(let i=0;i<cols.length-1;i++){const ativo=cols[i].querySelector('.tree-item.active');if(!ativo)continue;const filhos=cols[i+1].querySelectorAll('.tree-item');if(!filhos.length)continue;const rP=ativo.getBoundingClientRect();const sX=rP.right-svgRect.left,sY=rP.top+(rP.height/2)-svgRect.top;filhos.forEach(f=>{const rC=f.getBoundingClientRect();const eX=rC.left-svgRect.left,eY=rC.top+(rC.height/2)-svgRect.top;const path=document.createElementNS("http://www.w3.org/2000/svg","path");path.setAttribute("d",`M ${sX} ${sY} C ${sX+18} ${sY}, ${eX-18} ${eY}, ${eX} ${eY}`);path.setAttribute("fill","none");path.setAttribute("stroke","#C8504E");path.setAttribute("stroke-width","2");path.setAttribute("opacity","0.55");svg.appendChild(path);});}
+}
+// ─── CMV POR PRODUTO ──────────────────────────────────────────────────────────
+// CD DELALE entra normalmente aqui (ao contrário da tabela "CMV por Filial"): essa aba é
+// de auditoria produto a produto, e o CD é uma origem real de custo que precisa aparecer
+// pra bater com o CMV Consolidado. Aparece como opção própria no filtro ("CD DELALE").
+function popularFiltroFilialCmvProduto() {
+  const sel = document.getElementById('cmvprod-filial-select');
+  if (!sel) return;
+  const filiais = Object.keys(_cmvProdutoBase).sort();
+  sel.innerHTML = '<option value="TODAS">Todas as Filiais (Consolidado)</option>' + filiais.map(f=>`<option value="${f}">${f}</option>`).join('');
+}
+
+function renderCmvPorProduto() {
+  const sel = document.getElementById('cmvprod-filial-select');
+  const filialSel = sel ? (sel.value || 'TODAS') : 'TODAS';
+  const busca = (document.getElementById('cmvprod-search')?.value || '').toLowerCase();
+
+  const agProd = {};
+  const filiaisAlvo = filialSel === 'TODAS' ? Object.keys(_cmvProdutoBase) : [filialSel];
+  filiaisAlvo.forEach(f => {
+    const base = _cmvProdutoBase[f]; if (!base) return;
+    Object.entries(base).forEach(([prod, v]) => {
+      if (!agProd[prod]) agProd[prod] = {qtdCompras:0, ei:0, qtdEi:0, compras:0, ef:0, qtdEf:0};
+      agProd[prod].qtdCompras += v.qtdCompras;
+      agProd[prod].ei         += v.ei;
+      agProd[prod].qtdEi      += v.qtdEi || 0;
+      agProd[prod].compras    += v.compras;
+      agProd[prod].ef         += v.ef;
+      agProd[prod].qtdEf      += v.qtdEf || 0;
+    });
+  });
+
+  // Saldo Qtd. = Qtd. Est. Inicial + Qtd. Comprada − Qtd. Est. Final: balanço físico do
+  // produto, em unidades — o equivalente em quantidade do que o CMV é em R$. Ajuda a
+  // auditar: um saldo estranho (muito negativo, por ex.) costuma explicar um CMV estranho.
+  let arr = Object.entries(agProd).map(([prod,v]) => ({
+    produto: prod, ...v,
+    cmv: v.ei + v.compras - v.ef,
+    saldoQtd: v.qtdEi + v.qtdCompras - v.qtdEf
+  }));
+  if (busca) arr = arr.filter(x => x.produto.toLowerCase().includes(busca));
+  arr.sort((a,b) => b.cmv - a.cmv);
+
+  const totCmv = arr.reduce((s,x)=>s+x.cmv,0);
+  const maxCmv = arr.length ? Math.max(...arr.map(x=>Math.abs(x.cmv)),1) : 1;
+
+  document.getElementById('cmvprod-tbody').innerHTML = arr.map((x,idx) => {
+    const barW = maxCmv>0 ? (Math.abs(x.cmv)/maxCmv*100) : 0;
+    const celEi = `${fmtR(x.ei)}${x.qtdEi>0?`<div style="font-size:10px;color:var(--muted);">${fmtNum(x.qtdEi)} un</div>`:''}`;
+    const celCompras = `${fmtR(x.compras)}${x.qtdCompras>0?`<div style="font-size:10px;color:var(--muted);">${fmtNum(x.qtdCompras)} un</div>`:''}`;
+    const celEf = `${fmtR(x.ef)}${x.qtdEf>0?`<div style="font-size:10px;color:var(--muted);">${fmtNum(x.qtdEf)} un</div>`:''}`;
+    // Qtd. consumida (equivalente em unidades do CMV em R$) como sub-linha, mesmo padrão das
+    // outras colunas — em vermelho quando negativa, sinal de possível problema no dado.
+    const celSaldoQtd = `<div style="font-size:10px;${x.saldoQtd<0?'color:var(--red);font-weight:700;':'color:var(--muted);'}margin-top:4px;">${fmtNum(x.saldoQtd)} un</div>`;
+    return `<tr><td class="td-c">${idx+1}</td><td class="td-l">${x.produto}</td><td>${celEi}</td><td>${celCompras}</td><td>${celEf}</td><td style="font-weight:700;${x.cmv<0?'color:var(--red)':''}"><strong>${fmtR(x.cmv)}</strong>${celSaldoQtd}<div class="prog-bar" style="margin-top:4px;"><div class="prog-bar-fill" style="width:${barW}%"></div></div></td></tr>`;
+  }).join('');
+  const totQtdEi = arr.reduce((s,x)=>s+x.qtdEi,0), totQtdEf = arr.reduce((s,x)=>s+x.qtdEf,0), totQtdCompras = arr.reduce((s,x)=>s+x.qtdCompras,0);
+  const totSaldoQtd = arr.reduce((s,x)=>s+x.saldoQtd,0);
+  document.getElementById('cmvprod-tfoot').innerHTML = `<tr class="tfoot-row"><td></td><td>TOTAL (${arr.length} produtos)</td><td>${fmtR(arr.reduce((s,x)=>s+x.ei,0))}${totQtdEi>0?`<div style="font-size:10px;">${fmtNum(totQtdEi)} un</div>`:''}</td><td>${fmtR(arr.reduce((s,x)=>s+x.compras,0))}${totQtdCompras>0?`<div style="font-size:10px;">${fmtNum(totQtdCompras)} un</div>`:''}</td><td>${fmtR(arr.reduce((s,x)=>s+x.ef,0))}${totQtdEf>0?`<div style="font-size:10px;">${fmtNum(totQtdEf)} un</div>`:''}</td><td><strong>${fmtR(totCmv)}</strong><div style="font-size:10px;color:var(--muted);margin-top:4px;">${fmtNum(totSaldoQtd)} un</div></td></tr>`;
+
+  document.getElementById('cmvprod-empty-state').style.display = arr.length ? 'none' : 'block';
+  document.getElementById('cmvprod-resultado').style.display = arr.length ? 'block' : 'none';
+}
+</script>

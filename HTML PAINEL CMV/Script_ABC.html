@@ -1,0 +1,280 @@
+<script>
+// ════════════════════════════════════════════════════════════════════
+//  Script_ABC.html — Curvas ABC (Vendas/Compras) · Tooltip de preço ·
+//  Interface (abas, sidebar, tema, alertas)
+//  (depende de variáveis/funções definidas em Script_Core.html
+//   e Script_Graficos.html)
+// ════════════════════════════════════════════════════════════════════
+
+// ─── CURVAS ABC ───────────────────────────────────────────────────────────────
+function _filialOrigemParaModo(filialOriginal,modo) {
+  const nome=filialOriginal.toUpperCase();const ehDelivery=nome.includes('DELIVERY');
+  if(modo==='fisico'&&ehDelivery)return null;if(modo==='ifood'&&!ehDelivery)return null;
+  if(modo==='ifood'&&ehDelivery){if(nome.includes('DUQUE'))return'DUQUE (iFood)';if(nome.includes('METROPOLE')||nome.includes('METRÓPOLE'))return'METRÓPOLE (iFood)';return filialOriginal+' (iFood)';}
+  return normalizarFilial(filialOriginal);
+}
+
+function setModoIfood(btn,modo) {
+  document.querySelectorAll('.abc-ifood-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');_abcModoIfood=modo;
+  const notas={consolidado:'Loja física + iFood somados por filial',fisico:'Apenas vendas presenciais (sem iFood)',ifood:'Apenas pedidos via iFood/Delivery'};
+  document.getElementById('abc-ifood-nota').textContent=notas[modo]||'';
+  _compilarVendasPorModo();const sel=document.getElementById('abc-filial-select');if(sel)sel.value='TODAS';renderABC();
+}
+
+function _chaveContexto(filialSel) {
+  const f=(filialSel==='TODAS'||!filialSel)?'TODAS':filialSel;return f+'|'+_abcModoIfood;
+}
+
+function obterAbcMesAnterior(labelMesAtual,contexto) {
+  const mesAnt=getChronologicalPreviousMonth(labelMesAtual);if(!mesAnt)return null;
+  return _histServidor.ABC_HIST?.[mesAnt]?.[contexto]||null;
+}
+
+// Só atualiza em memória — quem persiste no servidor é quem chama (ver renderABC/
+// renderABCCompras), assim várias chamadas seguidas geram 1 gravação só, não uma por filial.
+function _salvarSnapshotAbc(labelMes,contexto,rankMap) {
+  if(!_histServidor.ABC_HIST[labelMes])_histServidor.ABC_HIST[labelMes]={};
+  _histServidor.ABC_HIST[labelMes][contexto]=rankMap;
+}
+
+function _normalizarAntMap(antMapRaw,totalAtual) {
+  if(!antMapRaw||totalAtual===0)return antMapRaw;
+  const positions=Object.values(antMapRaw).map(v=>v?.pos||0).filter(p=>p>0);
+  if(positions.length===0)return antMapRaw;
+  const maxAnt=Math.max(...positions);
+  if(maxAnt>totalAtual*1.5){
+    const entries=Object.entries(antMapRaw).filter(([,v])=>v?.pos).sort((a,b)=>a[1].pos-b[1].pos);
+    const normalizado={};entries.forEach(([prod,v],idx)=>{normalizado[prod]={pos:idx+1,classe:v.classe};});return normalizado;
+  }
+  return antMapRaw;
+}
+
+function _abcRankCelula(posAtual,posAnt,classeAtual,classeAnt) {
+  if(posAnt===null||posAnt===undefined)return'<td class="td-c"><span class="abc-rank-new">NOVO</span></td>';
+  const deltaPosNum=posAnt-posAtual;let posHtml='';
+  if(deltaPosNum>0)posHtml=`<span class="abc-rank-up">▲ ${deltaPosNum}</span>`;
+  else if(deltaPosNum<0)posHtml=`<span class="abc-rank-down">▼ ${Math.abs(deltaPosNum)}</span>`;
+  else posHtml=`<span class="abc-rank-same">—</span>`;
+  let classeHtml='';
+  if(classeAnt&&classeAtual!==classeAnt){const subiu=(classeAnt==='C'&&classeAtual!=='C')||(classeAnt==='B'&&classeAtual==='A');classeHtml=subiu?`<span class="abc-class-up">${classeAnt}→${classeAtual}</span>`:`<span class="abc-class-down">${classeAnt}→${classeAtual}</span>`;}
+  return`<td class="td-c">${posHtml}${classeHtml}</td>`;
+}
+
+function _compilarVendasPorModo() {
+  try {
+    _abcVendasModoAtual={};_abcQtdProd={};if(!dados.vendas)return;
+    dados.vendas.forEach(r=>{
+      const filialOrig=findStr(r,['filial']);const fnorm=_filialOrigemParaModo(filialOrig,_abcModoIfood);if(!fnorm)return;
+      const prod=findStr(r,['produto']);const tot=findVal(r,['total','valor total','faturamento']);
+      // Captura qtd pelas variações reais do relatório Cloudfy
+      const qtdR=findVal(r,['qtde. total','qtde. à vista','qtde. a prazo','qtde total','qtd. total','qtd total','quantidade total','qtde','qtd','quantidade']);
+      if(tot>0){
+        if(!_abcVendasModoAtual[fnorm])_abcVendasModoAtual[fnorm]={};
+        _abcVendasModoAtual[fnorm][prod]=(_abcVendasModoAtual[fnorm][prod]||0)+tot;
+        // _abcQtdProd separado por filial para ticket médio filtrado
+        if(!_abcQtdProd[fnorm])_abcQtdProd[fnorm]={};
+        _abcQtdProd[fnorm][prod]=(_abcQtdProd[fnorm][prod]||0)+(qtdR||1);
+      }
+    });
+    const selFilial=document.getElementById('abc-filial-select');
+    if(selFilial){const filiais=Object.keys(_abcVendasModoAtual).sort();selFilial.innerHTML='<option value="TODAS">Todas as Filiais</option>'+filiais.map(f=>`<option value="${f}">${f}</option>`).join('');}
+  } catch(e) { mostrarAlerta('Erro ao compilar vendas por modo: ' + e.message); console.error('[ABC]', e); }
+}
+
+function compilarBasesAbc() {
+  try {
+    _abcModoIfood='consolidado';
+    _abcQtdProd={};
+
+    // ── Construir tabela de custo unitário dinâmica ──────────────────────────
+    // Fonte 1 (mais prioritária): dados.produtosMestre — relatório "Manutenção de Produtos" (Custo médio).
+    // Fonte confiável, imune ao bug do Cloudfy de custo trocado entre origem/destino em Transferências.
+    _abcCustoProd = Object.assign({}, CUSTO_UNITARIO_PRODUTO); // parte com fixos
+    if (dados.produtosMestre && dados.produtosMestre.length > 0) {
+      dados.produtosMestre.forEach(r => {
+        const prod  = findStr(r, ['nome']);
+        const custo = findVal(r, ['custo médio','custo medio']);
+        if (prod && custo > 0) _abcCustoProd[prod] = custo;
+      });
+    }
+    // Fonte 2 (fallback): dados.teorico — custo unit. produto por produto/filial
+    if (dados.teorico && dados.teorico.length > 0) {
+      const vistoTeorico = {};
+      dados.teorico.forEach(r => {
+        const prod = findStr(r, ['produto']);
+        if (!prod || _abcCustoProd[prod]) return; // não sobrescreve a fonte 1 (mestre)
+        const cu = findVal(r, ['custo unit. produto','custo unitário produto','custo unit produto','custo unit.','custo unitario','custo unit']);
+        if (cu > 0 && !vistoTeorico[prod]) {
+          vistoTeorico[prod] = cu;
+          _abcCustoProd[prod] = cu;
+        }
+      });
+    }
+    // Fonte 3 (fallback final): dados.perdas — campo 'custo' (custo unitário)
+    if (dados.perdas && dados.perdas.length > 0) {
+      dados.perdas.forEach(r => {
+        const prod = findStr(r, ['produto']);
+        if (!prod || _abcCustoProd[prod]) return; // não sobrescreve fontes 1 e 2
+        const cu = findVal(r, ['custo']);
+        if (cu > 0) _abcCustoProd[prod] = cu;
+      });
+    }
+
+    document.querySelectorAll('.abc-ifood-btn').forEach(b=>b.classList.remove('active'));
+    document.querySelector('.abc-ifood-btn')?.classList.add('active');
+    document.getElementById('abc-ifood-nota').textContent='';
+    _compilarVendasPorModo();
+    abcDadosCompras={};
+    if(dados.compras)dados.compras.forEach(r=>{
+      const insumo=findStr(r,['produto','insumo']).toString().trim();const tot=findVal(r,['total','valor total','custo total','total (r$)']);
+      const qtd=findVal(r,['quantidade','qtd','qtde','qtd.','qtde.','qtd. comprada','quantidade comprada','qtd comprada','qtd (un)','qtde (un)','qtd. (un)','quantidade (un)','qtd. (kg)','quantidade (kg)','unidades','un. compradas']);
+      const dtLabel=extrairDtLabel(findStr(r,['data','emissão']));
+      if(tot>0){if(!abcDadosCompras[insumo])abcDadosCompras[insumo]={total:0,qtd:0,hist:[]};abcDadosCompras[insumo].total+=tot;abcDadosCompras[insumo].qtd+=qtd;if(qtd>0)abcDadosCompras[insumo].hist.push({dt:dtLabel,un:tot/qtd});}
+    });
+    document.getElementById('abc-empty-state').style.display='none';document.getElementById('abc-resultado').style.display='block';
+    document.getElementById('abc-compras-empty-state').style.display='none';document.getElementById('abc-compras-resultado').style.display='block';
+    renderABC();renderABCCompras();
+  } catch(e) { mostrarAlerta('Erro ao compilar bases ABC: ' + e.message); console.error('[ABC]', e); }
+}
+
+// FIX: snapshot salvo apenas quando filialSel = TODAS (evita sobrescrever contextos de filiais individuais)
+function renderABC() {
+  try {
+    const busca=(document.getElementById('abc-search').value||'').toLowerCase();
+    let filialSel=document.getElementById('abc-filial-select').value;if(!filialSel)filialSel='TODAS';
+    const labelMes=_mesAtualDrive();const contexto=_chaveContexto(filialSel);
+
+    // Salva snapshot apenas em varredura completa (sem filtro de busca, só contexto TODAS)
+    if(!busca&&filialSel==='TODAS') {
+      const todasFiliais=['TODAS',...Object.keys(_abcVendasModoAtual)];
+      todasFiliais.forEach(f=>{
+        const alvosF=f==='TODAS'?Object.keys(_abcVendasModoAtual):[f];
+        const agF={};alvosF.forEach(fil=>{Object.entries(_abcVendasModoAtual[fil]||{}).forEach(([p,tot])=>{agF[p]=(agF[p]||0)+tot;});});
+        const totF=Object.values(agF).reduce((s,v)=>s+v,0);if(totF===0)return;
+        let acF=0;const snapF={};
+        Object.entries(agF).sort((a,b)=>b[1]-a[1]).forEach(([prod,total],idx)=>{acF+=(total/totF*100);snapF[prod]={pos:idx+1,classe:acF<=80?'A':acF<=95?'B':'C'};});
+        _salvarSnapshotAbc(labelMes,_chaveContexto(f),snapF);
+      });
+      _persistirHistorico('ABC_HIST'); // 1 gravação só, depois de todos os contextos computados
+    }
+
+    const ag={};const alvos=filialSel==='TODAS'?Object.keys(_abcVendasModoAtual):[filialSel];
+    alvos.forEach(f=>{Object.entries(_abcVendasModoAtual[f]||{}).forEach(([p,tot])=>{ag[p]=(ag[p]||0)+tot;});});
+    const totalGeral=Object.values(ag).reduce((s,v)=>s+v,0);
+    let acFull=0;
+    let arrFull=Object.entries(ag).map(([prod,total])=>({prod,total})).sort((a,b)=>b.total-a.total).map((r,idx)=>{acFull+=(r.total/totalGeral*100);return{...r,pos:idx+1,part:(r.total/totalGeral*100),acFull,classe:acFull<=80?'A':acFull<=95?'B':'C'};});
+    const antMapRaw=obterAbcMesAnterior(labelMes,contexto);const antMap=_normalizarAntMap(antMapRaw,arrFull.length);
+    if(busca)arrFull=arrFull.filter(r=>r.prod.toLowerCase().includes(busca));
+    const corte=abcTopNVendas>0?arrFull.slice(0,abcTopNVendas):arrFull;
+    const totCorte=corte.reduce((s,r)=>s+r.total,0);let acCorte=0;
+    // ── KPIs filtráveis ──────────────────────────────────────────────────────
+    const fatTotal=Object.values(ag).reduce((s,v)=>s+v,0);
+    // Qtd total de itens vendidos no filtro ativo (somando apenas as filiais do ag)
+    const alvosQtd=filialSel==='TODAS'?Object.keys(_abcQtdProd):[filialSel];
+    let totalQtdItens=0;
+    Object.keys(ag).forEach(prod=>{
+      alvosQtd.forEach(f=>{totalQtdItens+=(_abcQtdProd[f]?.[prod]||0);});
+    });
+    const ticketMedio=totalQtdItens>0?fatTotal/totalQtdItens:0;
+    const kpiFatEl=document.getElementById('abc-kpi-fat-val');
+    const kpiFatSubEl=document.getElementById('abc-kpi-fat-sub');
+    const kpiTicketEl=document.getElementById('abc-kpi-ticket-val');
+    const kpiTicketSubEl=document.getElementById('abc-kpi-ticket-sub');
+    if(kpiFatEl){kpiFatEl.textContent=fmtR(fatTotal);kpiFatSubEl.textContent=filialSel==='TODAS'?'Todas as filiais — '+_abcModoIfood:'Filial: '+filialSel+' — '+_abcModoIfood;}
+    if(kpiTicketEl){kpiTicketEl.textContent=totalQtdItens>0?fmtR(ticketMedio):'S/dado';kpiTicketSubEl.textContent=totalQtdItens>0?totalQtdItens.toLocaleString('pt-BR')+' itens vendidos no período':'Qtde. total não disponível no relatório';}
+
+    document.getElementById('abc-tbody').innerHTML=corte.map((r,idx)=>{
+      acCorte+=(r.total/(totCorte||1)*100);const ant=antMap?.[r.prod];const rankTd=_abcRankCelula(r.pos,ant?.pos??null,r.classe,ant?.classe??null);
+      const custoUnit=getCustoUnitario(r.prod);
+      // Somar qtd das filiais ativas no filtro
+      const alvosC=filialSel==='TODAS'?Object.keys(_abcQtdProd):[filialSel];
+      const qtdVendida=alvosC.reduce((s,f)=>s+(_abcQtdProd[f]?.[r.prod]||0),0);
+      const cmvTotal=custoUnit!==null&&qtdVendida>0?custoUnit*qtdVendida:null;
+      const cmvPct=cmvTotal!==null&&r.total>0?(cmvTotal/r.total*100):null;
+      const cmvUnitTd=custoUnit!==null?`<td class="td-c" style="font-size:11px;color:var(--text);">${fmtR(custoUnit)}</td>`:'<td class="td-c" style="color:var(--muted2);font-size:10px;">—</td>';
+      const cmvPctTd=cmvPct!==null?`<td class="td-c"><span class="${cmvPct<=35?'abc-cmv-ok':cmvPct<=45?'abc-cmv-warn':'abc-cmv-bad'}">${cmvPct.toFixed(1)}%</span></td>`:'<td class="td-c" style="color:var(--muted2);font-size:10px;">—</td>';
+      return`<tr><td class="td-c">${idx+1}</td><td style="text-align:left;">${r.prod}</td><td>${fmtR(r.total)}</td><td>${r.part.toFixed(1)}%</td><td>${acCorte.toFixed(1)}%</td>${cmvUnitTd}${cmvPctTd}<td><span class="${r.classe==='A'?'abc-a':r.classe==='B'?'abc-b':'abc-c'}">${r.classe}</span></td>${rankTd}</tr>`;
+    }).join('');
+  } catch(e) { mostrarAlerta('Erro ao renderizar Curva ABC: ' + e.message); console.error('[ABC]', e); }
+}
+
+function renderABCCompras() {
+  try {
+    const busca=(document.getElementById('abc-compras-search').value||'').toLowerCase();const labelMes=_mesAtualDrive();
+    const totalGeral=Object.values(abcDadosCompras).reduce((s,i)=>s+i.total,0);let acFull=0;
+    let arrFull=Object.entries(abcDadosCompras).map(([insumo,i])=>({insumo,total:i.total,qtd:i.qtd,pm:i.qtd>0?i.total/i.qtd:0})).sort((a,b)=>b.total-a.total).map((r,idx)=>{acFull+=(r.total/totalGeral*100);return{...r,pos:idx+1,part:(r.total/totalGeral*100),acFull,classe:acFull<=80?'A':acFull<=95?'B':'C'};});
+    const rankSnapshot={};arrFull.forEach(r=>{rankSnapshot[r.insumo]={pos:r.pos,classe:r.classe};});
+    _salvarSnapshotAbc(labelMes,'compras',rankSnapshot);
+    _persistirHistorico('ABC_HIST');
+    const antMapRaw=obterAbcMesAnterior(labelMes,'compras');const antMap=_normalizarAntMap(antMapRaw,arrFull.length);
+    if(busca)arrFull=arrFull.filter(r=>r.insumo.toLowerCase().includes(busca));
+    const corte=abcTopNCompras>0?arrFull.slice(0,abcTopNCompras):arrFull;
+    const totCorte=corte.reduce((s,r)=>s+r.total,0);let acCorte=0;
+    document.getElementById('abc-compras-tbody').innerHTML=corte.map((r,idx)=>{
+      acCorte+=(r.total/(totCorte||1)*100);const esc=r.insumo.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+      const ant=antMap?.[r.insumo];const rankTd=_abcRankCelula(r.pos,ant?.pos??null,r.classe,ant?.classe??null);
+      return`<tr><td>${idx+1}</td><td style="text-align:left;">${r.insumo}</td><td>${r.qtd>0?r.qtd.toLocaleString('pt-BR',{maximumFractionDigits:2}):'—'}</td><td class="tooltip-info" data-prod="${esc}">${r.pm>0?fmtR(r.pm):'—'}</td><td>${fmtR(r.total)}</td><td>${r.part.toFixed(1)}%</td><td><span class="${r.classe==='A'?'abc-a':r.classe==='B'?'abc-b':'abc-c'}">${r.classe}</span></td>${rankTd}</tr>`;
+    }).join('');
+  } catch(e) { mostrarAlerta('Erro ao renderizar Curva ABC de Compras: ' + e.message); console.error('[ABC]', e); }
+}
+
+function setTopN(btn,n,tipo) {
+  btn.parentElement.querySelectorAll('.topn-btn').forEach(b=>b.classList.remove('active'));btn.classList.add('active');
+  if(tipo==='vendas'){abcTopNVendas=n;renderABC();}else{abcTopNCompras=n;renderABCCompras();}
+}
+
+// ─── TOOLTIP SPARKLINE DE PREÇO ───────────────────────────────────────────────
+document.addEventListener('mouseover', e=>{const td=e.target.closest('td.tooltip-info[data-prod]');if(td)showPriceTooltip(e,td.dataset.prod);});
+document.addEventListener('mousemove', e=>{if(e.target.closest('td.tooltip-info[data-prod]'))movePriceTooltip(e);});
+document.addEventListener('mouseout',  e=>{const td=e.target.closest('td.tooltip-info[data-prod]');if(td&&!td.contains(e.relatedTarget))hidePriceTooltip();});
+
+function showPriceTooltip(e,rawProd) {
+  const t=document.getElementById('price-tooltip');t.style.display='block';movePriceTooltip(e);
+  const chave=decodeHtmlEntities(rawProd);const i=abcDadosCompras[chave];
+  if(!i||!i.hist||i.hist.length===0){document.getElementById('sparklineCanvas').style.display='none';return;}
+  document.getElementById('sparklineCanvas').style.display='';
+  let hist=[...i.hist];if(hist.length===1)hist.unshift({dt:'Ant.',un:hist[0].un});
+  const labels=hist.map((h,x)=>h.dt!=='?'?h.dt:'#'+(x+1));const dataVals=hist.map(h=>h.un);
+  if(sparklineChart){sparklineChart.destroy();sparklineChart=null;}
+  sparklineChart=new Chart(document.getElementById('sparklineCanvas'),{type:'line',data:{labels,datasets:[{data:dataVals,borderColor:'#C8504E',backgroundColor:'#C8504E22',borderWidth:2,pointRadius:3,fill:true,tension:0.3}]},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}},scales:{x:{display:false},y:{display:true,position:'right',ticks:{font:{size:9},callback:v=>'R$'+v.toLocaleString('pt-BR',{minimumFractionDigits:2})},grid:{color:'#E0E4F0',drawBorder:false}}}}});
+}
+function movePriceTooltip(e){const t=document.getElementById('price-tooltip');if(t.style.display==='block'){let l=e.clientX+15,tp=e.clientY+15;if(l+250>window.innerWidth)l=e.clientX-260;if(tp+170>window.innerHeight)tp=e.clientY-175;t.style.left=l+'px';t.style.top=tp+'px';}}
+function hidePriceTooltip(){document.getElementById('price-tooltip').style.display='none';}
+
+// ─── INTERFACE ────────────────────────────────────────────────────────────────
+function trocarAba(aba) {
+  document.querySelectorAll('.tab-panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(i=>i.classList.remove('active'));
+  document.getElementById('tab-'+aba).classList.add('active');
+  const btnEl=document.getElementById('tab-btn-'+aba);if(btnEl)btnEl.classList.add('active');
+  document.getElementById('breadcrumb-active').textContent=aba.charAt(0).toUpperCase()+aba.slice(1).replace(/-/g,' ');
+  if(aba==='comparativo'){_deduplicarHistoricoServidor();renderComparativoMensal();}
+  if(aba==='lancamentos')preencherFormularioLancamentos(); // FIX: preenche ao abrir a aba
+}
+
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('collapsed');
+  document.getElementById('sidebar-toggle').classList.toggle('is-collapsed');
+}
+
+function alternarTema() {
+  const isDark=document.documentElement.classList.toggle('dark');
+  document.getElementById('theme-label').textContent=isDark?'Escuro':'Claro';
+  document.querySelector('.theme-toggle').childNodes[0].textContent=isDark?'☀️ ':'🌙 ';
+  _atualizarCoresCharts(isDark);
+}
+
+function _atualizarCoresCharts(isDark) {
+  const gridColor=isDark?'#283044':'#E8EBF4';const textColor=isDark?'#7E8FA8':'#64748B';
+  Chart.defaults.color=textColor;Chart.defaults.borderColor=gridColor;
+  [chartCmvPct,chartCmvTeorico,chartEvolucaoCmv,chartEvolucaoCmc,chartPerdasMotivo,chartPerdasGrupo,chartPerdasFilial,chartPerdasTemporal].forEach(ch=>{
+    if(!ch)return;if(ch.options.scales)Object.values(ch.options.scales).forEach(ax=>{if(ax.grid)ax.grid.color=gridColor;if(ax.ticks)ax.ticks.color=textColor;});ch.update('none');
+  });
+}
+
+function mostrarAlerta(msg,tipo='erro') {
+  const div=document.getElementById('alertas');const el=document.createElement('div');
+  el.style.cssText=`padding:12px;margin-bottom:12px;border-radius:8px;font-size:12px;background:${tipo==='erro'?'#FEF2F2':'#FFFBEB'};border:1px solid ${tipo==='erro'?'#FECACA':'#FDE68A'};color:${tipo==='erro'?'#DC2626':'#92400E'}`;
+  el.textContent=msg;div.appendChild(el);setTimeout(()=>el.remove(),8000);
+}
+</script>
