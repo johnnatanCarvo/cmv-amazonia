@@ -1666,7 +1666,7 @@ function tabelaTeoricoPctHtml(){
   }).join('');
 
   return '<div class="card"><div class="card-h"><div class="card-t">CMV Teorico (%) por Mes e Unidade</div>'+
-    '<div class="card-s">Sobre faturamento</div></div>'+
+    '<div class="card-s">Sobre faturamento dos produtos com ficha</div></div>'+
     '<div class="twrap"><table><thead>'+thead+'</thead><tbody>'+linhaGeral+linhasUnidades+'</tbody></table></div></div>';
 }
 
@@ -1712,7 +1712,7 @@ function rTeorico(){
   var html='<div class="metrics" style="grid-template-columns:1.4fr 1fr 1fr 1fr 1fr;">'+
     '<div class="metric lead"><div class="metric-l">CMV Teorico · '+(ML_MAP[mesTeorico]||mesTeorico)+sufUni+'</div>'+
       '<div class="metric-v">'+fR2(d.teorico)+'</div>'+
-      '<div class="metric-sub" style="color:var(--fg3)">'+(d.teoricoPct!==null&&d.teoricoPct!==undefined?fP(d.teoricoPct)+' do faturamento':'')+'</div></div>'+
+      '<div class="metric-sub" style="color:var(--fg3)">'+(d.teoricoPct!==null&&d.teoricoPct!==undefined?fP(d.teoricoPct)+' do faturamento com ficha':'')+'</div></div>'+
     '<div class="metric"><div class="metric-l">CMV Real (mesmo mes)</div><div class="metric-v az">'+(temReal?fR2(d.real):'--')+'</div>'+
       '<div class="metric-sub" style="color:var(--fg3)">'+(temReal&&d.realPct!==null&&d.realPct!==undefined?fP(d.realPct)+' do faturamento':'sem CMV real calculado')+'</div></div>'+
     '<div class="metric"><div class="metric-l">Diferenca (Real menos Teorico)</div><div class="metric-v '+difCls+'">'+diferencaTxt+'</div>'+

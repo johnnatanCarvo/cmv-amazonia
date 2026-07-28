@@ -145,8 +145,14 @@ function getPayload(senha) {
       if (cmvTeorico[m]) {
         var tObj = cmvTeorico[m];
         tObj.faturamento = fat;
-        tObj.teorico_pct = (fat > 0)
-          ? Math.round(tObj.teorico_total / fat * 10000) / 100
+        // O percentual usa o faturamento COBERTO (total menos as vendas sem
+        // ficha tecnica) como base — dividir pelo faturamento total diluiria
+        // o percentual pra baixo artificialmente, ja que vendas sem ficha
+        // entram no denominador mas contribuem R$0 no teorico.
+        var fatCoberto = fat - (tObj.sem_ficha_valor || 0);
+        tObj.faturamento_coberto = Math.round(fatCoberto * 100) / 100;
+        tObj.teorico_pct = (fatCoberto > 0)
+          ? Math.round(tObj.teorico_total / fatCoberto * 10000) / 100
           : null;
         if (cmv[m] && cmv[m].cmv_total !== undefined) {
           tObj.real_total = cmv[m].cmv_total;
@@ -158,8 +164,10 @@ function getPayload(senha) {
             var fatFil = fatMesFilial[m][fil] || 0;
             var fObj = tObj.filiais[fil];
             fObj.faturamento = fatFil;
-            fObj.teorico_pct = (fatFil > 0)
-              ? Math.round(fObj.teorico_total / fatFil * 10000) / 100
+            var fatFilCoberto = fatFil - (fObj.sem_ficha_valor || 0);
+            fObj.faturamento_coberto = Math.round(fatFilCoberto * 100) / 100;
+            fObj.teorico_pct = (fatFilCoberto > 0)
+              ? Math.round(fObj.teorico_total / fatFilCoberto * 10000) / 100
               : null;
             if (cmv[m] && cmv[m].filiais && cmv[m].filiais[fil]) {
               fObj.real_total = cmv[m].filiais[fil].cmv;
