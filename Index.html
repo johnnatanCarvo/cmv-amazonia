@@ -541,6 +541,12 @@ td.hi{font-weight:600;}
           <button data-tipo="fichas" onclick="setUploadTipo('fichas')">Ficha Técnica</button>
         </div>
       </div>
+      <div class="ctrl" id="upload-data-ctrl">
+        <span class="lbl">Mês</span>
+        <select id="upload-mes"><option value="">Selecione…</option></select>
+        <span class="lbl">Ano</span>
+        <select id="upload-ano"><option value="">Selecione…</option></select>
+      </div>
       <div id="upload-drop" class="upload-drop">
         <input type="file" id="upload-input" accept=".csv" multiple style="display:none" onchange="handleUploadFiles(this.files)">
         <div class="upload-drop-txt">Arraste os arquivos .csv aqui ou <span class="upload-drop-link" onclick="document.getElementById('upload-input').click()">clique para selecionar</span></div>
@@ -622,7 +628,7 @@ function go(id){
   if(id==='custo') rCusto();
   if(id==='cmv')   rCMV();
   if(id==='teorico')rTeorico();
-  if(id==='upload')carregarListaArquivos();
+  if(id==='upload'){popularSeletorData();carregarListaArquivos();}
 }
 
 /* ====== INIT VIA APPS SCRIPT ====== */
@@ -1611,12 +1617,14 @@ function teoricoDados(mes){
   var t=CMVTEORICO[mes];if(!t)return null;
   if(uniTeorico==='TODAS')return {
     teorico:t.teorico_total, semFicha:t.sem_ficha_valor, real:t.real_total,
-    diferenca:t.diferenca, fat:t.faturamento, teoricoPct:t.teorico_pct, realPct:t.real_pct
+    diferenca:t.diferenca, fat:t.faturamento, teoricoPct:t.teorico_pct, realPct:t.real_pct,
+    produtos:t.produtos||[]
   };
   if(t.filiais&&t.filiais[uniTeorico]){
     var f=t.filiais[uniTeorico];
     return {teorico:f.teorico_total, semFicha:f.sem_ficha_valor, real:f.real_total,
-      diferenca:f.diferenca, fat:f.faturamento, teoricoPct:f.teorico_pct, realPct:f.real_pct};
+      diferenca:f.diferenca, fat:f.faturamento, teoricoPct:f.teorico_pct, realPct:f.real_pct,
+      produtos:f.produtos||[]};
   }
   return null;
 }
@@ -1679,7 +1687,23 @@ function rTeorico(){
   html+='<div class="card"><div class="card-h"><div class="card-t">Teorico x Real</div><div class="card-s">Evolucao no periodo</div></div>'+
     '<div class="chartbox"><canvas id="ch-teorico"></canvas></div></div>';
 
+  html+='<div class="card"><div class="card-h"><div class="card-t">CMV Teorico por Produto</div><div class="card-s" id="teorico-prod-count"></div></div>'+
+    '<div class="ctrl">'+
+      '<input type="text" id="teorico-busca" placeholder="Buscar produto..." oninput="rTeoricoTable()">'+
+      '<select id="teorico-filtro" onchange="rTeoricoTable()">'+
+        '<option value="">Todos os produtos</option>'+
+        '<option value="com">Só com ficha tecnica</option>'+
+        '<option value="sem">Só sem ficha tecnica</option>'+
+      '</select>'+
+    '</div>'+
+    '<div class="twrap"><table>'+
+      '<thead><tr><th>#</th><th>Produto</th><th>Grupo</th><th class="r">Qtd. Vendida</th>'+
+        '<th class="r">Valor Vendido</th><th class="r">Custo Unit. Teorico</th><th class="r">CMV Teorico</th><th>Ficha</th></tr></thead>'+
+      '<tbody id="teorico-prod-body"></tbody>'+
+    '</table></div></div>';
+
   cont.innerHTML=html;
+  rTeoricoTable();
 
   killChart('ch-teorico');
   var serieTeorico=mesesComTeorico.map(function(m){var dd=teoricoDados(m);return dd?dd.teorico:0;});
@@ -1696,6 +1720,31 @@ function rTeorico(){
         y:{grid:{color:cssv('--ln')},ticks:{color:cssv('--fg2'),font:{family:'DM Mono',size:9},callback:function(v){return 'R$'+(v/1000).toFixed(0)+'K';}}}}}});
 }
 
+function rTeoricoTable(){
+  var d=teoricoDados(mesTeorico);
+  if(!d)return;
+  var busca=(document.getElementById('teorico-busca').value||'').toLowerCase();
+  var filtro=document.getElementById('teorico-filtro').value;
+  var data=d.produtos.filter(function(p){
+    if(busca&&p.produto.toLowerCase().indexOf(busca)<0)return false;
+    if(filtro==='com'&&!p.tem_ficha)return false;
+    if(filtro==='sem'&&p.tem_ficha)return false;
+    return true;
+  });
+  document.getElementById('teorico-prod-count').textContent=data.length+' de '+d.produtos.length+' produtos';
+  document.getElementById('teorico-prod-body').innerHTML=data.slice(0,400).map(function(p,i){
+    return '<tr><td class="n" style="color:var(--fg3)">'+String(i+1).padStart(3,'0')+'</td>'+
+      '<td class="hi">'+p.produto+'</td>'+
+      '<td><span class="gdot"><span style="background:'+gc(p.grupo)+'"></span>'+p.grupo+'</span></td>'+
+      '<td class="n r">'+fQ(p.qtd)+'</td>'+
+      '<td class="n r">'+fR2(p.valor_vendido)+'</td>'+
+      '<td class="n r" style="color:'+(p.tem_ficha?'var(--fg)':'var(--fg3)')+'">'+(p.tem_ficha?fR2(p.custo_unit_teorico):'--')+'</td>'+
+      '<td class="n r hi" style="color:'+(p.tem_ficha?'var(--fg)':'var(--fg3)')+'">'+(p.tem_ficha?fR2(p.custo_total_teorico):'--')+'</td>'+
+      '<td>'+(p.tem_ficha?'<span class="tag tA">SIM</span>':'<span class="tag tC">NAO</span>')+'</td></tr>';
+  }).join('');
+  if(data.length>400)document.getElementById('teorico-prod-body').innerHTML+='<tr><td colspan="8" class="empty">Exibindo os 400 primeiros de '+data.length+'.</td></tr>';
+}
+
 /* ============================================================
    ABA RELATÓRIOS (UPLOAD)
    ============================================================ */
@@ -1709,6 +1758,25 @@ function fTamanho(bytes){
 function setUploadTipo(t){
   uploadTipoSelecionado=t;
   document.querySelectorAll('#upload-tipo-seg button').forEach(function(b){b.classList.toggle('on',b.dataset.tipo===t);});
+  // Ficha tecnica e uma foto do momento (nome fixo) — nao precisa de mes/ano.
+  document.getElementById('upload-data-ctrl').style.display=(t==='fichas')?'none':'flex';
+}
+
+function popularSeletorData(){
+  var selMes=document.getElementById('upload-mes');
+  if(selMes.dataset.ready)return;
+  var meses=[['janeiro','Janeiro'],['fevereiro','Fevereiro'],['marco','Março'],['abril','Abril'],['maio','Maio'],['junho','Junho'],
+    ['julho','Julho'],['agosto','Agosto'],['setembro','Setembro'],['outubro','Outubro'],['novembro','Novembro'],['dezembro','Dezembro']];
+  selMes.innerHTML='<option value="">Selecione…</option>'+meses.map(function(m){return '<option value="'+m[0]+'">'+m[1]+'</option>';}).join('');
+
+  var selAno=document.getElementById('upload-ano');
+  var anoAtual=new Date().getFullYear();
+  var anos=[];
+  for(var a=anoAtual-1;a<=anoAtual+1;a++)anos.push(a);
+  selAno.innerHTML='<option value="">Selecione…</option>'+anos.map(function(a){return '<option value="'+a+'">'+a+'</option>';}).join('');
+  selAno.value=String(anoAtual);
+
+  selMes.dataset.ready='1';
 }
 
 function handleUploadFiles(files){
@@ -1727,6 +1795,14 @@ function enviarArquivo(file){
 
   if(!uploadTipoSelecionado){
     statusEl.textContent='Escolha o tipo de relatório antes de enviar.';statusEl.style.color='var(--rd)';return;
+  }
+  var mesNoEnvio='', anoNoEnvio='';
+  if(uploadTipoSelecionado!=='fichas'){
+    mesNoEnvio=document.getElementById('upload-mes').value;
+    anoNoEnvio=document.getElementById('upload-ano').value;
+    if(!mesNoEnvio||!anoNoEnvio){
+      statusEl.textContent='Escolha o mês e o ano do relatório antes de enviar.';statusEl.style.color='var(--rd)';return;
+    }
   }
   if(!/\.csv$/i.test(file.name)){
     statusEl.textContent='Só .csv é aceito.';statusEl.style.color='var(--rd)';return;

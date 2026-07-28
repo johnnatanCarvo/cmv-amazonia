@@ -919,31 +919,50 @@ function calcularCMVTeorico(vendas, fichasMap) {
   var resultado = {};
   if (!vendas || !vendas.abc_mes || !fichasMap || !Object.keys(fichasMap).length) return resultado;
 
-  function somarProdutos(produtos) {
+  // Detalha por produto (usado tanto pro total do mes quanto pra tabela por
+  // produto na tela) — cada linha mostra se bateu ou nao com a ficha tecnica.
+  function detalharProdutos(produtos) {
     var teorico = 0, semFicha = 0;
-    produtos.forEach(function(p) {
-      var custo = fichasMap[p.produto];
-      if (custo !== undefined) {
-        teorico += custo * p.qtd;
-      } else {
-        semFicha += p.valor;
-      }
-    });
-    return { teorico_total: r2(teorico), sem_ficha_valor: r2(semFicha) };
+    var lista = produtos.map(function(p) {
+      var custoUnit = fichasMap[p.produto];
+      var temFicha  = custoUnit !== undefined;
+      var custoTotal = temFicha ? r2(custoUnit * p.qtd) : null;
+      if (temFicha) teorico += custoUnit * p.qtd;
+      else semFicha += p.valor;
+      return {
+        produto: p.produto,
+        grupo: p.grupo,
+        qtd: p.qtd,
+        valor_vendido: p.valor,
+        custo_unit_teorico: temFicha ? r4(custoUnit) : null,
+        custo_total_teorico: custoTotal,
+        tem_ficha: temFicha
+      };
+    }).sort(function(a, b) { return (b.custo_total_teorico || 0) - (a.custo_total_teorico || 0); });
+    return { teorico_total: r2(teorico), sem_ficha_valor: r2(semFicha), produtos: lista };
   }
 
   Object.keys(vendas.abc_mes).forEach(function(mes) {
-    var base = somarProdutos(vendas.abc_mes[mes].produtos);
+    var base = detalharProdutos(vendas.abc_mes[mes].produtos);
     base.filiais = {};
 
     if (vendas.abc_mes_filial[mes]) {
       Object.keys(vendas.abc_mes_filial[mes]).forEach(function(fil) {
-        base.filiais[fil] = somarProdutos(vendas.abc_mes_filial[mes][fil].produtos);
+        base.filiais[fil] = detalharProdutos(vendas.abc_mes_filial[mes][fil].produtos);
       });
     }
 
     resultado[mes] = base;
   });
+
+  // Diagnostico: compara uma amostra de nomes de produtos vendidos contra as
+  // chaves da ficha tecnica, pra facilitar achar divergencia de nome no log.
+  if (Object.keys(resultado).length) {
+    var amostraVendas = (vendas.abc_geral || []).slice(0, 8).map(function(p) { return p.produto; });
+    var amostraFichas = Object.keys(fichasMap).slice(0, 8);
+    Logger.log('CMV Teorico - amostra produtos VENDIDOS: ' + JSON.stringify(amostraVendas));
+    Logger.log('CMV Teorico - amostra produtos da FICHA TECNICA: ' + JSON.stringify(amostraFichas));
+  }
 
   return resultado;
 }
