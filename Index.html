@@ -559,8 +559,8 @@ td.hi{font-weight:600;}
       <div class="card-h"><div class="card-t">Arquivos na Pasta</div><button class="gd-close" onclick="carregarListaArquivos()">Atualizar lista</button></div>
       <div class="twrap">
         <table>
-          <thead><tr><th>Arquivo</th><th>Tipo</th><th class="r">Tamanho</th><th class="r">Atualizado em</th></tr></thead>
-          <tbody id="upload-lista-body"><tr><td colspan="4" class="empty">Abra esta aba para carregar.</td></tr></tbody>
+          <thead><tr><th>Arquivo</th><th>Tipo</th><th class="r">Tamanho</th><th class="r">Atualizado em</th><th></th></tr></thead>
+          <tbody id="upload-lista-body"><tr><td colspan="5" class="empty">Abra esta aba para carregar.</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -1880,22 +1880,38 @@ function enviarArquivo(file){
 
 function carregarListaArquivos(){
   var body=document.getElementById('upload-lista-body');
-  body.innerHTML='<tr><td colspan="4" class="empty">Carregando…</td></tr>';
+  body.innerHTML='<tr><td colspan="5" class="empty">Carregando…</td></tr>';
   google.script.run
     .withSuccessHandler(function(json){
-      var res;try{res=JSON.parse(json);}catch(e){body.innerHTML='<tr><td colspan="4" class="empty">Erro ao carregar.</td></tr>';return;}
-      if(!res.ok){body.innerHTML='<tr><td colspan="4" class="empty">'+(res.erro||'Erro ao carregar.')+'</td></tr>';return;}
-      if(!res.arquivos.length){body.innerHTML='<tr><td colspan="4" class="empty">Nenhum arquivo na pasta.</td></tr>';return;}
+      var res;try{res=JSON.parse(json);}catch(e){body.innerHTML='<tr><td colspan="5" class="empty">Erro ao carregar.</td></tr>';return;}
+      if(!res.ok){body.innerHTML='<tr><td colspan="5" class="empty">'+(res.erro||'Erro ao carregar.')+'</td></tr>';return;}
+      if(!res.arquivos.length){body.innerHTML='<tr><td colspan="5" class="empty">Nenhum arquivo na pasta.</td></tr>';return;}
       body.innerHTML=res.arquivos.map(function(a){
+        var nomeEsc=a.nome.replace(/'/g,"\\'");
         return '<tr><td class="hi">'+a.nome+'</td><td>'+a.tipo+'</td>'+
           '<td class="n r">'+fTamanho(a.tamanho)+'</td>'+
-          '<td class="n r" style="color:var(--fg2)">'+new Date(a.atualizado).toLocaleString('pt-BR')+'</td></tr>';
+          '<td class="n r" style="color:var(--fg2)">'+new Date(a.atualizado).toLocaleString('pt-BR')+'</td>'+
+          '<td class="r"><button class="gd-close" style="color:#e5484d;border-color:#e5484d" onclick="excluirArquivoConfirm(\''+nomeEsc+'\')">Excluir</button></td></tr>';
       }).join('');
     })
     .withFailureHandler(function(err){
-      body.innerHTML='<tr><td colspan="4" class="empty">Falha: '+(err.message||err)+'</td></tr>';
+      body.innerHTML='<tr><td colspan="5" class="empty">Falha: '+(err.message||err)+'</td></tr>';
     })
     .listarArquivos(SENHA_ATUAL);
+}
+
+function excluirArquivoConfirm(nome){
+  if(!confirm('Excluir o arquivo "'+nome+'"?\n\nEle vai para a lixeira do Drive e pode ser recuperado por lá, mas deixará de aparecer no painel imediatamente.')) return;
+  google.script.run
+    .withSuccessHandler(function(json){
+      var res;try{res=JSON.parse(json);}catch(e){alert('Erro ao excluir.');return;}
+      if(!res.ok){alert(res.erro||'Erro ao excluir.');return;}
+      carregarListaArquivos();
+    })
+    .withFailureHandler(function(err){
+      alert('Falha ao excluir: '+(err.message||err));
+    })
+    .excluirArquivo(SENHA_ATUAL, nome);
 }
 
 (function(){

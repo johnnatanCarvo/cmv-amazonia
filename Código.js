@@ -389,3 +389,31 @@ function listarArquivos(senha) {
     return JSON.stringify({ ok: false, erro: err.message });
   }
 }
+
+// Move um arquivo da pasta do painel para a lixeira do Drive (recuperável, não é exclusão definitiva).
+function excluirArquivo(senha, nomeArquivo) {
+  if (!validarSenha(senha)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    if (!nomeArquivo) {
+      return JSON.stringify({ ok: false, erro: 'Nome de arquivo não informado.' });
+    }
+    var pasta = DriveApp.getFolderById(PASTA_ID);
+    var existentes = pasta.getFilesByName(nomeArquivo);
+    var achou = false;
+    while (existentes.hasNext()) {
+      existentes.next().setTrashed(true);
+      achou = true;
+    }
+    if (!achou) {
+      return JSON.stringify({ ok: false, erro: 'Arquivo não encontrado na pasta.' });
+    }
+    Logger.log('Excluido (lixeira): ' + nomeArquivo);
+    return JSON.stringify({ ok: true, nome: nomeArquivo });
+
+  } catch (err) {
+    Logger.log('excluirArquivo ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
