@@ -306,13 +306,14 @@ function detectarTipoArquivo(nome) {
 }
 
 // Recebe um arquivo em base64 do navegador e salva na pasta do painel.
-// O TIPO vem escolhido pelo usuario na tela (compras/vendas/estoque) —
-// o arquivo e renomeado para "<tipo>_<nome original>.csv" antes de salvar,
-// garantindo que o padrao de leitura (PADROES) sempre reconheca o arquivo,
-// independente de como o Cloudfy exportou o nome original.
+// O TIPO vem escolhido pelo usuario na tela (compras/vendas/estoque) e, para
+// esses tipos, tambem o MES/ANO escolhidos — o arquivo e renomeado para
+// "<tipo>_<mes>_<ano>_<nome original>.csv" antes de salvar, garantindo que o
+// padrao de leitura (PADROES) sempre reconheca o arquivo e que o Drive fique
+// organizado por periodo, independente de como o Cloudfy exportou o nome original.
 // Se ja existir um arquivo com o MESMO NOME FINAL, ele e movido para a
 // lixeira do Drive (recuperavel) antes de salvar o novo.
-function uploadArquivo(senha, nomeArquivoOriginal, conteudoBase64, tipo) {
+function uploadArquivo(senha, nomeArquivoOriginal, conteudoBase64, tipo, mes, ano) {
   if (!validarSenha(senha)) {
     return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
   }
@@ -326,6 +327,9 @@ function uploadArquivo(senha, nomeArquivoOriginal, conteudoBase64, tipo) {
     if (!conteudoBase64) {
       return JSON.stringify({ ok: false, erro: 'Arquivo vazio ou não recebido corretamente.' });
     }
+    if (tipo !== 'fichas' && (!mes || !ano)) {
+      return JSON.stringify({ ok: false, erro: 'Mês e ano do relatório não informados.' });
+    }
 
     // Ficha técnica é uma FOTO do momento (não acumula por mês como os outros
     // tipos) — usa sempre o mesmo nome, então um novo envio substitui o
@@ -335,7 +339,9 @@ function uploadArquivo(senha, nomeArquivoOriginal, conteudoBase64, tipo) {
       nomeFinal = 'fichas_tecnicas.csv';
     } else {
       var semExtensao = nomeArquivoOriginal.replace(/\.csv$/i, '');
-      nomeFinal = tipo + '_' + semExtensao + '.csv';
+      var mesSlug = String(mes).toLowerCase().replace(/[^a-z0-9]/g, '');
+      var anoSlug = String(ano).replace(/[^0-9]/g, '');
+      nomeFinal = tipo + '_' + mesSlug + '_' + anoSlug + '_' + semExtensao + '.csv';
     }
 
     var pasta = DriveApp.getFolderById(PASTA_ID);

@@ -1872,7 +1872,7 @@ function enviarArquivo(file){
       .withFailureHandler(function(err){
         statusEl.textContent='Falha: '+(err.message||err);statusEl.style.color='var(--rd)';
       })
-      .uploadArquivo(SENHA_ATUAL, file.name, base64, tipoNoEnvio);
+      .uploadArquivo(SENHA_ATUAL, file.name, base64, tipoNoEnvio, mesNoEnvio, anoNoEnvio);
   };
   reader.onerror=function(){statusEl.textContent='Erro ao ler o arquivo.';statusEl.style.color='var(--rd)';};
   reader.readAsDataURL(file);
