@@ -308,9 +308,9 @@ function detectarTipoArquivo(nome) {
 // Recebe um arquivo em base64 do navegador e salva na pasta do painel.
 // O TIPO vem escolhido pelo usuario na tela (compras/vendas/estoque) e, para
 // esses tipos, tambem o MES/ANO escolhidos — o arquivo e renomeado para
-// "<tipo>_<mes>_<ano>_<nome original>.csv" antes de salvar, garantindo que o
-// padrao de leitura (PADROES) sempre reconheca o arquivo e que o Drive fique
-// organizado por periodo, independente de como o Cloudfy exportou o nome original.
+// "<tipo>_<mes>_<ano>.csv" antes de salvar, DESCARTANDO o nome original do
+// Cloudfy (que costuma vir com codigo/hash ilegivel). O nome final depende
+// só do que o usuario escolheu na tela, nunca do nome que o Cloudfy gerou.
 // Se ja existir um arquivo com o MESMO NOME FINAL, ele e movido para a
 // lixeira do Drive (recuperavel) antes de salvar o novo.
 function uploadArquivo(senha, nomeArquivoOriginal, conteudoBase64, tipo, mes, ano) {
@@ -338,10 +338,9 @@ function uploadArquivo(senha, nomeArquivoOriginal, conteudoBase64, tipo, mes, an
     if (tipo === 'fichas') {
       nomeFinal = 'fichas_tecnicas.csv';
     } else {
-      var semExtensao = nomeArquivoOriginal.replace(/\.csv$/i, '');
       var mesSlug = String(mes).toLowerCase().replace(/[^a-z0-9]/g, '');
       var anoSlug = String(ano).replace(/[^0-9]/g, '');
-      nomeFinal = tipo + '_' + mesSlug + '_' + anoSlug + '_' + semExtensao + '.csv';
+      nomeFinal = tipo + '_' + mesSlug + '_' + anoSlug + '.csv';
     }
 
     var pasta = DriveApp.getFolderById(PASTA_ID);
