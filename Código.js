@@ -440,3 +440,209 @@ function excluirArquivo(senha, nomeArquivo) {
     return JSON.stringify({ ok: false, erro: err.message });
   }
 }
+
+// ── EDIÇÃO DE DADOS BRUTOS (Compras e Contagem de Estoque) ────
+// Permite ver e corrigir a QUANTIDADE de uma linha específica direto no
+// arquivo de origem no Drive, sem precisar reexportar do Cloudfy. Cada
+// linha devolvida ao front-end carrega "arquivo" + "linha" (posição física
+// no arquivo) para a edição saber exatamente o que reescrever.
+
+// Formata número no padrão BR (vírgula decimal), sem notação científica.
+function formatBR(n, decimais) {
+  var f = Math.pow(10, decimais);
+  return (Math.round(n * f) / f).toFixed(decimais).replace('.', ',');
+}
+
+// Lista os arquivos CSV de um tipo, ordenados por nome (mesma varredura da
+// leitura agregada, mas devolvendo os File objects — usado pela edição).
+function arquivosDoTipo(tipo) {
+  var pasta = DriveApp.getFolderById(PASTA_ID);
+  var files = pasta.getFiles();
+  var padrao = PADROES[tipo];
+  var encontrados = [];
+  while (files.hasNext()) {
+    var f = files.next();
+    var nome = f.getName();
+    if (!nome.toLowerCase().endsWith('.csv')) continue;
+    if (!padrao.test(nome)) continue;
+    encontrados.push(f);
+  }
+  encontrados.sort(function(a, b) { return a.getName().localeCompare(b.getName()); });
+  return encontrados;
+}
+
+function conteudoDoArquivo(file) {
+  try { return file.getBlob().getDataAsString('UTF-8'); }
+  catch (enc) { return file.getBlob().getDataAsString('ISO-8859-1'); }
+}
+
+// Lista as linhas de COMPRAS do mês selecionado, com metadados de origem
+// (arquivo + linha) para permitir a edição da quantidade.
+function listarComprasMes(senha, mesNome) {
+  if (!validarSenha(senha)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var resultado = [];
+    arquivosDoTipo('compras').forEach(function(f) {
+      var linhasTexto = conteudoDoArquivo(f).split(/\r?\n/);
+      for (var i = 1; i < linhasTexto.length; i++) {
+        if (!linhasTexto[i]) continue;
+        var cel = linhasTexto[i].split('\t').map(function(c) { return c.replace(/^"|"$/g, ''); });
+        if (cel.length < 18) continue;
+        var mes = mesNum(cel[C_COMPRAS.data]);
+        if (!mes || NOMES_MESES[mes] !== mesNome) continue;
+        resultado.push({
+          arquivo: f.getName(), linha: i,
+          filial: cel[C_COMPRAS.filial], data: cel[C_COMPRAS.data],
+          produto: cel[C_COMPRAS.produto], grupo: cel[C_COMPRAS.grupo],
+          qtd: numVal(cel[C_COMPRAS.qtd]), unid: cel[C_COMPRAS.unid],
+          custo_unit: numVal(cel[C_COMPRAS.custo_atual]), total: numVal(cel[C_COMPRAS.total])
+        });
+      }
+    });
+    resultado.sort(function(a, b) { return b.total - a.total; });
+    return JSON.stringify({ ok: true, linhas: resultado });
+  } catch (err) {
+    Logger.log('listarComprasMes ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
+// Corrige a quantidade de UMA linha de compra, recalculando o Total
+// (Qtd x Custo atual — o custo atual fica inalterado). Escreve direto no
+// arquivo de origem no Drive.
+function editarQtdCompra(senha, arquivo, linha, novaQtd) {
+  if (!validarSenha(senha)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var qtd = numVal(novaQtd);
+    if (!(qtd >= 0)) return JSON.stringify({ ok: false, erro: 'Quantidade inválida.' });
+
+    var it = DriveApp.getFolderById(PASTA_ID).getFilesByName(arquivo);
+    if (!it.hasNext()) return JSON.stringify({ ok: false, erro: 'Arquivo não encontrado: ' + arquivo });
+    var file = it.next();
+
+    var linhasTexto = conteudoDoArquivo(file).split(/\r?\n/);
+    var idx = Number(linha);
+    if (!linhasTexto[idx]) return JSON.stringify({ ok: false, erro: 'Linha não encontrada no arquivo.' });
+
+    var cel = linhasTexto[idx].split('\t').map(function(c) { return c.replace(/^"|"$/g, ''); });
+    if (cel.length < 18) return JSON.stringify({ ok: false, erro: 'Formato de linha inesperado.' });
+
+    var custoUnit = numVal(cel[C_COMPRAS.custo_atual]);
+    var novoTotal = Math.round(qtd * custoUnit * 100) / 100;
+    cel[C_COMPRAS.qtd]   = formatBR(qtd, 4);
+    cel[C_COMPRAS.total] = formatBR(novoTotal, 2);
+
+    linhasTexto[idx] = cel.map(function(c) { return '"' + c + '"'; }).join('\t');
+    file.setContent(linhasTexto.join('\n'));
+
+    Logger.log('Compra editada: ' + arquivo + ' linha ' + idx + ' -> qtd=' + qtd + ' total=' + novoTotal);
+    return JSON.stringify({ ok: true, qtd: qtd, total: novoTotal });
+  } catch (err) {
+    Logger.log('editarQtdCompra ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
+// Lê todas as contagens de estoque (só linhas de Inventário) com metadados de origem.
+function lerContagensBrutas() {
+  var linhas = [];
+  arquivosDoTipo('estoque').forEach(function(f) {
+    var linhasTexto = conteudoDoArquivo(f).split(/\r?\n/);
+    for (var i = 1; i < linhasTexto.length; i++) {
+      if (!linhasTexto[i]) continue;
+      var cel = linhasTexto[i].split('\t').map(function(c) { return c.replace(/^"|"$/g, ''); });
+      if (cel.length < 16) continue;
+      if (cel[C_ESTOQUE.tp_movto] !== ESTOQUE_TIPO_VALIDO) continue;
+      var dataInfo = parseDataCompleta(cel[C_ESTOQUE.data]);
+      if (!dataInfo) continue;
+      linhas.push({
+        arquivo: f.getName(), linha: i, ts: dataInfo.ts, mes: dataInfo.mes, ano: dataInfo.ano,
+        filial: cel[C_ESTOQUE.filial], grupo: cel[C_ESTOQUE.grupo], produto: cel[C_ESTOQUE.produto],
+        centro: cel[C_ESTOQUE.centro], unid: cel[C_ESTOQUE.unid],
+        saldo: numVal(cel[C_ESTOQUE.saldo]), custo_unit: numVal(cel[C_ESTOQUE.custo_unit]),
+        custo_total: numVal(cel[C_ESTOQUE.custo_total])
+      });
+    }
+  });
+  return linhas;
+}
+
+// Lista a contagem INICIAL ou FINAL do mês selecionado — mesmo pareamento
+// usado no cálculo do CMV: a contagem FINAL de um mês é a data mais recente
+// cujo mês bate com o selecionado; a INICIAL é a contagem imediatamente
+// anterior a essa (pode ser do mês anterior).
+function listarContagemMes(senha, mesNome, qual) {
+  if (!validarSenha(senha)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var linhas = lerContagensBrutas();
+    if (!linhas.length) return JSON.stringify({ ok: true, linhas: [], data: null });
+
+    var porTs = {};
+    linhas.forEach(function(l) { porTs[l.ts] = porTs[l.ts] || { mes: l.mes }; });
+    var tsOrdenados = Object.keys(porTs).sort();
+
+    var tsFinal = null;
+    tsOrdenados.forEach(function(ts) {
+      if (NOMES_MESES[porTs[ts].mes] === mesNome) tsFinal = ts; // fica com a mais recente do mes
+    });
+    if (!tsFinal) return JSON.stringify({ ok: true, linhas: [], data: null });
+
+    var tsAlvo = tsFinal;
+    if (qual === 'inicial') {
+      var posFinal = tsOrdenados.indexOf(tsFinal);
+      tsAlvo = posFinal > 0 ? tsOrdenados[posFinal - 1] : null;
+    }
+    if (!tsAlvo) return JSON.stringify({ ok: true, linhas: [], data: null });
+
+    var filtradas = linhas.filter(function(l) { return l.ts === tsAlvo; });
+    var dataFmt = tsAlvo.slice(6,8) + '/' + tsAlvo.slice(4,6) + '/' + tsAlvo.slice(0,4);
+    filtradas.sort(function(a, b) { return b.custo_total - a.custo_total; });
+    return JSON.stringify({ ok: true, linhas: filtradas, data: dataFmt });
+  } catch (err) {
+    Logger.log('listarContagemMes ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
+// Corrige o saldo (quantidade contada) de UMA linha de contagem, recalculando
+// o Custo total (Saldo x Custo unit. — o custo unit. fica inalterado).
+function editarSaldoContagem(senha, arquivo, linha, novoSaldo) {
+  if (!validarSenha(senha)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var saldo = numVal(novoSaldo);
+    if (!(saldo >= 0)) return JSON.stringify({ ok: false, erro: 'Saldo inválido.' });
+
+    var it = DriveApp.getFolderById(PASTA_ID).getFilesByName(arquivo);
+    if (!it.hasNext()) return JSON.stringify({ ok: false, erro: 'Arquivo não encontrado: ' + arquivo });
+    var file = it.next();
+
+    var linhasTexto = conteudoDoArquivo(file).split(/\r?\n/);
+    var idx = Number(linha);
+    if (!linhasTexto[idx]) return JSON.stringify({ ok: false, erro: 'Linha não encontrada no arquivo.' });
+
+    var cel = linhasTexto[idx].split('\t').map(function(c) { return c.replace(/^"|"$/g, ''); });
+    if (cel.length < 16) return JSON.stringify({ ok: false, erro: 'Formato de linha inesperado.' });
+
+    var custoUnit = numVal(cel[C_ESTOQUE.custo_unit]);
+    var novoTotal = Math.round(saldo * custoUnit * 100) / 100;
+    cel[C_ESTOQUE.saldo]       = formatBR(saldo, 4);
+    cel[C_ESTOQUE.custo_total] = formatBR(novoTotal, 2);
+
+    linhasTexto[idx] = cel.map(function(c) { return '"' + c + '"'; }).join('\t');
+    file.setContent(linhasTexto.join('\n'));
+
+    Logger.log('Contagem editada: ' + arquivo + ' linha ' + idx + ' -> saldo=' + saldo + ' custo_total=' + novoTotal);
+    return JSON.stringify({ ok: true, saldo: saldo, custo_total: novoTotal });
+  } catch (err) {
+    Logger.log('editarSaldoContagem ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}

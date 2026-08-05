@@ -100,6 +100,7 @@ section.on{display:block;}
 input[type=text],select{background:var(--bg3);color:var(--fg);border:1px solid var(--ln2);border-radius:7px;padding:8px 12px;font-family:'Manrope';font-size:13px;}
 input[type=text]:focus,select:focus{outline:none;border-color:var(--acb);}
 input[type=text]{min-width:220px;}
+.edit-inp{min-width:80px;width:100px;padding:5px 8px;text-align:right;font-family:'DM Mono';}
 .lbl{font-size:11px;color:var(--fg3);text-transform:uppercase;letter-spacing:.08em;margin-right:2px;}
 
 /* ===== UPLOAD ===== */
@@ -303,6 +304,9 @@ td.hi{font-weight:600;}
     <button class="tab" data-sec="custo" onclick="go('custo')">Variação de Custo</button>
     <button class="tab" data-sec="cmv" onclick="go('cmv')">CMV</button>
     <button class="tab" data-sec="teorico" onclick="go('teorico')">CMV Teórico</button>
+    <button class="tab" data-sec="compras" onclick="go('compras')">Compras</button>
+    <button class="tab" data-sec="continicial" onclick="go('continicial')">Contagem Inicial</button>
+    <button class="tab" data-sec="contfinal" onclick="go('contfinal')">Contagem Final</button>
     <button class="tab" data-sec="upload" onclick="go('upload')">Relatórios</button>
   </div>
   <div class="nav-r">
@@ -520,6 +524,66 @@ td.hi{font-weight:600;}
     <div id="teorico-content"></div>
   </section>
 
+  <!-- ===== COMPRAS (DADOS BRUTOS, EDITAVEL) ===== -->
+  <section id="compras">
+    <div class="shead">
+      <div>
+        <div class="eyebrow">Dados Brutos</div>
+        <div class="stitle">Compras</div>
+        <div class="ssub">Todas as linhas de compra do mês selecionado. Encontrou uma quantidade errada? Corrija aqui — o arquivo de origem no Drive é atualizado na hora e o CMC/CMV recalculam automaticamente.</div>
+      </div>
+      <div class="mseg" id="compras-mseg"></div>
+    </div>
+    <div class="card">
+      <div class="card-h"><div class="card-t">Linhas de Compra</div><div class="card-s" id="compras-count"></div></div>
+      <div class="ctrl"><input type="text" id="compras-busca" placeholder="Buscar produto, filial ou grupo..." oninput="rComprasTable()"></div>
+      <div class="twrap"><table>
+        <thead><tr><th>Filial</th><th>Data</th><th>Produto</th><th>Grupo</th><th class="r">Qtd.</th><th>Unid.</th><th class="r">Custo Unit.</th><th class="r">Total</th><th></th></tr></thead>
+        <tbody id="compras-body"><tr><td colspan="9" class="empty">Abra esta aba para carregar.</td></tr></tbody>
+      </table></div>
+    </div>
+  </section>
+
+  <!-- ===== CONTAGEM INICIAL (DADOS BRUTOS, EDITAVEL) ===== -->
+  <section id="continicial">
+    <div class="shead">
+      <div>
+        <div class="eyebrow">Dados Brutos</div>
+        <div class="stitle">Contagem Inicial</div>
+        <div class="ssub" id="continicial-sub">Contagem de estoque usada como Estoque Inicial (EI) do mês selecionado.</div>
+      </div>
+      <div class="mseg" id="continicial-mseg"></div>
+    </div>
+    <div class="card">
+      <div class="card-h"><div class="card-t">Linhas da Contagem</div><div class="card-s" id="continicial-count"></div></div>
+      <div class="ctrl"><input type="text" id="continicial-busca" placeholder="Buscar produto, filial ou grupo..." oninput="rContagemTable('inicial')"></div>
+      <div class="twrap"><table>
+        <thead><tr><th>Filial</th><th>Centro</th><th>Produto</th><th>Grupo</th><th class="r">Saldo</th><th>Unid.</th><th class="r">Custo Unit.</th><th class="r">Custo Total</th><th></th></tr></thead>
+        <tbody id="continicial-body"><tr><td colspan="9" class="empty">Abra esta aba para carregar.</td></tr></tbody>
+      </table></div>
+    </div>
+  </section>
+
+  <!-- ===== CONTAGEM FINAL (DADOS BRUTOS, EDITAVEL) ===== -->
+  <section id="contfinal">
+    <div class="shead">
+      <div>
+        <div class="eyebrow">Dados Brutos</div>
+        <div class="stitle">Contagem Final</div>
+        <div class="ssub" id="contfinal-sub">Contagem de estoque usada como Estoque Final (EF) do mês selecionado.</div>
+      </div>
+      <div class="mseg" id="contfinal-mseg"></div>
+    </div>
+    <div class="card">
+      <div class="card-h"><div class="card-t">Linhas da Contagem</div><div class="card-s" id="contfinal-count"></div></div>
+      <div class="ctrl"><input type="text" id="contfinal-busca" placeholder="Buscar produto, filial ou grupo..." oninput="rContagemTable('final')"></div>
+      <div class="twrap"><table>
+        <thead><tr><th>Filial</th><th>Centro</th><th>Produto</th><th>Grupo</th><th class="r">Saldo</th><th>Unid.</th><th class="r">Custo Unit.</th><th class="r">Custo Total</th><th></th></tr></thead>
+        <tbody id="contfinal-body"><tr><td colspan="9" class="empty">Abra esta aba para carregar.</td></tr></tbody>
+      </table></div>
+    </div>
+  </section>
+
   <!-- ===== RELATÓRIOS (UPLOAD) ===== -->
   <section id="upload">
     <div class="shead">
@@ -628,6 +692,9 @@ function go(id){
   if(id==='custo') rCusto();
   if(id==='cmv')   rCMV();
   if(id==='teorico')rTeorico();
+  if(id==='compras')carregarCompras();
+  if(id==='continicial')carregarContagem('inicial');
+  if(id==='contfinal')carregarContagem('final');
   if(id==='upload'){popularSeletorData();carregarListaArquivos();}
 }
 
@@ -1801,6 +1868,172 @@ function rTeoricoTable(){
       '<td>'+(p.tem_ficha?'<span class="tag tA">SIM</span>':(p.menu_escolha?'<span class="tag tB" title="Menu de escolha livre — custo real ja capturado no CMV Real">MENU</span>':'<span class="tag tC">NAO</span>'))+'</td></tr>';
   }).join('');
   if(data.length>400)document.getElementById('teorico-prod-body').innerHTML+='<tr><td colspan="9" class="empty">Exibindo os 400 primeiros de '+data.length+'.</td></tr>';
+}
+
+/* ============================================================
+   ABA COMPRAS (DADOS BRUTOS, EDITAVEL)
+   ============================================================ */
+var mesCompras='', COMPRAS_LINHAS=[];
+
+function fQd(v){ return (v||0).toLocaleString('pt-BR',{maximumFractionDigits:4}); }
+
+function setMesCompras(m){ mesCompras=m; carregarCompras(); }
+
+function montarSeletorMesCompras(){
+  var seg=document.getElementById('compras-mseg');
+  if(!seg||seg.dataset.ready)return;
+  seg.innerHTML=MESES.map(function(m){return '<button class="'+(m===mesCompras?'on':'')+'" data-m="'+m+'" onclick="setMesCompras(\''+m+'\')">'+(ML_MAP[m]||m)+'</button>';}).join('');
+  seg.dataset.ready='1';
+}
+
+function carregarCompras(){
+  if(!mesCompras){ if(MESES.length) mesCompras=MESES[MESES.length-1]; else return; }
+  montarSeletorMesCompras();
+  document.querySelectorAll('#compras-mseg button').forEach(function(b){b.classList.toggle('on',b.dataset.m===mesCompras);});
+  var body=document.getElementById('compras-body');
+  body.innerHTML='<tr><td colspan="9" class="empty">Carregando…</td></tr>';
+  google.script.run
+    .withSuccessHandler(function(json){
+      var res;try{res=JSON.parse(json);}catch(e){body.innerHTML='<tr><td colspan="9" class="empty">Erro ao carregar.</td></tr>';return;}
+      if(!res.ok){body.innerHTML='<tr><td colspan="9" class="empty">'+(res.erro||'Erro ao carregar.')+'</td></tr>';return;}
+      COMPRAS_LINHAS=res.linhas||[];
+      rComprasTable();
+    })
+    .withFailureHandler(function(err){
+      body.innerHTML='<tr><td colspan="9" class="empty">Falha: '+(err.message||err)+'</td></tr>';
+    })
+    .listarComprasMes(SENHA_ATUAL, mesCompras);
+}
+
+function rComprasTable(){
+  var busca=(document.getElementById('compras-busca').value||'').toLowerCase();
+  var data=COMPRAS_LINHAS.filter(function(l){
+    if(!busca)return true;
+    return (l.produto+' '+l.filial+' '+l.grupo).toLowerCase().indexOf(busca)>=0;
+  });
+  document.getElementById('compras-count').textContent=data.length+' de '+COMPRAS_LINHAS.length+' linhas';
+  document.getElementById('compras-body').innerHTML=data.slice(0,400).map(function(l,i){
+    var rowId='cp-'+i;
+    var arqEsc=l.arquivo.replace(/'/g,"\\'");
+    return '<tr id="'+rowId+'"><td>'+nomeUni(l.filial)+'</td><td>'+l.data+'</td>'+
+      '<td class="hi">'+l.produto+'</td>'+
+      '<td><span class="gdot"><span style="background:'+gc(l.grupo)+'"></span>'+l.grupo+'</span></td>'+
+      '<td class="n r"><input type="text" class="edit-inp" id="'+rowId+'-qtd" value="'+fQd(l.qtd)+'"></td>'+
+      '<td>'+l.unid+'</td>'+
+      '<td class="n r">'+fR2(l.custo_unit)+'</td>'+
+      '<td class="n r hi" id="'+rowId+'-total">'+fR2(l.total)+'</td>'+
+      '<td class="r"><button class="gd-close" onclick="salvarQtdCompra(\''+rowId+'\',\''+arqEsc+'\','+l.linha+')">Salvar</button></td></tr>';
+  }).join('');
+  if(data.length>400)document.getElementById('compras-body').innerHTML+='<tr><td colspan="9" class="empty">Exibindo as 400 primeiras de '+data.length+'. Use a busca para refinar.</td></tr>';
+}
+
+function salvarQtdCompra(rowId, arquivo, linha){
+  var inp=document.getElementById(rowId+'-qtd');
+  var novaQtd=inp.value;
+  var btn=document.querySelector('#'+rowId+' button');
+  var txtOriginal=btn.textContent;
+  btn.disabled=true;btn.textContent='Salvando...';
+  google.script.run
+    .withSuccessHandler(function(json){
+      var res;try{res=JSON.parse(json);}catch(e){alert('Erro ao salvar.');btn.disabled=false;btn.textContent=txtOriginal;return;}
+      if(!res.ok){alert(res.erro||'Erro ao salvar.');btn.disabled=false;btn.textContent=txtOriginal;return;}
+      document.getElementById(rowId+'-total').textContent=fR2(res.total);
+      inp.value=fQd(res.qtd);
+      btn.disabled=false;btn.textContent='Salvo!';
+      setTimeout(function(){btn.textContent=txtOriginal;},1500);
+    })
+    .withFailureHandler(function(err){
+      alert('Falha ao salvar: '+(err.message||err));btn.disabled=false;btn.textContent=txtOriginal;
+    })
+    .editarQtdCompra(SENHA_ATUAL, arquivo, linha, novaQtd);
+}
+
+/* ============================================================
+   ABAS CONTAGEM INICIAL / CONTAGEM FINAL (DADOS BRUTOS, EDITAVEL)
+   ============================================================ */
+var mesContagem={inicial:'', final:''}, CONTAGEM_LINHAS={inicial:[], final:[]};
+var PREFIXO_CONTAGEM={inicial:'continicial', final:'contfinal'};
+
+function setMesContagem(qual, m){ mesContagem[qual]=m; carregarContagem(qual); }
+
+function montarSeletorMesContagem(qual){
+  var pref=PREFIXO_CONTAGEM[qual];
+  var seg=document.getElementById(pref+'-mseg');
+  if(!seg||seg.dataset.ready)return;
+  seg.innerHTML=MESES.map(function(m){return '<button class="'+(m===mesContagem[qual]?'on':'')+'" data-m="'+m+'" onclick="setMesContagem(\''+qual+'\',\''+m+'\')">'+(ML_MAP[m]||m)+'</button>';}).join('');
+  seg.dataset.ready='1';
+}
+
+function carregarContagem(qual){
+  var pref=PREFIXO_CONTAGEM[qual];
+  if(!mesContagem[qual]){ if(MESES.length) mesContagem[qual]=MESES[MESES.length-1]; else return; }
+  montarSeletorMesContagem(qual);
+  document.querySelectorAll('#'+pref+'-mseg button').forEach(function(b){b.classList.toggle('on',b.dataset.m===mesContagem[qual]);});
+  var body=document.getElementById(pref+'-body');
+  body.innerHTML='<tr><td colspan="9" class="empty">Carregando…</td></tr>';
+  google.script.run
+    .withSuccessHandler(function(json){
+      var res;try{res=JSON.parse(json);}catch(e){body.innerHTML='<tr><td colspan="9" class="empty">Erro ao carregar.</td></tr>';return;}
+      if(!res.ok){body.innerHTML='<tr><td colspan="9" class="empty">'+(res.erro||'Erro ao carregar.')+'</td></tr>';return;}
+      CONTAGEM_LINHAS[qual]=res.linhas||[];
+      var subEl=document.getElementById(pref+'-sub');
+      if(subEl){
+        var nomeMes=ML_MAP[mesContagem[qual]]||mesContagem[qual];
+        subEl.textContent = res.data
+          ? ('Contagem de '+res.data+' — usada como '+(qual==='inicial'?'Estoque Inicial (EI)':'Estoque Final (EF)')+' de '+nomeMes+'. Corrija o saldo aqui se encontrar um erro de contagem.')
+          : ('Nenhuma contagem '+(qual==='inicial'?'inicial':'final')+' disponível pra '+nomeMes+'.');
+      }
+      rContagemTable(qual);
+    })
+    .withFailureHandler(function(err){
+      body.innerHTML='<tr><td colspan="9" class="empty">Falha: '+(err.message||err)+'</td></tr>';
+    })
+    .listarContagemMes(SENHA_ATUAL, mesContagem[qual], qual);
+}
+
+function rContagemTable(qual){
+  var pref=PREFIXO_CONTAGEM[qual];
+  var busca=(document.getElementById(pref+'-busca').value||'').toLowerCase();
+  var linhas=CONTAGEM_LINHAS[qual]||[];
+  var data=linhas.filter(function(l){
+    if(!busca)return true;
+    return (l.produto+' '+l.filial+' '+l.grupo+' '+l.centro).toLowerCase().indexOf(busca)>=0;
+  });
+  document.getElementById(pref+'-count').textContent=data.length+' de '+linhas.length+' linhas';
+  document.getElementById(pref+'-body').innerHTML=data.slice(0,400).map(function(l,i){
+    var rowId=pref+'-'+i;
+    var arqEsc=l.arquivo.replace(/'/g,"\\'");
+    return '<tr id="'+rowId+'"><td>'+nomeUni(l.filial)+'</td><td>'+l.centro+'</td>'+
+      '<td class="hi">'+l.produto+'</td>'+
+      '<td><span class="gdot"><span style="background:'+gc(l.grupo)+'"></span>'+l.grupo+'</span></td>'+
+      '<td class="n r"><input type="text" class="edit-inp" id="'+rowId+'-saldo" value="'+fQd(l.saldo)+'"></td>'+
+      '<td>'+l.unid+'</td>'+
+      '<td class="n r">'+fR2(l.custo_unit)+'</td>'+
+      '<td class="n r hi" id="'+rowId+'-total">'+fR2(l.custo_total)+'</td>'+
+      '<td class="r"><button class="gd-close" onclick="salvarSaldoContagem(\''+rowId+'\',\''+arqEsc+'\','+l.linha+')">Salvar</button></td></tr>';
+  }).join('');
+  if(data.length>400)document.getElementById(pref+'-body').innerHTML+='<tr><td colspan="9" class="empty">Exibindo as 400 primeiras de '+data.length+'. Use a busca para refinar.</td></tr>';
+}
+
+function salvarSaldoContagem(rowId, arquivo, linha){
+  var inp=document.getElementById(rowId+'-saldo');
+  var novoSaldo=inp.value;
+  var btn=document.querySelector('#'+rowId+' button');
+  var txtOriginal=btn.textContent;
+  btn.disabled=true;btn.textContent='Salvando...';
+  google.script.run
+    .withSuccessHandler(function(json){
+      var res;try{res=JSON.parse(json);}catch(e){alert('Erro ao salvar.');btn.disabled=false;btn.textContent=txtOriginal;return;}
+      if(!res.ok){alert(res.erro||'Erro ao salvar.');btn.disabled=false;btn.textContent=txtOriginal;return;}
+      document.getElementById(rowId+'-total').textContent=fR2(res.custo_total);
+      inp.value=fQd(res.saldo);
+      btn.disabled=false;btn.textContent='Salvo!';
+      setTimeout(function(){btn.textContent=txtOriginal;},1500);
+    })
+    .withFailureHandler(function(err){
+      alert('Falha ao salvar: '+(err.message||err));btn.disabled=false;btn.textContent=txtOriginal;
+    })
+    .editarSaldoContagem(SENHA_ATUAL, arquivo, linha, novoSaldo);
 }
 
 /* ============================================================
