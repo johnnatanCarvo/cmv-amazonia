@@ -154,6 +154,9 @@ function getPayload(senha) {
         tObj.teorico_pct = (fatCoberto > 0)
           ? Math.round(tObj.teorico_total / fatCoberto * 10000) / 100
           : null;
+        tObj.sem_ficha_pct = (fat > 0)
+          ? Math.round((tObj.sem_ficha_valor || 0) / fat * 10000) / 100
+          : null;
         if (cmv[m] && cmv[m].cmv_total !== undefined) {
           tObj.real_total = cmv[m].cmv_total;
           tObj.real_pct   = cmv[m].cmv_pct;
@@ -168,6 +171,9 @@ function getPayload(senha) {
             fObj.faturamento_coberto = Math.round(fatFilCoberto * 100) / 100;
             fObj.teorico_pct = (fatFilCoberto > 0)
               ? Math.round(fObj.teorico_total / fatFilCoberto * 10000) / 100
+              : null;
+            fObj.sem_ficha_pct = (fatFil > 0)
+              ? Math.round((fObj.sem_ficha_valor || 0) / fatFil * 10000) / 100
               : null;
             if (cmv[m] && cmv[m].filiais && cmv[m].filiais[fil]) {
               fObj.real_total = cmv[m].filiais[fil].cmv;

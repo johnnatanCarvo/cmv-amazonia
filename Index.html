@@ -1616,13 +1616,13 @@ function rCustoTable(){
 function teoricoDados(mes){
   var t=CMVTEORICO[mes];if(!t)return null;
   if(uniTeorico==='TODAS')return {
-    teorico:t.teorico_total, semFicha:t.sem_ficha_valor, real:t.real_total,
+    teorico:t.teorico_total, semFicha:t.sem_ficha_valor, semFichaPct:t.sem_ficha_pct, real:t.real_total,
     diferenca:t.diferenca, fat:t.faturamento, teoricoPct:t.teorico_pct, realPct:t.real_pct,
     produtos:t.produtos||[]
   };
   if(t.filiais&&t.filiais[uniTeorico]){
     var f=t.filiais[uniTeorico];
-    return {teorico:f.teorico_total, semFicha:f.sem_ficha_valor, real:f.real_total,
+    return {teorico:f.teorico_total, semFicha:f.sem_ficha_valor, semFichaPct:f.sem_ficha_pct, real:f.real_total,
       diferenca:f.diferenca, fat:f.faturamento, teoricoPct:f.teorico_pct, realPct:f.real_pct,
       produtos:f.produtos||[]};
   }
@@ -1718,7 +1718,7 @@ function rTeorico(){
     '<div class="metric"><div class="metric-l">Diferenca (Real menos Teorico)</div><div class="metric-v '+difCls+'">'+diferencaTxt+'</div>'+
       '<div class="metric-sub" style="color:var(--fg3)">nao e indicador de perda por si so</div></div>'+
     '<div class="metric"><div class="metric-l">Vendas sem Ficha Tecnica</div><div class="metric-v am">'+fR(d.semFicha)+'</div>'+
-      '<div class="metric-sub" style="color:var(--fg3)">'+(d.semFicha>0?'teorico pode estar subestimado':'todas as vendas tem ficha')+'</div></div>'+
+      '<div class="metric-sub" style="color:var(--fg3)">'+(d.semFicha>0?(fP(d.semFichaPct)+' do faturamento — cadastre a ficha desses itens no Cloudfy'):'todas as vendas tem ficha')+'</div></div>'+
     '<div class="metric"><div class="metric-l">Faturamento</div><div class="metric-v ac">'+fR(d.fat)+'</div></div>'+
   '</div>';
 
