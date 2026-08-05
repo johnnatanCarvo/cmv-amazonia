@@ -888,6 +888,16 @@ var C_FICHAS = {
   custo_unit: 6    // Custo unitário teórico do produto, já somando os insumos
 };
 
+// Grupos de "menu de escolha livre" (o cliente escolhe o prato dentro do
+// menu na hora, e o Cloudfy dá baixa de estoque no prato REAL escolhido —
+// não no menu). Por isso nunca vai existir ficha técnica própria pra esses
+// itens: o custo real deles já está 100% capturado no CMV Real (via baixa
+// de estoque do prato escolhido), só não é possível atribuir teoricamente
+// por item porque a venda registra o nome do menu, não o prato.
+// Isso é DIFERENTE de um item sem ficha cadastrada por lacuna de cadastro —
+// aqui não há o que cadastrar.
+var GRUPOS_MENU_ESCOLHA = ['MENU DEGUSTACAO'];
+
 // Retorna um mapa { "NOME DO PRODUTO": custo_unit_teorico }.
 // Pega o PRIMEIRO custo encontrado por produto (o valor se repete em toda
 // linha de insumo do mesmo produto, então a primeira ocorrência já serve).
@@ -922,13 +932,15 @@ function calcularCMVTeorico(vendas, fichasMap) {
   // Detalha por produto (usado tanto pro total do mes quanto pra tabela por
   // produto na tela) — cada linha mostra se bateu ou nao com a ficha tecnica.
   function detalharProdutos(produtos) {
-    var teorico = 0, semFicha = 0;
+    var teorico = 0, semFichaCadastro = 0, semFichaMenu = 0;
     var lista = produtos.map(function(p) {
       var custoUnit = fichasMap[p.produto];
       var temFicha  = custoUnit !== undefined;
+      var ehMenuEscolha = !temFicha && GRUPOS_MENU_ESCOLHA.indexOf(String(p.grupo || '').toUpperCase()) >= 0;
       var custoTotal = temFicha ? r2(custoUnit * p.qtd) : null;
       if (temFicha) teorico += custoUnit * p.qtd;
-      else semFicha += p.valor;
+      else if (ehMenuEscolha) semFichaMenu += p.valor;
+      else semFichaCadastro += p.valor;
       return {
         produto: p.produto,
         grupo: p.grupo,
@@ -936,10 +948,17 @@ function calcularCMVTeorico(vendas, fichasMap) {
         valor_vendido: p.valor,
         custo_unit_teorico: temFicha ? r4(custoUnit) : null,
         custo_total_teorico: custoTotal,
-        tem_ficha: temFicha
+        tem_ficha: temFicha,
+        menu_escolha: ehMenuEscolha
       };
     }).sort(function(a, b) { return (b.custo_total_teorico || 0) - (a.custo_total_teorico || 0); });
-    return { teorico_total: r2(teorico), sem_ficha_valor: r2(semFicha), produtos: lista };
+    return {
+      teorico_total: r2(teorico),
+      sem_ficha_valor: r2(semFichaCadastro + semFichaMenu),
+      sem_ficha_valor_cadastro: r2(semFichaCadastro),
+      sem_ficha_valor_menu: r2(semFichaMenu),
+      produtos: lista
+    };
   }
 
   Object.keys(vendas.abc_mes).forEach(function(mes) {

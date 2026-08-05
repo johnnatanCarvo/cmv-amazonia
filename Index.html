@@ -1616,14 +1616,18 @@ function rCustoTable(){
 function teoricoDados(mes){
   var t=CMVTEORICO[mes];if(!t)return null;
   if(uniTeorico==='TODAS')return {
-    teorico:t.teorico_total, semFicha:t.sem_ficha_valor, semFichaPct:t.sem_ficha_pct, real:t.real_total,
-    diferenca:t.diferenca, fat:t.faturamento, teoricoPct:t.teorico_pct, realPct:t.real_pct,
+    teorico:t.teorico_total, semFicha:t.sem_ficha_valor, semFichaPct:t.sem_ficha_pct,
+    semFichaMenu:t.sem_ficha_valor_menu, semFichaMenuPct:t.sem_ficha_menu_pct,
+    semFichaCadastro:t.sem_ficha_valor_cadastro, semFichaCadastroPct:t.sem_ficha_cadastro_pct,
+    real:t.real_total, diferenca:t.diferenca, fat:t.faturamento, teoricoPct:t.teorico_pct, realPct:t.real_pct,
     produtos:t.produtos||[]
   };
   if(t.filiais&&t.filiais[uniTeorico]){
     var f=t.filiais[uniTeorico];
-    return {teorico:f.teorico_total, semFicha:f.sem_ficha_valor, semFichaPct:f.sem_ficha_pct, real:f.real_total,
-      diferenca:f.diferenca, fat:f.faturamento, teoricoPct:f.teorico_pct, realPct:f.real_pct,
+    return {teorico:f.teorico_total, semFicha:f.sem_ficha_valor, semFichaPct:f.sem_ficha_pct,
+      semFichaMenu:f.sem_ficha_valor_menu, semFichaMenuPct:f.sem_ficha_menu_pct,
+      semFichaCadastro:f.sem_ficha_valor_cadastro, semFichaCadastroPct:f.sem_ficha_cadastro_pct,
+      real:f.real_total, diferenca:f.diferenca, fat:f.faturamento, teoricoPct:f.teorico_pct, realPct:f.real_pct,
       produtos:f.produtos||[]};
   }
   return null;
@@ -1668,6 +1672,17 @@ function tabelaTeoricoPctHtml(){
   return '<div class="card"><div class="card-h"><div class="card-t">CMV Teorico (%) por Mes e Unidade</div>'+
     '<div class="card-s">Sobre faturamento dos produtos com ficha</div></div>'+
     '<div class="twrap"><table><thead>'+thead+'</thead><tbody>'+linhaGeral+linhasUnidades+'</tbody></table></div></div>';
+}
+
+// Monta o texto do card "Vendas sem Ficha Tecnica" separando os dois motivos:
+// (1) menu de escolha livre — custo ja capturado no CMV Real, nao ha ficha pra cadastrar;
+// (2) item sem ficha cadastrada de fato — lacuna real no Cloudfy, essa sim precisa de acao.
+function semFichaSub(d){
+  var partes=[];
+  if(d.semFichaMenu>0)partes.push(fP(d.semFichaMenuPct)+' menus de escolha livre (custo ja no CMV Real)');
+  if(d.semFichaCadastro>0)partes.push(fP(d.semFichaCadastroPct)+' sem ficha cadastrada — cadastre no Cloudfy');
+  if(!partes.length)return fP(d.semFichaPct)+' do faturamento';
+  return partes.join(' + ');
 }
 
 function rTeorico(){
@@ -1718,7 +1733,7 @@ function rTeorico(){
     '<div class="metric"><div class="metric-l">Diferenca (Real menos Teorico)</div><div class="metric-v '+difCls+'">'+diferencaTxt+'</div>'+
       '<div class="metric-sub" style="color:var(--fg3)">nao e indicador de perda por si so</div></div>'+
     '<div class="metric"><div class="metric-l">Vendas sem Ficha Tecnica</div><div class="metric-v am">'+fR(d.semFicha)+'</div>'+
-      '<div class="metric-sub" style="color:var(--fg3)">'+(d.semFicha>0?(fP(d.semFichaPct)+' do faturamento — cadastre a ficha desses itens no Cloudfy'):'todas as vendas tem ficha')+'</div></div>'+
+      '<div class="metric-sub" style="color:var(--fg3)">'+(d.semFicha>0?semFichaSub(d):'todas as vendas tem ficha')+'</div></div>'+
     '<div class="metric"><div class="metric-l">Faturamento</div><div class="metric-v ac">'+fR(d.fat)+'</div></div>'+
   '</div>';
 
@@ -1783,7 +1798,7 @@ function rTeoricoTable(){
       '<td class="n r" style="color:'+(p.tem_ficha?'var(--fg)':'var(--fg3)')+'">'+(p.tem_ficha?fR2(p.custo_unit_teorico):'--')+'</td>'+
       '<td class="n r hi" style="color:'+(p.tem_ficha?'var(--fg)':'var(--fg3)')+'">'+(p.tem_ficha?fR2(p.custo_total_teorico):'--')+'</td>'+
       '<td class="n r" style="color:'+(pct!==null?(pct>35?'var(--rd)':'var(--fg)'):'var(--fg3)')+'">'+(pct!==null?fP(pct):'--')+'</td>'+
-      '<td>'+(p.tem_ficha?'<span class="tag tA">SIM</span>':'<span class="tag tC">NAO</span>')+'</td></tr>';
+      '<td>'+(p.tem_ficha?'<span class="tag tA">SIM</span>':(p.menu_escolha?'<span class="tag tB" title="Menu de escolha livre — custo real ja capturado no CMV Real">MENU</span>':'<span class="tag tC">NAO</span>'))+'</td></tr>';
   }).join('');
   if(data.length>400)document.getElementById('teorico-prod-body').innerHTML+='<tr><td colspan="9" class="empty">Exibindo os 400 primeiros de '+data.length+'.</td></tr>';
 }
