@@ -304,9 +304,7 @@ td.hi{font-weight:600;}
     <button class="tab" data-sec="custo" onclick="go('custo')">Variação de Custo</button>
     <button class="tab" data-sec="cmv" onclick="go('cmv')">CMV</button>
     <button class="tab" data-sec="teorico" onclick="go('teorico')">CMV Teórico</button>
-    <button class="tab" data-sec="compras" onclick="go('compras')">Compras</button>
-    <button class="tab" data-sec="continicial" onclick="go('continicial')">Contagem Inicial</button>
-    <button class="tab" data-sec="contfinal" onclick="go('contfinal')">Contagem Final</button>
+    <button class="tab" data-sec="ajustes" onclick="go('ajustes')">Ajustes</button>
     <button class="tab" data-sec="upload" onclick="go('upload')">Relatórios</button>
   </div>
   <div class="nav-r">
@@ -524,63 +522,64 @@ td.hi{font-weight:600;}
     <div id="teorico-content"></div>
   </section>
 
-  <!-- ===== COMPRAS (DADOS BRUTOS, EDITAVEL) ===== -->
-  <section id="compras">
+  <!-- ===== AJUSTES (COMPRAS + CONTAGEM INICIAL + CONTAGEM FINAL, DADOS BRUTOS EDITAVEIS) ===== -->
+  <section id="ajustes">
     <div class="shead">
       <div>
         <div class="eyebrow">Dados Brutos</div>
-        <div class="stitle">Compras</div>
-        <div class="ssub">Todas as linhas de compra do mês selecionado. Encontrou uma quantidade errada? Corrija aqui — o arquivo de origem no Drive é atualizado na hora e o CMC/CMV recalculam automaticamente.</div>
+        <div class="stitle">Ajustes</div>
+        <div class="ssub">Veja as linhas de compra e de contagem de estoque e corrija a quantidade direto na fonte, se encontrar algo errado. O arquivo de origem no Drive é atualizado na hora e o CMC/CMV recalculam automaticamente.</div>
       </div>
-      <div class="mseg" id="compras-mseg"></div>
+      <div class="mseg" id="ajustes-subseg">
+        <button class="on" data-s="compras" onclick="setAjustesSub('compras')">Compras</button>
+        <button data-s="continicial" onclick="setAjustesSub('continicial')">Contagem Inicial</button>
+        <button data-s="contfinal" onclick="setAjustesSub('contfinal')">Contagem Final</button>
+      </div>
     </div>
-    <div class="card">
-      <div class="card-h"><div class="card-t">Linhas de Compra</div><div class="card-s" id="compras-count"></div></div>
-      <div class="ctrl"><input type="text" id="compras-busca" placeholder="Buscar produto, filial ou grupo..." oninput="rComprasTable()"></div>
-      <div class="twrap"><table>
-        <thead><tr><th>Filial</th><th>Data</th><th>Produto</th><th>Grupo</th><th class="r">Qtd.</th><th>Unid.</th><th class="r">Custo Unit.</th><th class="r">Total</th><th></th></tr></thead>
-        <tbody id="compras-body"><tr><td colspan="9" class="empty">Abra esta aba para carregar.</td></tr></tbody>
-      </table></div>
-    </div>
-  </section>
 
-  <!-- ===== CONTAGEM INICIAL (DADOS BRUTOS, EDITAVEL) ===== -->
-  <section id="continicial">
-    <div class="shead">
-      <div>
-        <div class="eyebrow">Dados Brutos</div>
-        <div class="stitle">Contagem Inicial</div>
-        <div class="ssub" id="continicial-sub">Contagem de estoque usada como Estoque Inicial (EI) do mês selecionado.</div>
+    <div class="ajustes-sub" id="sub-compras">
+      <div class="shead" style="margin-bottom:14px;">
+        <div class="ssub" style="margin:0;">Todas as linhas de compra do mês selecionado.</div>
+        <div class="mseg" id="compras-mseg"></div>
       </div>
-      <div class="mseg" id="continicial-mseg"></div>
+      <div class="card">
+        <div class="card-h"><div class="card-t">Linhas de Compra</div><div class="card-s" id="compras-count"></div></div>
+        <div class="ctrl"><input type="text" id="compras-busca" placeholder="Buscar produto, filial ou grupo..." oninput="rComprasTable()"></div>
+        <div class="twrap"><table>
+          <thead><tr><th>Filial</th><th>Data</th><th>Produto</th><th>Grupo</th><th class="r">Qtd.</th><th>Unid.</th><th class="r">Custo Unit.</th><th class="r">Total</th><th></th></tr></thead>
+          <tbody id="compras-body"><tr><td colspan="9" class="empty">Abra esta aba para carregar.</td></tr></tbody>
+        </table></div>
+      </div>
     </div>
-    <div class="card">
-      <div class="card-h"><div class="card-t">Linhas da Contagem</div><div class="card-s" id="continicial-count"></div></div>
-      <div class="ctrl"><input type="text" id="continicial-busca" placeholder="Buscar produto, filial ou grupo..." oninput="rContagemTable('inicial')"></div>
-      <div class="twrap"><table>
-        <thead><tr><th>Filial</th><th>Centro</th><th>Produto</th><th>Grupo</th><th class="r">Saldo</th><th>Unid.</th><th class="r">Custo Unit.</th><th class="r">Custo Total</th><th></th></tr></thead>
-        <tbody id="continicial-body"><tr><td colspan="9" class="empty">Abra esta aba para carregar.</td></tr></tbody>
-      </table></div>
-    </div>
-  </section>
 
-  <!-- ===== CONTAGEM FINAL (DADOS BRUTOS, EDITAVEL) ===== -->
-  <section id="contfinal">
-    <div class="shead">
-      <div>
-        <div class="eyebrow">Dados Brutos</div>
-        <div class="stitle">Contagem Final</div>
-        <div class="ssub" id="contfinal-sub">Contagem de estoque usada como Estoque Final (EF) do mês selecionado.</div>
+    <div class="ajustes-sub" id="sub-continicial" style="display:none">
+      <div class="shead" style="margin-bottom:14px;">
+        <div class="ssub" id="continicial-sub" style="margin:0;">Contagem de estoque usada como Estoque Inicial (EI) do mês selecionado.</div>
+        <div class="mseg" id="continicial-mseg"></div>
       </div>
-      <div class="mseg" id="contfinal-mseg"></div>
+      <div class="card">
+        <div class="card-h"><div class="card-t">Linhas da Contagem</div><div class="card-s" id="continicial-count"></div></div>
+        <div class="ctrl"><input type="text" id="continicial-busca" placeholder="Buscar produto, filial ou grupo..." oninput="rContagemTable('inicial')"></div>
+        <div class="twrap"><table>
+          <thead><tr><th>Filial</th><th>Centro</th><th>Produto</th><th>Grupo</th><th class="r">Saldo</th><th>Unid.</th><th class="r">Custo Unit.</th><th class="r">Custo Total</th><th></th></tr></thead>
+          <tbody id="continicial-body"><tr><td colspan="9" class="empty">Abra esta aba para carregar.</td></tr></tbody>
+        </table></div>
+      </div>
     </div>
-    <div class="card">
-      <div class="card-h"><div class="card-t">Linhas da Contagem</div><div class="card-s" id="contfinal-count"></div></div>
-      <div class="ctrl"><input type="text" id="contfinal-busca" placeholder="Buscar produto, filial ou grupo..." oninput="rContagemTable('final')"></div>
-      <div class="twrap"><table>
-        <thead><tr><th>Filial</th><th>Centro</th><th>Produto</th><th>Grupo</th><th class="r">Saldo</th><th>Unid.</th><th class="r">Custo Unit.</th><th class="r">Custo Total</th><th></th></tr></thead>
-        <tbody id="contfinal-body"><tr><td colspan="9" class="empty">Abra esta aba para carregar.</td></tr></tbody>
-      </table></div>
+
+    <div class="ajustes-sub" id="sub-contfinal" style="display:none">
+      <div class="shead" style="margin-bottom:14px;">
+        <div class="ssub" id="contfinal-sub" style="margin:0;">Contagem de estoque usada como Estoque Final (EF) do mês selecionado.</div>
+        <div class="mseg" id="contfinal-mseg"></div>
+      </div>
+      <div class="card">
+        <div class="card-h"><div class="card-t">Linhas da Contagem</div><div class="card-s" id="contfinal-count"></div></div>
+        <div class="ctrl"><input type="text" id="contfinal-busca" placeholder="Buscar produto, filial ou grupo..." oninput="rContagemTable('final')"></div>
+        <div class="twrap"><table>
+          <thead><tr><th>Filial</th><th>Centro</th><th>Produto</th><th>Grupo</th><th class="r">Saldo</th><th>Unid.</th><th class="r">Custo Unit.</th><th class="r">Custo Total</th><th></th></tr></thead>
+          <tbody id="contfinal-body"><tr><td colspan="9" class="empty">Abra esta aba para carregar.</td></tr></tbody>
+        </table></div>
+      </div>
     </div>
   </section>
 
@@ -692,9 +691,7 @@ function go(id){
   if(id==='custo') rCusto();
   if(id==='cmv')   rCMV();
   if(id==='teorico')rTeorico();
-  if(id==='compras')carregarCompras();
-  if(id==='continicial')carregarContagem('inicial');
-  if(id==='contfinal')carregarContagem('final');
+  if(id==='ajustes')carregarAjustesSub(ajustesSubAtual);
   if(id==='upload'){popularSeletorData();carregarListaArquivos();}
 }
 
@@ -1868,6 +1865,27 @@ function rTeoricoTable(){
       '<td>'+(p.tem_ficha?'<span class="tag tA">SIM</span>':(p.menu_escolha?'<span class="tag tB" title="Menu de escolha livre — custo real ja capturado no CMV Real">MENU</span>':'<span class="tag tC">NAO</span>'))+'</td></tr>';
   }).join('');
   if(data.length>400)document.getElementById('teorico-prod-body').innerHTML+='<tr><td colspan="9" class="empty">Exibindo os 400 primeiros de '+data.length+'.</td></tr>';
+}
+
+/* ============================================================
+   ABA AJUSTES (sub-abas: Compras, Contagem Inicial, Contagem Final)
+   ============================================================ */
+var ajustesSubAtual='compras';
+var AJUSTES_SUBS=['compras','continicial','contfinal'];
+
+function setAjustesSub(s){
+  ajustesSubAtual=s;
+  AJUSTES_SUBS.forEach(function(k){
+    document.getElementById('sub-'+k).style.display=(k===s?'':'none');
+  });
+  document.querySelectorAll('#ajustes-subseg button').forEach(function(b){b.classList.toggle('on',b.dataset.s===s);});
+  carregarAjustesSub(s);
+}
+
+function carregarAjustesSub(s){
+  if(s==='compras')carregarCompras();
+  if(s==='continicial')carregarContagem('inicial');
+  if(s==='contfinal')carregarContagem('final');
 }
 
 /* ============================================================
