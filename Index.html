@@ -304,6 +304,7 @@ td.hi{font-weight:600;}
     <button class="tab" data-sec="custo" onclick="go('custo')">Variação de Custo</button>
     <button class="tab" data-sec="cmv" onclick="go('cmv')">CMV</button>
     <button class="tab" data-sec="teorico" onclick="go('teorico')">CMV Teórico</button>
+    <button class="tab" data-sec="demanda" onclick="go('demanda')">Demanda de Insumos</button>
     <button class="tab" data-sec="ajustes" onclick="go('ajustes')">Ajustes</button>
     <button class="tab" data-sec="upload" onclick="go('upload')">Relatórios</button>
   </div>
@@ -522,6 +523,23 @@ td.hi{font-weight:600;}
     <div id="teorico-content"></div>
   </section>
 
+  <!-- ===== DEMANDA DE INSUMOS ===== -->
+  <section id="demanda">
+    <div class="shead">
+      <div>
+        <div class="eyebrow">Planejamento de Compras e Produção</div>
+        <div class="stitle">Demanda de Insumos</div>
+        <div class="ssub">A partir das vendas do mês selecionado e da ficha técnica, mostra quanto de cada matéria-prima foi necessário pra cobrir essas vendas (o que comprar) e quanto de cada preparo interno precisou ser produzido (o que fazer na cozinha). Preparos são explodidos recursivamente até a matéria-prima real. Só considera produtos com ficha técnica cadastrada.</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end;">
+        <div class="mseg" id="demanda-mseg"></div>
+        <div class="useg" id="demanda-useg"></div>
+      </div>
+    </div>
+
+    <div id="demanda-content"></div>
+  </section>
+
   <!-- ===== AJUSTES (COMPRAS + CONTAGEM INICIAL + CONTAGEM FINAL, DADOS BRUTOS EDITAVEIS) ===== -->
   <section id="ajustes">
     <div class="shead">
@@ -661,6 +679,7 @@ var ML_MAP={'JANEIRO':'Jan','FEVEREIRO':'Fev','MARÇO':'Mar','ABRIL':'Abr','MAIO
 /* ====== ESTADO ====== */
 var DADOS=null, MESES=[], CMC={}, VENDAS={}, CMV={}, mesAtual='', uniAtual='TODAS', grupoAberto=null, charts={};
 var CMVTEORICO={}, FICHAS_DISPONIVEL=false, mesTeorico='', uniTeorico='TODAS';
+var DEMANDAINSUMOS={}, mesDemanda='', uniDemanda='TODAS';
 var abcOrder='valor', custoCache=null, uniABC='TODAS', mesABC='TODOS';
 var custoMesA='', custoMesB='';
 var SENHA_ATUAL='';
@@ -691,6 +710,7 @@ function go(id){
   if(id==='custo') rCusto();
   if(id==='cmv')   rCMV();
   if(id==='teorico')rTeorico();
+  if(id==='demanda')rDemanda();
   if(id==='ajustes')carregarAjustesSub(ajustesSubAtual);
   if(id==='upload'){popularSeletorData();carregarListaArquivos();}
 }
@@ -732,6 +752,7 @@ function fazerLogin(){
       SENHA_ATUAL=senha;
       DADOS=res; CMC=res.cmc; VENDAS=res.vendas; CMV=res.cmv||{}; MESES=res.meses||[];
       CMVTEORICO=res.cmvTeorico||{}; FICHAS_DISPONIVEL=!!res.fichasDisponivel;
+      DEMANDAINSUMOS=res.demandaInsumos||{};
       mesAtual=MESES.length?MESES[MESES.length-1]:'';
       var login=document.getElementById('login');
       login.classList.add('hide');
@@ -1865,6 +1886,108 @@ function rTeoricoTable(){
       '<td>'+(p.tem_ficha?'<span class="tag tA">SIM</span>':(p.menu_escolha?'<span class="tag tB" title="Menu de escolha livre — custo real ja capturado no CMV Real">MENU</span>':'<span class="tag tC">NAO</span>'))+'</td></tr>';
   }).join('');
   if(data.length>400)document.getElementById('teorico-prod-body').innerHTML+='<tr><td colspan="9" class="empty">Exibindo os 400 primeiros de '+data.length+'.</td></tr>';
+}
+
+/* ============================================================
+   ABA DEMANDA DE INSUMOS
+   ============================================================ */
+function demandaDados(mes){
+  var d=DEMANDAINSUMOS[mes];if(!d)return null;
+  if(uniDemanda==='TODAS')return {materiasPrimas:d.materias_primas, preparos:d.preparos};
+  if(d.filiais&&d.filiais[uniDemanda]){
+    var f=d.filiais[uniDemanda];
+    return {materiasPrimas:f.materias_primas, preparos:f.preparos};
+  }
+  return null;
+}
+
+function setMesDemanda(m){mesDemanda=m;document.querySelectorAll('#demanda-mseg button').forEach(function(b){b.classList.toggle('on',b.dataset.m===m);});rDemanda();}
+function setUniDemanda(u){uniDemanda=u;document.querySelectorAll('#demanda-useg button').forEach(function(b){b.classList.toggle('on',b.textContent===(u==='TODAS'?'Todas':nomeUni(u)));});rDemanda();}
+
+function rDemanda(){
+  var mesesComDemanda=MESES.filter(function(m){return DEMANDAINSUMOS[m];});
+  var cont=document.getElementById('demanda-content');
+
+  if(!FICHAS_DISPONIVEL||!mesesComDemanda.length){
+    cont.innerHTML='<div class="card"><div class="empty" style="padding:60px 20px;line-height:1.8;">'+
+      'Nenhuma ficha tecnica cadastrada ainda.<br>'+
+      'Envie o "Relatorio de Detalhes de Fabricacao" na aba Relatorios (tipo "Ficha Tecnica") para calcular a demanda de insumos.</div></div>';
+    document.getElementById('demanda-mseg').style.display='none';
+    document.getElementById('demanda-useg').style.display='none';
+    return;
+  }
+
+  if(!mesDemanda||mesesComDemanda.indexOf(mesDemanda)<0)mesDemanda=mesesComDemanda[mesesComDemanda.length-1];
+
+  var mseg=document.getElementById('demanda-mseg');
+  if(mseg&&!mseg.dataset.ready){
+    mseg.innerHTML=mesesComDemanda.map(function(m){return '<button class="'+(m===mesDemanda?'on':'')+'" data-m="'+m+'" onclick="setMesDemanda(\''+m+'\')">'+(ML_MAP[m]||m)+'</button>';}).join('');
+    mseg.dataset.ready='1';
+  }
+  var useg=document.getElementById('demanda-useg');
+  if(useg&&!useg.dataset.ready){
+    var fils={};mesesComDemanda.forEach(function(m){if(DEMANDAINSUMOS[m].filiais)Object.keys(DEMANDAINSUMOS[m].filiais).forEach(function(f){fils[f]=1;});});
+    var fl=Object.keys(fils).sort();
+    if(fl.length>1){
+      useg.innerHTML='<button class="on" onclick="setUniDemanda(\'TODAS\')">Todas</button>'+
+        fl.map(function(f){return '<button onclick="setUniDemanda(\''+f+'\')">'+nomeUni(f)+'</button>';}).join('');
+      useg.dataset.ready='1';
+    }else{useg.style.display='none';}
+  }
+
+  var d=demandaDados(mesDemanda);
+  if(!d){cont.innerHTML='<div class="card"><div class="empty">Sem dados de demanda para esta selecao.</div></div>';return;}
+
+  var sufUni=uniDemanda==='TODAS'?'':' · '+nomeUni(uniDemanda);
+  var tCmv=CMVTEORICO[mesDemanda];
+  var semFichaInfo=tCmv?tCmv:null;
+
+  var html='<div class="metrics" style="grid-template-columns:1.4fr 1fr 1fr 1fr;">'+
+    '<div class="metric lead"><div class="metric-l">Custo de Materias-Primas a Comprar · '+(ML_MAP[mesDemanda]||mesDemanda)+sufUni+'</div>'+
+      '<div class="metric-v">'+fR2(d.materiasPrimas.total)+'</div>'+
+      '<div class="metric-sub" style="color:var(--fg3)">baseado nas vendas com ficha tecnica do periodo</div></div>'+
+    '<div class="metric"><div class="metric-l">Itens de Materia-Prima</div><div class="metric-v az">'+d.materiasPrimas.itens.length+'</div></div>'+
+    '<div class="metric"><div class="metric-l">Preparos Internos a Produzir</div><div class="metric-v am">'+d.preparos.itens.length+'</div>'+
+      '<div class="metric-sub" style="color:var(--fg3)">custo ja incluso nas materias-primas acima</div></div>'+
+    '<div class="metric"><div class="metric-l">Vendas sem Ficha (nao incluidas)</div><div class="metric-v" style="color:var(--fg3)">'+(semFichaInfo?fR(semFichaInfo.sem_ficha_valor):'--')+'</div></div>'+
+  '</div>';
+
+  html+='<div class="card"><div class="card-h"><div class="card-t">Materias-Primas a Comprar</div><div class="card-s" id="demanda-mp-count"></div></div>'+
+    '<div class="ctrl"><input type="text" id="demanda-mp-busca" placeholder="Buscar insumo..." oninput="rDemandaTabela(\'mp\')"></div>'+
+    '<div class="twrap"><table>'+
+      '<thead><tr><th>#</th><th>Insumo</th><th class="r">Quantidade</th><th>Unid.</th><th class="r">Custo Unit.</th><th class="r">Custo Total</th></tr></thead>'+
+      '<tbody id="demanda-mp-body"></tbody>'+
+    '</table></div></div>';
+
+  html+='<div class="card"><div class="card-h"><div class="card-t">Preparos Internos a Produzir</div><div class="card-s" id="demanda-pp-count"></div></div>'+
+    '<div class="ssub" style="margin:0 0 10px;">Quantidade que precisa ser preparada na cozinha. O custo aqui é referência — já está contado dentro do custo de matérias-primas acima, não some os dois.</div>'+
+    '<div class="ctrl"><input type="text" id="demanda-pp-busca" placeholder="Buscar preparo..." oninput="rDemandaTabela(\'pp\')"></div>'+
+    '<div class="twrap"><table>'+
+      '<thead><tr><th>#</th><th>Preparo</th><th class="r">Quantidade</th><th>Unid.</th><th class="r">Custo Unit.</th><th class="r">Custo Total (referência)</th></tr></thead>'+
+      '<tbody id="demanda-pp-body"></tbody>'+
+    '</table></div></div>';
+
+  cont.innerHTML=html;
+  rDemandaTabela('mp');
+  rDemandaTabela('pp');
+}
+
+function rDemandaTabela(tipo){
+  var d=demandaDados(mesDemanda);
+  if(!d)return;
+  var lista=(tipo==='mp'?d.materiasPrimas:d.preparos).itens;
+  var busca=(document.getElementById('demanda-'+tipo+'-busca').value||'').toLowerCase();
+  var data=lista.filter(function(it){return !busca||it.nome.toLowerCase().indexOf(busca)>=0;});
+  document.getElementById('demanda-'+tipo+'-count').textContent=data.length+' de '+lista.length+' itens';
+  document.getElementById('demanda-'+tipo+'-body').innerHTML=data.slice(0,400).map(function(it,i){
+    return '<tr><td class="n" style="color:var(--fg3)">'+String(i+1).padStart(3,'0')+'</td>'+
+      '<td class="hi">'+it.nome+'</td>'+
+      '<td class="n r">'+fQd(it.qtde)+'</td>'+
+      '<td>'+it.und+'</td>'+
+      '<td class="n r">'+fR2(it.custo_unit)+'</td>'+
+      '<td class="n r hi">'+fR2(it.custo_total)+'</td></tr>';
+  }).join('');
+  if(data.length>400)document.getElementById('demanda-'+tipo+'-body').innerHTML+='<tr><td colspan="6" class="empty">Exibindo os 400 primeiros de '+data.length+'.</td></tr>';
 }
 
 /* ============================================================

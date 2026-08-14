@@ -62,6 +62,8 @@ function getPayload(senha) {
     var cmv        = processarCMV(rowsEstoque, rowsCompras);
     var fichasMap  = processarFichas(rowsFichas);
     var cmvTeorico = calcularCMVTeorico(vendas, fichasMap);
+    var receitas   = processarReceitas(rowsFichas);
+    var demandaInsumos = calcularDemandaInsumos(vendas, receitas);
 
     // Meses disponíveis — derivados dos dados de compras
     var mOrdem = ['JANEIRO','FEVEREIRO','MARÇO','ABRIL','MAIO','JUNHO',
@@ -204,6 +206,7 @@ function getPayload(senha) {
       vendas:          vendas,
       meses:           meses,
       cmvTeorico:      cmvTeorico,
+      demandaInsumos:  demandaInsumos,
       fichasDisponivel: Object.keys(fichasMap).length > 0
     });
 

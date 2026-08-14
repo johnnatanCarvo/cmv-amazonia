@@ -885,7 +885,12 @@ function processarCMV(rowsEstoque, rowsCompras) {
 var C_FICHAS = {
   produto:    1,   // Nome do produto (ou insumo/preparo)
   tipo:       3,   // "Venda" (produto final) ou "Matéria prima" (preparo interno)
-  custo_unit: 6    // Custo unitário teórico do produto, já somando os insumos
+  rendimento: 5,   // Quantas unidades do produto UMA receita/lote produz
+  custo_unit: 6,   // Custo unitário teórico do produto, já somando os insumos
+  insumo_nome:       12,  // Nome do insumo usado nesta linha da receita
+  insumo_qtde:       13,  // Quantidade do insumo por LOTE (não por unidade vendida)
+  insumo_und:        14,  // Unidade do insumo
+  insumo_custo_unit: 15   // Custo unitário do insumo
 };
 
 // Grupos de "menu de escolha livre" (o cliente escolhe o prato dentro do
@@ -918,6 +923,126 @@ function processarFichas(rows) {
 
   Logger.log('Ficha técnica processada: ' + Object.keys(mapa).length + ' produtos com custo teórico.');
   return mapa;
+}
+
+// ── DEMANDA DE INSUMOS (explosão de receita) ──────────────────
+//
+// Diferente de processarFichas (que só guarda o custo unitário já somado
+// de cada produto), aqui lemos a receita COMPLETA: rendimento e a lista de
+// insumos de cada produto/preparo. Isso permite responder "quanto de cada
+// matéria-prima eu precisei pra cobrir o que vendi", explodindo preparos
+// internos (tipo "Matéria prima" que também têm ficha própria, ex: "PP
+// FAROFA KG") recursivamente até chegar na matéria-prima real.
+//
+// Retorna um mapa { "NOME DO PRODUTO": { tipo, rendimento, custo_unit, insumos:[...] } }.
+function processarReceitas(rows) {
+  var receitas = {};
+  if (!rows || rows.length < 2) return receitas;
+
+  for (var i = 1; i < rows.length; i++) {
+    var r = rows[i];
+    if (!r || r.length < 16) continue;
+
+    var produto = limpaCelula(r[C_FICHAS.produto]);
+    if (!produto) continue;
+
+    if (!receitas[produto]) {
+      receitas[produto] = {
+        tipo:       limpaCelula(r[C_FICHAS.tipo]),
+        rendimento: numVal(r[C_FICHAS.rendimento]) || 1,
+        custo_unit: numVal(r[C_FICHAS.custo_unit]),
+        insumos:    []
+      };
+    }
+
+    var insumoNome = limpaCelula(r[C_FICHAS.insumo_nome]);
+    var insumoQtde = numVal(r[C_FICHAS.insumo_qtde]);
+    if (insumoNome && insumoQtde > 0) {
+      receitas[produto].insumos.push({
+        nome:       insumoNome,
+        und:        limpaCelula(r[C_FICHAS.insumo_und]),
+        qtde:       insumoQtde,
+        custo_unit: numVal(r[C_FICHAS.insumo_custo_unit])
+      });
+    }
+  }
+
+  Logger.log('Receitas processadas: ' + Object.keys(receitas).length + ' produtos com lista de insumos.');
+  return receitas;
+}
+
+// Explode UM produto vendido nos insumos da sua receita. Quando um insumo é,
+// ele mesmo, um preparo interno com ficha própria (ex: uma "CG" que usa "PP
+// FAROFA KG"), a quantidade necessária desse preparo é registrada em
+// "preparos" (o que precisa ser PRODUZIDO) e a explosão continua recursivamente
+// pra dentro dele, até sobrar só matéria-prima real em "materiasPrimas" (o
+// que precisa ser COMPRADO). "cadeia" evita loop infinito se algum dia
+// houver referência circular entre receitas.
+function explodirInsumos(receitas, produtoNome, qtdeNecessaria, materiasPrimas, preparos, cadeia) {
+  var receita = receitas[produtoNome];
+  if (!receita || !receita.insumos.length) return;
+  if (cadeia.indexOf(produtoNome) >= 0) return;
+  var novaCadeia = cadeia.concat([produtoNome]);
+
+  var rendimento = receita.rendimento || 1;
+  var lotes = qtdeNecessaria / rendimento;
+
+  receita.insumos.forEach(function(ins) {
+    var qtdeInsumo = lotes * ins.qtde;
+    var subReceita = receitas[ins.nome];
+    var ehPreparoComReceita = subReceita && subReceita.insumos.length > 0;
+
+    if (ehPreparoComReceita) {
+      if (!preparos[ins.nome]) preparos[ins.nome] = { nome: ins.nome, und: ins.und, qtde: 0, custo_unit: ins.custo_unit };
+      preparos[ins.nome].qtde += qtdeInsumo;
+      explodirInsumos(receitas, ins.nome, qtdeInsumo, materiasPrimas, preparos, novaCadeia);
+    } else {
+      if (!materiasPrimas[ins.nome]) materiasPrimas[ins.nome] = { nome: ins.nome, und: ins.und, qtde: 0, custo_unit: ins.custo_unit };
+      materiasPrimas[ins.nome].qtde += qtdeInsumo;
+    }
+  });
+}
+
+// Calcula a demanda de insumos por mês (e por filial) a partir das vendas
+// reais do período — só considera produtos com ficha técnica cadastrada
+// (mesma limitação do CMV Teórico: menus de escolha livre e itens sem ficha
+// não entram, porque não há receita pra explodir).
+function calcularDemandaInsumos(vendas, receitas) {
+  var resultado = {};
+  if (!vendas || !vendas.abc_mes || !receitas || !Object.keys(receitas).length) return resultado;
+
+  function finalizarLista(mapa) {
+    var lista = Object.keys(mapa).map(function(k) {
+      var it = mapa[k];
+      var qtde = r4(it.qtde);
+      return { nome: it.nome, und: it.und, qtde: qtde, custo_unit: r4(it.custo_unit), custo_total: r2(qtde * it.custo_unit) };
+    }).sort(function(a, b) { return b.custo_total - a.custo_total; });
+    var total = lista.reduce(function(s, it) { return s + it.custo_total; }, 0);
+    return { itens: lista, total: r2(total) };
+  }
+
+  function processarLista(produtosVendidos) {
+    var materiasPrimas = {}, preparos = {};
+    produtosVendidos.forEach(function(p) {
+      if (receitas[p.produto]) {
+        explodirInsumos(receitas, p.produto, p.qtd, materiasPrimas, preparos, []);
+      }
+    });
+    return { materias_primas: finalizarLista(materiasPrimas), preparos: finalizarLista(preparos) };
+  }
+
+  Object.keys(vendas.abc_mes).forEach(function(mes) {
+    var base = processarLista(vendas.abc_mes[mes].produtos);
+    base.filiais = {};
+    if (vendas.abc_mes_filial[mes]) {
+      Object.keys(vendas.abc_mes_filial[mes]).forEach(function(fil) {
+        base.filiais[fil] = processarLista(vendas.abc_mes_filial[mes][fil].produtos);
+      });
+    }
+    resultado[mes] = base;
+  });
+
+  return resultado;
 }
 
 // Calcula o CMV Teórico por mês (e por filial): para cada produto vendido,
