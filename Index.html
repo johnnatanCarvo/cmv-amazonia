@@ -679,7 +679,7 @@ var ML_MAP={'JANEIRO':'Jan','FEVEREIRO':'Fev','MARÇO':'Mar','ABRIL':'Abr','MAIO
 /* ====== ESTADO ====== */
 var DADOS=null, MESES=[], CMC={}, VENDAS={}, CMV={}, mesAtual='', uniAtual='TODAS', grupoAberto=null, charts={};
 var CMVTEORICO={}, FICHAS_DISPONIVEL=false, mesTeorico='', uniTeorico='TODAS';
-var DEMANDAINSUMOS={}, mesDemanda='', uniDemanda='TODAS';
+var DEMANDAINSUMOS={}, RECONCILIACAOINSUMOS={}, mesDemanda='', uniDemanda='TODAS';
 var abcOrder='valor', custoCache=null, uniABC='TODAS', mesABC='TODOS';
 var custoMesA='', custoMesB='';
 var SENHA_ATUAL='';
@@ -752,7 +752,7 @@ function fazerLogin(){
       SENHA_ATUAL=senha;
       DADOS=res; CMC=res.cmc; VENDAS=res.vendas; CMV=res.cmv||{}; MESES=res.meses||[];
       CMVTEORICO=res.cmvTeorico||{}; FICHAS_DISPONIVEL=!!res.fichasDisponivel;
-      DEMANDAINSUMOS=res.demandaInsumos||{};
+      DEMANDAINSUMOS=res.demandaInsumos||{}; RECONCILIACAOINSUMOS=res.reconciliacaoInsumos||{};
       mesAtual=MESES.length?MESES[MESES.length-1]:'';
       var login=document.getElementById('login');
       login.classList.add('hide');
@@ -1893,10 +1893,12 @@ function rTeoricoTable(){
    ============================================================ */
 function demandaDados(mes){
   var d=DEMANDAINSUMOS[mes];if(!d)return null;
-  if(uniDemanda==='TODAS')return {materiasPrimas:d.materias_primas, preparos:d.preparos};
+  var r=RECONCILIACAOINSUMOS[mes];
+  if(uniDemanda==='TODAS')return {preparos:d.preparos, reconciliacao:r?r.itens:[]};
   if(d.filiais&&d.filiais[uniDemanda]){
     var f=d.filiais[uniDemanda];
-    return {materiasPrimas:f.materias_primas, preparos:f.preparos};
+    var rf=(r&&r.filiais&&r.filiais[uniDemanda])?r.filiais[uniDemanda].itens:[];
+    return {preparos:f.preparos, reconciliacao:rf};
   }
   return null;
 }
@@ -1939,55 +1941,89 @@ function rDemanda(){
   if(!d){cont.innerHTML='<div class="card"><div class="empty">Sem dados de demanda para esta selecao.</div></div>';return;}
 
   var sufUni=uniDemanda==='TODAS'?'':' · '+nomeUni(uniDemanda);
-  var tCmv=CMVTEORICO[mesDemanda];
-  var semFichaInfo=tCmv?tCmv:null;
+  var reconciliados=d.reconciliacao.filter(function(it){return it.consumo_real!==null;}).length;
+  var comDiferenca=d.reconciliacao.filter(function(it){return it.diferenca!==null && Math.abs(it.diferenca)>0.001;}).length;
 
-  var html='<div class="metrics" style="grid-template-columns:1.4fr 1fr 1fr 1fr;">'+
-    '<div class="metric lead"><div class="metric-l">Custo de Materias-Primas a Comprar · '+(ML_MAP[mesDemanda]||mesDemanda)+sufUni+'</div>'+
-      '<div class="metric-v">'+fR2(d.materiasPrimas.total)+'</div>'+
-      '<div class="metric-sub" style="color:var(--fg3)">baseado nas vendas com ficha tecnica do periodo</div></div>'+
-    '<div class="metric"><div class="metric-l">Itens de Materia-Prima</div><div class="metric-v az">'+d.materiasPrimas.itens.length+'</div></div>'+
-    '<div class="metric"><div class="metric-l">Preparos Internos a Produzir</div><div class="metric-v am">'+d.preparos.itens.length+'</div>'+
-      '<div class="metric-sub" style="color:var(--fg3)">custo ja incluso nas materias-primas acima</div></div>'+
-    '<div class="metric"><div class="metric-l">Vendas sem Ficha (nao incluidas)</div><div class="metric-v" style="color:var(--fg3)">'+(semFichaInfo?fR(semFichaInfo.sem_ficha_valor):'--')+'</div></div>'+
+  var html='<div class="metrics" style="grid-template-columns:1fr 1fr 1fr 1fr;">'+
+    '<div class="metric lead"><div class="metric-l">Insumos Reconciliados · '+(ML_MAP[mesDemanda]||mesDemanda)+sufUni+'</div>'+
+      '<div class="metric-v">'+reconciliados+'</div>'+
+      '<div class="metric-sub" style="color:var(--fg3)">de '+d.reconciliacao.length+' insumos com Estoque Inicial, Compras e Estoque Final disponiveis</div></div>'+
+    '<div class="metric"><div class="metric-l">Com Diferenca (Real x Teorico)</div><div class="metric-v am">'+comDiferenca+'</div></div>'+
+    '<div class="metric"><div class="metric-l">Preparos Internos a Produzir</div><div class="metric-v az">'+d.preparos.itens.length+'</div></div>'+
+    '<div class="metric"><div class="metric-l">Sem dado completo</div><div class="metric-v" style="color:var(--fg3)">'+(d.reconciliacao.length-reconciliados)+'</div>'+
+      '<div class="metric-sub" style="color:var(--fg3)">falta contagem ou compra desse insumo no periodo</div></div>'+
   '</div>';
 
-  html+='<div class="card"><div class="card-h"><div class="card-t">Materias-Primas a Comprar</div><div class="card-s" id="demanda-mp-count"></div></div>'+
-    '<div class="ctrl"><input type="text" id="demanda-mp-busca" placeholder="Buscar insumo..." oninput="rDemandaTabela(\'mp\')"></div>'+
+  html+='<div class="card"><div class="card-h"><div class="card-t">Reconciliacao de Insumos</div><div class="card-s" id="demanda-rec-count"></div></div>'+
+    '<div class="ssub" style="margin:0 0 10px;">Consumo Real = Estoque Inicial + Compras - Estoque Final (o que a contagem fisica mostra que sumiu). Consumo Teorico = o que a receita das vendas do periodo diz que deveria ter sido usado. Diferenca grande (positiva ou negativa) e o principal indicio de perda, desperdicio ou erro de contagem/compra.</div>'+
+    '<div class="ctrl">'+
+      '<input type="text" id="demanda-rec-busca" placeholder="Buscar insumo..." oninput="rDemandaReconciliacao()">'+
+      '<select id="demanda-rec-filtro" onchange="rDemandaReconciliacao()">'+
+        '<option value="">Todos os insumos</option>'+
+        '<option value="completos">So reconciliados (com todos os dados)</option>'+
+        '<option value="diferenca">So com diferenca</option>'+
+      '</select>'+
+    '</div>'+
     '<div class="twrap"><table>'+
-      '<thead><tr><th>#</th><th>Insumo</th><th class="r">Quantidade</th><th>Unid.</th><th class="r">Custo Unit.</th><th class="r">Custo Total</th></tr></thead>'+
-      '<tbody id="demanda-mp-body"></tbody>'+
+      '<thead><tr><th>#</th><th>Insumo</th><th>Unid.</th><th class="r">Estoque Inicial</th><th class="r">Compras</th><th class="r">Estoque Final</th><th class="r">Consumo Real</th><th class="r">Consumo Teorico</th><th class="r">Diferenca</th></tr></thead>'+
+      '<tbody id="demanda-rec-body"></tbody>'+
     '</table></div></div>';
 
   html+='<div class="card"><div class="card-h"><div class="card-t">Preparos Internos a Produzir</div><div class="card-s" id="demanda-pp-count"></div></div>'+
-    '<div class="ssub" style="margin:0 0 10px;">Quantidade que precisa ser preparada na cozinha. O custo aqui é referência — já está contado dentro do custo de matérias-primas acima, não some os dois.</div>'+
-    '<div class="ctrl"><input type="text" id="demanda-pp-busca" placeholder="Buscar preparo..." oninput="rDemandaTabela(\'pp\')"></div>'+
+    '<div class="ssub" style="margin:0 0 10px;">Quantidade que precisa ser preparada na cozinha pra cobrir as vendas do periodo.</div>'+
+    '<div class="ctrl"><input type="text" id="demanda-pp-busca" placeholder="Buscar preparo..." oninput="rDemandaPreparos()"></div>'+
     '<div class="twrap"><table>'+
-      '<thead><tr><th>#</th><th>Preparo</th><th class="r">Quantidade</th><th>Unid.</th><th class="r">Custo Unit.</th><th class="r">Custo Total (referência)</th></tr></thead>'+
+      '<thead><tr><th>#</th><th>Preparo</th><th class="r">Quantidade</th><th>Unid.</th></tr></thead>'+
       '<tbody id="demanda-pp-body"></tbody>'+
     '</table></div></div>';
 
   cont.innerHTML=html;
-  rDemandaTabela('mp');
-  rDemandaTabela('pp');
+  rDemandaReconciliacao();
+  rDemandaPreparos();
 }
 
-function rDemandaTabela(tipo){
+function rDemandaReconciliacao(){
   var d=demandaDados(mesDemanda);
   if(!d)return;
-  var lista=(tipo==='mp'?d.materiasPrimas:d.preparos).itens;
-  var busca=(document.getElementById('demanda-'+tipo+'-busca').value||'').toLowerCase();
+  var busca=(document.getElementById('demanda-rec-busca').value||'').toLowerCase();
+  var filtro=document.getElementById('demanda-rec-filtro').value;
+  var data=d.reconciliacao.filter(function(it){
+    if(busca&&it.produto.toLowerCase().indexOf(busca)<0)return false;
+    if(filtro==='completos'&&it.consumo_real===null)return false;
+    if(filtro==='diferenca'&&(it.diferenca===null||Math.abs(it.diferenca)<=0.001))return false;
+    return true;
+  });
+  document.getElementById('demanda-rec-count').textContent=data.length+' de '+d.reconciliacao.length+' insumos';
+  function cel(v){return v===null||v===undefined?'<span style="color:var(--fg3)">--</span>':fQd(v);}
+  document.getElementById('demanda-rec-body').innerHTML=data.slice(0,400).map(function(it,i){
+    var difCls=it.diferenca===null?'':(it.diferenca>0?'up':(it.diferenca<0?'down':''));
+    return '<tr><td class="n" style="color:var(--fg3)">'+String(i+1).padStart(3,'0')+'</td>'+
+      '<td class="hi">'+it.produto+'</td>'+
+      '<td>'+it.und+'</td>'+
+      '<td class="n r">'+cel(it.ei)+'</td>'+
+      '<td class="n r">'+cel(it.compras)+'</td>'+
+      '<td class="n r">'+cel(it.ef)+'</td>'+
+      '<td class="n r hi">'+cel(it.consumo_real)+'</td>'+
+      '<td class="n r">'+fQd(it.consumo_teorico)+'</td>'+
+      '<td class="n r '+difCls+'" style="font-weight:600">'+cel(it.diferenca)+'</td></tr>';
+  }).join('');
+  if(data.length>400)document.getElementById('demanda-rec-body').innerHTML+='<tr><td colspan="9" class="empty">Exibindo os 400 primeiros de '+data.length+'.</td></tr>';
+}
+
+function rDemandaPreparos(){
+  var d=demandaDados(mesDemanda);
+  if(!d)return;
+  var lista=d.preparos.itens;
+  var busca=(document.getElementById('demanda-pp-busca').value||'').toLowerCase();
   var data=lista.filter(function(it){return !busca||it.nome.toLowerCase().indexOf(busca)>=0;});
-  document.getElementById('demanda-'+tipo+'-count').textContent=data.length+' de '+lista.length+' itens';
-  document.getElementById('demanda-'+tipo+'-body').innerHTML=data.slice(0,400).map(function(it,i){
+  document.getElementById('demanda-pp-count').textContent=data.length+' de '+lista.length+' itens';
+  document.getElementById('demanda-pp-body').innerHTML=data.slice(0,400).map(function(it,i){
     return '<tr><td class="n" style="color:var(--fg3)">'+String(i+1).padStart(3,'0')+'</td>'+
       '<td class="hi">'+it.nome+'</td>'+
       '<td class="n r">'+fQd(it.qtde)+'</td>'+
-      '<td>'+it.und+'</td>'+
-      '<td class="n r">'+fR2(it.custo_unit)+'</td>'+
-      '<td class="n r hi">'+fR2(it.custo_total)+'</td></tr>';
+      '<td>'+it.und+'</td></tr>';
   }).join('');
-  if(data.length>400)document.getElementById('demanda-'+tipo+'-body').innerHTML+='<tr><td colspan="6" class="empty">Exibindo os 400 primeiros de '+data.length+'.</td></tr>';
+  if(data.length>400)document.getElementById('demanda-pp-body').innerHTML+='<tr><td colspan="4" class="empty">Exibindo os 400 primeiros de '+data.length+'.</td></tr>';
 }
 
 /* ============================================================

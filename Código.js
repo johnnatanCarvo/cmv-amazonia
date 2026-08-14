@@ -64,6 +64,7 @@ function getPayload(senha) {
     var cmvTeorico = calcularCMVTeorico(vendas, fichasMap);
     var receitas   = processarReceitas(rowsFichas);
     var demandaInsumos = calcularDemandaInsumos(vendas, receitas);
+    var reconciliacaoInsumos = reconciliarInsumos(demandaInsumos, receitas);
 
     // Meses disponíveis — derivados dos dados de compras
     var mOrdem = ['JANEIRO','FEVEREIRO','MARÇO','ABRIL','MAIO','JUNHO',
@@ -207,6 +208,7 @@ function getPayload(senha) {
       meses:           meses,
       cmvTeorico:      cmvTeorico,
       demandaInsumos:  demandaInsumos,
+      reconciliacaoInsumos: reconciliacaoInsumos,
       fichasDisponivel: Object.keys(fichasMap).length > 0
     });
 
@@ -574,10 +576,27 @@ function lerContagensBrutas() {
   return linhas;
 }
 
-// Lista a contagem INICIAL ou FINAL do mês selecionado — mesmo pareamento
-// usado no cálculo do CMV: a contagem FINAL de um mês é a data mais recente
-// cujo mês bate com o selecionado; a INICIAL é a contagem imediatamente
-// anterior a essa (pode ser do mês anterior).
+// Dado o conjunto de linhas de contagem (lerContagensBrutas), acha o ts (data)
+// da contagem INICIAL e FINAL de um mês — mesmo pareamento usado no CMV:
+// a FINAL é a data mais recente cujo mês bate com o selecionado; a INICIAL é
+// a contagem imediatamente anterior a essa (pode ser do mês anterior).
+function tsInicialEFinalDoMes(mesNome, linhas) {
+  var porTs = {};
+  linhas.forEach(function(l) { porTs[l.ts] = porTs[l.ts] || { mes: l.mes }; });
+  var tsOrdenados = Object.keys(porTs).sort();
+
+  var tsFinal = null;
+  tsOrdenados.forEach(function(ts) {
+    if (NOMES_MESES[porTs[ts].mes] === mesNome) tsFinal = ts; // fica com a mais recente do mes
+  });
+  if (!tsFinal) return { tsInicial: null, tsFinal: null };
+
+  var posFinal = tsOrdenados.indexOf(tsFinal);
+  var tsInicial = posFinal > 0 ? tsOrdenados[posFinal - 1] : null;
+  return { tsInicial: tsInicial, tsFinal: tsFinal };
+}
+
+// Lista a contagem INICIAL ou FINAL do mês selecionado.
 function listarContagemMes(senha, mesNome, qual) {
   if (!validarSenha(senha)) {
     return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
@@ -586,21 +605,10 @@ function listarContagemMes(senha, mesNome, qual) {
     var linhas = lerContagensBrutas();
     if (!linhas.length) return JSON.stringify({ ok: true, linhas: [], data: null });
 
-    var porTs = {};
-    linhas.forEach(function(l) { porTs[l.ts] = porTs[l.ts] || { mes: l.mes }; });
-    var tsOrdenados = Object.keys(porTs).sort();
+    var par = tsInicialEFinalDoMes(mesNome, linhas);
+    if (!par.tsFinal) return JSON.stringify({ ok: true, linhas: [], data: null });
 
-    var tsFinal = null;
-    tsOrdenados.forEach(function(ts) {
-      if (NOMES_MESES[porTs[ts].mes] === mesNome) tsFinal = ts; // fica com a mais recente do mes
-    });
-    if (!tsFinal) return JSON.stringify({ ok: true, linhas: [], data: null });
-
-    var tsAlvo = tsFinal;
-    if (qual === 'inicial') {
-      var posFinal = tsOrdenados.indexOf(tsFinal);
-      tsAlvo = posFinal > 0 ? tsOrdenados[posFinal - 1] : null;
-    }
+    var tsAlvo = (qual === 'inicial') ? par.tsInicial : par.tsFinal;
     if (!tsAlvo) return JSON.stringify({ ok: true, linhas: [], data: null });
 
     var filtradas = linhas.filter(function(l) { return l.ts === tsAlvo; });
@@ -648,4 +656,140 @@ function editarSaldoContagem(senha, arquivo, linha, novoSaldo) {
     Logger.log('editarSaldoContagem ERROR: ' + err.message + '\n' + err.stack);
     return JSON.stringify({ ok: false, erro: err.message });
   }
+}
+
+// ── RECONCILIAÇÃO DE INSUMOS (EI + Compras - EF = Consumo Real, x Consumo Teórico) ──
+// Cruza os dados de estoque e compras (fonte da verdade física) com a demanda
+// teórica calculada pela explosão de receita, produto a produto. A diferença
+// entre Consumo Real e Consumo Teórico é o principal indício de perda,
+// desperdício ou erro de contagem/compra — quanto maior, mais vale investigar.
+
+// Agrega o SALDO (quantidade) de todas as contagens por produto, indexado por
+// ts (data) — consolidado (todas as filiais) e por filial. Também guarda a
+// unidade de cada produto (da última linha vista) pra exibição.
+function agregarSaldosPorProduto(linhasContagem) {
+  var porTs = {};
+  linhasContagem.forEach(function(l) {
+    if (!porTs[l.ts]) porTs[l.ts] = { produtos: {}, unidades: {}, filiais: {} };
+    var bucket = porTs[l.ts];
+    bucket.produtos[l.produto] = (bucket.produtos[l.produto] || 0) + l.saldo;
+    bucket.unidades[l.produto] = l.unid;
+    if (!bucket.filiais[l.filial]) bucket.filiais[l.filial] = { produtos: {}, unidades: {} };
+    bucket.filiais[l.filial].produtos[l.produto] = (bucket.filiais[l.filial].produtos[l.produto] || 0) + l.saldo;
+    bucket.filiais[l.filial].unidades[l.produto] = l.unid;
+  });
+  return porTs;
+}
+
+// Agrega a quantidade COMPRADA por produto e por mês — consolidado e por filial.
+function agregarComprasPorProduto() {
+  var porMes = {};
+  arquivosDoTipo('compras').forEach(function(f) {
+    var linhasTexto = conteudoDoArquivo(f).split(/\r?\n/);
+    for (var i = 1; i < linhasTexto.length; i++) {
+      if (!linhasTexto[i]) continue;
+      var cel = linhasTexto[i].split('\t').map(function(c) { return c.replace(/^"|"$/g, ''); });
+      if (cel.length < 18) continue;
+      var mes = mesNum(cel[C_COMPRAS.data]);
+      if (!mes) continue;
+      var mesNome = NOMES_MESES[mes];
+      var produto = limpaCelula(cel[C_COMPRAS.produto]);
+      var filial  = limpaCelula(cel[C_COMPRAS.filial]) || 'OUTRA';
+      var qtd     = numVal(cel[C_COMPRAS.qtd]);
+      var unid    = limpaCelula(cel[C_COMPRAS.unid]);
+      if (!produto || qtd <= 0) continue;
+
+      if (!porMes[mesNome]) porMes[mesNome] = { produtos: {}, unidades: {}, filiais: {} };
+      porMes[mesNome].produtos[produto] = (porMes[mesNome].produtos[produto] || 0) + qtd;
+      porMes[mesNome].unidades[produto] = unid;
+      if (!porMes[mesNome].filiais[filial]) porMes[mesNome].filiais[filial] = { produtos: {}, unidades: {} };
+      porMes[mesNome].filiais[filial].produtos[produto] = (porMes[mesNome].filiais[filial].produtos[produto] || 0) + qtd;
+      porMes[mesNome].filiais[filial].unidades[produto] = unid;
+    }
+  });
+  return porMes;
+}
+
+// Monta a lista reconciliada de UM escopo (geral ou uma filial): união dos
+// produtos que aparecem no teórico, na contagem inicial, na contagem final
+// ou nas compras — pra nao esconder um item que sumiu do estoque mas nao
+// entrou em nenhuma receita vendida no periodo.
+function montarListaReconciliada(teoricoItens, saldosEI, saldosEF, compras, insumosValidos) {
+  var teoricoMapa = {}, teoricoUnid = {};
+  (teoricoItens || []).forEach(function(it) { teoricoMapa[it.nome] = it.qtde; teoricoUnid[it.nome] = it.und; });
+
+  // O universo de nomes fica restrito a insumos-folha reais (insumosValidos) —
+  // evita misturar embalagem/descartavel/bebida revendida que aparecem em
+  // compras ou contagem mas nunca sao insumo de nenhuma receita.
+  var nomes = {};
+  Object.keys(teoricoMapa).forEach(function(n) { nomes[n] = 1; });
+  if (saldosEI) Object.keys(saldosEI.produtos).forEach(function(n) { if (insumosValidos[n]) nomes[n] = 1; });
+  if (saldosEF) Object.keys(saldosEF.produtos).forEach(function(n) { if (insumosValidos[n]) nomes[n] = 1; });
+  if (compras)  Object.keys(compras.produtos).forEach(function(n) { if (insumosValidos[n]) nomes[n] = 1; });
+
+  var lista = Object.keys(nomes).map(function(produto) {
+    var ei = (saldosEI && saldosEI.produtos[produto] !== undefined) ? r4(saldosEI.produtos[produto]) : null;
+    var ef = (saldosEF && saldosEF.produtos[produto] !== undefined) ? r4(saldosEF.produtos[produto]) : null;
+    var comp = (compras && compras.produtos[produto] !== undefined) ? r4(compras.produtos[produto]) : null;
+    var teorico = teoricoMapa[produto] !== undefined ? r4(teoricoMapa[produto]) : 0;
+    var completo = ei !== null && ef !== null && comp !== null;
+    var real = completo ? r4(ei + comp - ef) : null;
+    var diferenca = (real !== null) ? r4(real - teorico) : null;
+
+    var und = teoricoUnid[produto]
+      || (saldosEF && saldosEF.unidades[produto])
+      || (saldosEI && saldosEI.unidades[produto])
+      || (compras && compras.unidades[produto])
+      || '';
+
+    return {
+      produto: produto, und: und,
+      ei: ei, compras: comp, ef: ef,
+      consumo_real: real, consumo_teorico: teorico, diferenca: diferenca
+    };
+  });
+
+  lista.sort(function(a, b) {
+    var da = a.diferenca === null ? -1 : Math.abs(a.diferenca);
+    var db = b.diferenca === null ? -1 : Math.abs(b.diferenca);
+    return db - da;
+  });
+  return lista;
+}
+
+// Reconcilia, por mês (e por filial), Estoque Inicial + Compras - Estoque
+// Final (Consumo Real, vindo da contagem física) contra o Consumo Teórico
+// (vindo da explosão de receita em calcularDemandaInsumos).
+function reconciliarInsumos(demandaInsumos, receitas) {
+  var resultado = {};
+  var linhasContagem = lerContagensBrutas();
+  var saldosPorTs = agregarSaldosPorProduto(linhasContagem);
+  var comprasPorMes = agregarComprasPorProduto();
+  var insumosValidos = todosInsumosFolha(receitas);
+
+  Object.keys(demandaInsumos).forEach(function(mes) {
+    var d = demandaInsumos[mes];
+    var par = tsInicialEFinalDoMes(mes, linhasContagem);
+    var saldosEI = par.tsInicial ? saldosPorTs[par.tsInicial] : null;
+    var saldosEF = par.tsFinal   ? saldosPorTs[par.tsFinal]   : null;
+    var compras  = comprasPorMes[mes] || null;
+
+    resultado[mes] = {
+      itens: montarListaReconciliada(d.materias_primas.itens, saldosEI, saldosEF, compras, insumosValidos),
+      filiais: {}
+    };
+
+    if (d.filiais) {
+      Object.keys(d.filiais).forEach(function(fil) {
+        var saldosEIfil = (saldosEI && saldosEI.filiais[fil]) ? saldosEI.filiais[fil] : null;
+        var saldosEFfil = (saldosEF && saldosEF.filiais[fil]) ? saldosEF.filiais[fil] : null;
+        var comprasFil  = (compras && compras.filiais[fil]) ? compras.filiais[fil] : null;
+        resultado[mes].filiais[fil] = {
+          itens: montarListaReconciliada(d.filiais[fil].materias_primas.itens, saldosEIfil, saldosEFfil, comprasFil, insumosValidos)
+        };
+      });
+    }
+  });
+
+  return resultado;
 }

@@ -971,6 +971,24 @@ function processarReceitas(rows) {
   return receitas;
 }
 
+// Retorna o conjunto de nomes que são, em ALGUMA receita da ficha técnica,
+// um insumo-folha (matéria-prima real, sem ficha própria pra explodir mais).
+// Usado pra restringir a reconciliação de insumos (Estoque x Compras x
+// Teórico) só a itens que fazem sentido como insumo — sem isso, a lista
+// fica poluída com embalagens, descartáveis e bebidas revendidas prontas
+// que aparecem nas compras/contagens mas nunca são insumo de receita nenhuma.
+function todosInsumosFolha(receitas) {
+  var folhas = {};
+  Object.keys(receitas).forEach(function(p) {
+    receitas[p].insumos.forEach(function(ins) {
+      var sub = receitas[ins.nome];
+      var ehFolha = !sub || !sub.insumos.length;
+      if (ehFolha) folhas[ins.nome] = true;
+    });
+  });
+  return folhas;
+}
+
 // Explode UM produto vendido nos insumos da sua receita. Quando um insumo é,
 // ele mesmo, um preparo interno com ficha própria (ex: uma "CG" que usa "PP
 // FAROFA KG"), a quantidade necessária desse preparo é registrada em
