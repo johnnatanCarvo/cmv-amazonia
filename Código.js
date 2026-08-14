@@ -682,6 +682,14 @@ function agregarSaldosPorProduto(linhasContagem) {
 }
 
 // Agrega a quantidade COMPRADA por produto e por mês — consolidado e por filial.
+// Trata transferência entre unidades igual ao CMC/CMV: a linha de transferência
+// fica registrada na filial de DESTINO (como se fosse uma "compra" de um
+// fornecedor que é a própria empresa). Pra não distorcer a reconciliação:
+//   - Consolidado: transferência NÃO conta como compra nova pra empresa toda —
+//     a mercadoria já foi contada quando a origem comprou de verdade externamente.
+//   - Filial de DESTINO: conta normalmente (o estoque dela aumentou de verdade).
+//   - Filial de ORIGEM: desconta a quantidade enviada (senão pareceria que ela
+//     ainda tem esse insumo disponível, inflando o Consumo Real dela).
 function agregarComprasPorProduto() {
   var porMes = {};
   arquivosDoTipo('compras').forEach(function(f) {
@@ -700,11 +708,25 @@ function agregarComprasPorProduto() {
       if (!produto || qtd <= 0) continue;
 
       if (!porMes[mesNome]) porMes[mesNome] = { produtos: {}, unidades: {}, filiais: {} };
-      porMes[mesNome].produtos[produto] = (porMes[mesNome].produtos[produto] || 0) + qtd;
-      porMes[mesNome].unidades[produto] = unid;
-      if (!porMes[mesNome].filiais[filial]) porMes[mesNome].filiais[filial] = { produtos: {}, unidades: {} };
-      porMes[mesNome].filiais[filial].produtos[produto] = (porMes[mesNome].filiais[filial].produtos[produto] || 0) + qtd;
-      porMes[mesNome].filiais[filial].unidades[produto] = unid;
+      var bucket = porMes[mesNome];
+      if (!bucket.filiais[filial]) bucket.filiais[filial] = { produtos: {}, unidades: {} };
+
+      var fornecedor = limpaCelula(cel[C_COMPRAS_FORNECEDOR]);
+      var pareceTransf = fornecedor.toUpperCase().indexOf(TRANSFERENCIA_MARCADOR) >= 0;
+      var filOrig = pareceTransf ? filialOrigem(fornecedor) : null;
+      var ehTransf = pareceTransf && filOrig !== filial;
+
+      bucket.unidades[produto] = unid;
+      bucket.filiais[filial].unidades[produto] = unid;
+      bucket.filiais[filial].produtos[produto] = (bucket.filiais[filial].produtos[produto] || 0) + qtd;
+
+      if (ehTransf) {
+        if (!bucket.filiais[filOrig]) bucket.filiais[filOrig] = { produtos: {}, unidades: {} };
+        bucket.filiais[filOrig].produtos[produto] = (bucket.filiais[filOrig].produtos[produto] || 0) - qtd;
+        bucket.filiais[filOrig].unidades[produto] = unid;
+      } else {
+        bucket.produtos[produto] = (bucket.produtos[produto] || 0) + qtd;
+      }
     }
   });
   return porMes;
