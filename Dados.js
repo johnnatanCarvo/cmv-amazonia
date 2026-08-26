@@ -1198,17 +1198,27 @@ function mesAnoAnterior(mesNome, ano, n) {
   return { mes: ORDEM_MESES[idxAjustado], ano: anoAjustado };
 }
 
-// ── Coleta (filtra linhas já lidas por período — sem acesso a Drive) ────
+// ── Coleta (pré-agrega linhas já lidas UMA VEZ — sem acesso a Drive) ────
+//
+// IMPORTANTE (performance): a Análise Quinzenal consulta compras/vendas de
+// vários períodos (mês atual + até 3 anteriores + até 6 meses de histórico
+// pra projeção) — reescanear os arrays inteiros de compras/vendas (que têm
+// dezenas de milhares de linhas) a cada consulta deixava o carregamento
+// lento (chegou a 90+ segundos em teste real). Por isso os dados são
+// pré-agregados por DIA uma única vez (preAgregarComprasPorDia /
+// preAgregarVendasPorDia), e toda consulta de período vira apenas uma soma
+// sobre, no máximo, 31 chaves já calculadas — não um novo scan das linhas.
 
-// Soma COMPRAS (R$) num intervalo de dias [diaMin, diaMax] de um mês/ano
-// específico — consolidado e por filial, respeitando transferência entre
+function chaveDia(ano, mesNome, dia) { return ano + '|' + mesNome + '|' + dia; }
+
+// Pré-agrega COMPRAS por dia — já aplica a lógica de transferência entre
 // unidades EXATAMENTE como processarCompras/processarCMV: a filial de
 // destino recebe normalmente, a de origem tem descontado o que enviou, e o
 // consolidado nunca conta a transferência como compra nova (já foi contada
 // na compra externa de origem).
-function somarComprasPeriodo(rowsCompras, mesNome, ano, diaMin, diaMax) {
-  var resultado = { total: 0, filiais: {} };
-  if (!rowsCompras || rowsCompras.length < 2) return resultado;
+function preAgregarComprasPorDia(rowsCompras) {
+  var porDia = {};
+  if (!rowsCompras || rowsCompras.length < 2) return porDia;
 
   for (var i = 1; i < rowsCompras.length; i++) {
     var r = rowsCompras[i];
@@ -1219,8 +1229,10 @@ function somarComprasPeriodo(rowsCompras, mesNome, ano, diaMin, diaMax) {
 
     var dataInfo = parseDataCompleta(r[C_COMPRAS.data]);
     if (!dataInfo) continue;
-    if (dataInfo.ano !== ano || NOMES_MESES[dataInfo.mes] !== mesNome) continue;
-    if (dataInfo.dia < diaMin || dataInfo.dia > diaMax) continue;
+    var mesNome = NOMES_MESES[dataInfo.mes];
+    var chave = chaveDia(dataInfo.ano, mesNome, dataInfo.dia);
+    if (!porDia[chave]) porDia[chave] = { total: 0, filiais: {} };
+    var b = porDia[chave];
 
     var filial = limpaCelula(r[C_COMPRAS.filial]) || 'OUTRA';
     var fornecedor = limpaCelula(r[C_COMPRAS_FORNECEDOR]);
@@ -1228,37 +1240,23 @@ function somarComprasPeriodo(rowsCompras, mesNome, ano, diaMin, diaMax) {
     var filOrig = pareceTransf ? filialOrigem(fornecedor) : null;
     var ehTransf = pareceTransf && filOrig !== filial;
 
-    if (!resultado.filiais[filial]) resultado.filiais[filial] = 0;
-    resultado.filiais[filial] += total;
+    if (!b.filiais[filial]) b.filiais[filial] = 0;
+    b.filiais[filial] += total;
 
     if (ehTransf) {
-      if (!resultado.filiais[filOrig]) resultado.filiais[filOrig] = 0;
-      resultado.filiais[filOrig] -= total;
+      if (!b.filiais[filOrig]) b.filiais[filOrig] = 0;
+      b.filiais[filOrig] -= total;
     } else {
-      resultado.total += total;
+      b.total += total;
     }
   }
-
-  Object.keys(resultado.filiais).forEach(function(f) { resultado.filiais[f] = r2(resultado.filiais[f]); });
-  resultado.total = r2(resultado.total);
-  return resultado;
+  return porDia;
 }
 
-function buscarComprasQuinzenais(rowsCompras, mesNome, ano, diaCorte) {
-  return somarComprasPeriodo(rowsCompras, mesNome, ano, 1, diaCorte);
-}
-
-// Soma o total de compras do MÊS INTEIRO (dia 1 até o último dia do mês) —
-// usado só pra calcular a proporção histórica quinzena/mês (projeção).
-function somarComprasMesCompleto(rowsCompras, mesNome, ano) {
-  return somarComprasPeriodo(rowsCompras, mesNome, ano, 1, diasNoMes(mesNome, ano));
-}
-
-// Soma VENDAS (R$) num intervalo de dias — consolidado e por filial,
-// excluindo TAXAS OPERACIONAIS (mesma regra de processarVendas).
-function somarVendasPeriodo(rowsVendas, mesNome, ano, diaMin, diaMax) {
-  var resultado = { total: 0, filiais: {} };
-  if (!rowsVendas || rowsVendas.length < 2) return resultado;
+// Pré-agrega VENDAS por dia — exclui TAXAS OPERACIONAIS (mesma regra de processarVendas).
+function preAgregarVendasPorDia(rowsVendas) {
+  var porDia = {};
+  if (!rowsVendas || rowsVendas.length < 2) return porDia;
 
   for (var i = 1; i < rowsVendas.length; i++) {
     var r = rowsVendas[i];
@@ -1270,70 +1268,102 @@ function somarVendasPeriodo(rowsVendas, mesNome, ano, diaMin, diaMax) {
 
     var dataInfo = parseDataCompleta(r[C_VENDAS.data]);
     if (!dataInfo) continue;
-    if (dataInfo.ano !== ano || NOMES_MESES[dataInfo.mes] !== mesNome) continue;
-    if (dataInfo.dia < diaMin || dataInfo.dia > diaMax) continue;
+    var mesNome = NOMES_MESES[dataInfo.mes];
+    var chave = chaveDia(dataInfo.ano, mesNome, dataInfo.dia);
+    if (!porDia[chave]) porDia[chave] = { total: 0, filiais: {} };
+    var b = porDia[chave];
 
     var filial = limpaCelula(r[C_VENDAS.filial]) || 'OUTRA';
-    if (!resultado.filiais[filial]) resultado.filiais[filial] = 0;
-    resultado.filiais[filial] += valor;
-    resultado.total += valor;
+    if (!b.filiais[filial]) b.filiais[filial] = 0;
+    b.filiais[filial] += valor;
+    b.total += valor;
   }
-
-  Object.keys(resultado.filiais).forEach(function(f) { resultado.filiais[f] = r2(resultado.filiais[f]); });
-  resultado.total = r2(resultado.total);
-  return resultado;
+  return porDia;
 }
 
-function buscarVendasQuinzenais(rowsVendas, mesNome, ano, diaCorte) {
-  return somarVendasPeriodo(rowsVendas, mesNome, ano, 1, diaCorte);
+// Soma um intervalo de dias [diaMin, diaMax] a partir do pré-agregado
+// (compras ou vendas — mesmo formato de saída de ambas as funções acima).
+function somarPeriodoPreAgregado(porDia, mesNome, ano, diaMin, diaMax) {
+  var total = 0, filiais = {};
+  for (var dia = diaMin; dia <= diaMax; dia++) {
+    var b = porDia[chaveDia(ano, mesNome, dia)];
+    if (!b) continue;
+    total += b.total;
+    Object.keys(b.filiais).forEach(function(f) { filiais[f] = (filiais[f] || 0) + b.filiais[f]; });
+  }
+  Object.keys(filiais).forEach(function(f) { filiais[f] = r2(filiais[f]); });
+  return { total: r2(total), filiais: filiais };
 }
 
-function somarVendasMesCompleto(rowsVendas, mesNome, ano) {
-  return somarVendasPeriodo(rowsVendas, mesNome, ano, 1, diasNoMes(mesNome, ano));
+function buscarComprasQuinzenais(porDiaCompras, mesNome, ano, diaCorte) {
+  return somarPeriodoPreAgregado(porDiaCompras, mesNome, ano, 1, diaCorte);
 }
 
-// Acha, dentro do mês/ano, a contagem de estoque (linhas de Inventário) mais
-// próxima do dia de corte (15), respeitando a janela configurada
-// (QUINZENAL_JANELA_DIAS pra cada lado). Retorna o VALOR (R$) da contagem,
-// consolidado e por filial, e metadados (data real, distância, confiança).
-// Nunca finge que a contagem é do dia 15 — a data real sempre vai junto.
-function acharContagemProximaDia15(rowsEstoque, mesNome, ano, diaCorte) {
-  if (!rowsEstoque || rowsEstoque.length < 2) return null;
+// Soma o total de compras do MÊS INTEIRO (dia 1 até o último dia do mês) —
+// usado só pra calcular a proporção histórica quinzena/mês (projeção).
+function somarComprasMesCompleto(porDiaCompras, mesNome, ano) {
+  return somarPeriodoPreAgregado(porDiaCompras, mesNome, ano, 1, diasNoMes(mesNome, ano));
+}
 
+function buscarVendasQuinzenais(porDiaVendas, mesNome, ano, diaCorte) {
+  return somarPeriodoPreAgregado(porDiaVendas, mesNome, ano, 1, diaCorte);
+}
+
+function somarVendasMesCompleto(porDiaVendas, mesNome, ano) {
+  return somarPeriodoPreAgregado(porDiaVendas, mesNome, ano, 1, diasNoMes(mesNome, ano));
+}
+
+// Pré-agrega as contagens de estoque (linhas de Inventário) por ts (data) —
+// uma única vez. Como só existem poucas datas de contagem no sistema todo
+// (uma por mês, tipicamente), isso é barato e evita reescanear rowsEstoque
+// pra cada mês analisado na Análise Quinzenal.
+function preAgregarContagensPorTs(rowsEstoque) {
   var porTs = {};
+  if (!rowsEstoque || rowsEstoque.length < 2) return porTs;
+
   for (var i = 1; i < rowsEstoque.length; i++) {
     var r = rowsEstoque[i];
     if (!r || r.length < 16) continue;
     if (limpaCelula(r[C_ESTOQUE.tp_movto]) !== ESTOQUE_TIPO_VALIDO) continue;
     var dataInfo = parseDataCompleta(r[C_ESTOQUE.data]);
     if (!dataInfo) continue;
-    if (dataInfo.ano !== ano || NOMES_MESES[dataInfo.mes] !== mesNome) continue;
 
     var valor = numVal(r[C_ESTOQUE.custo_total]);
     if (valor <= 0) continue;
     var filial = limpaCelula(r[C_ESTOQUE.filial]) || 'OUTRA';
 
-    if (!porTs[dataInfo.ts]) porTs[dataInfo.ts] = { dia: dataInfo.dia, total: 0, filiais: {} };
+    if (!porTs[dataInfo.ts]) porTs[dataInfo.ts] = { dia: dataInfo.dia, mes: dataInfo.mes, ano: dataInfo.ano, total: 0, filiais: {} };
     porTs[dataInfo.ts].total += valor;
     porTs[dataInfo.ts].filiais[filial] = (porTs[dataInfo.ts].filiais[filial] || 0) + valor;
   }
+  return porTs;
+}
 
-  var tsCandidatos = Object.keys(porTs).filter(function(ts) {
-    return Math.abs(porTs[ts].dia - diaCorte) <= QUINZENAL_JANELA_DIAS;
+// Acha, dentro do mês/ano, a contagem de estoque mais próxima do dia de
+// corte (15), respeitando a janela configurada (QUINZENAL_JANELA_DIAS pra
+// cada lado). Retorna o VALOR (R$) da contagem, consolidado e por filial, e
+// metadados (data real, distância, confiança). Nunca finge que a contagem é
+// do dia 15 — a data real sempre vai junto.
+function acharContagemProximaDia15(porTsContagens, mesNome, ano, diaCorte) {
+  if (!porTsContagens) return null;
+
+  var tsCandidatos = Object.keys(porTsContagens).filter(function(ts) {
+    var c = porTsContagens[ts];
+    return c.ano === ano && NOMES_MESES[c.mes] === mesNome && Math.abs(c.dia - diaCorte) <= QUINZENAL_JANELA_DIAS;
   });
   if (!tsCandidatos.length) return null;
 
   tsCandidatos.sort(function(a, b) {
-    var da = Math.abs(porTs[a].dia - diaCorte), db = Math.abs(porTs[b].dia - diaCorte);
+    var da = Math.abs(porTsContagens[a].dia - diaCorte), db = Math.abs(porTsContagens[b].dia - diaCorte);
     if (da !== db) return da - db;
     return a.localeCompare(b); // empate na distância: fica com a data mais antiga
   });
 
   var tsEscolhido = tsCandidatos[0];
-  var c = porTs[tsEscolhido];
+  var c = porTsContagens[tsEscolhido];
   var distancia = Math.abs(c.dia - diaCorte);
-
-  Object.keys(c.filiais).forEach(function(f) { c.filiais[f] = r2(c.filiais[f]); });
+  var filiaisArred = {};
+  Object.keys(c.filiais).forEach(function(f) { filiaisArred[f] = r2(c.filiais[f]); });
 
   return {
     ts: tsEscolhido, dia: c.dia,
@@ -1341,7 +1371,7 @@ function acharContagemProximaDia15(rowsEstoque, mesNome, ano, diaCorte) {
     distancia: distancia,
     confianca: calcularConfianca(distancia),
     valor: r2(c.total),
-    valorFiliais: c.filiais
+    valorFiliais: filiaisArred
   };
 }
 
@@ -1358,17 +1388,17 @@ function calcularConfianca(distanciaDias) {
 // saídas/consumo real porque o sistema não tem um registro diário de baixa
 // por insumo (a baixa por venda só existe de forma TEÓRICA, via ficha
 // técnica) — por isso o ajuste é parcial, e isso fica sempre explícito.
-function ajustarContagemParaDia15(contagemInfo, rowsCompras, mesNome, ano, diaCorte) {
+function ajustarContagemParaDia15(contagemInfo, porDiaCompras, mesNome, ano, diaCorte) {
   if (!contagemInfo) return null;
   var dia = contagemInfo.dia;
   var entradas = { total: 0, filiais: {} };
   var direcao = 'nenhum';
 
   if (dia < diaCorte) {
-    entradas = somarComprasPeriodo(rowsCompras, mesNome, ano, dia + 1, diaCorte);
+    entradas = somarPeriodoPreAgregado(porDiaCompras, mesNome, ano, dia + 1, diaCorte);
     direcao = 'soma';    // contagem foi ANTES do dia 15 -> soma compras do intervalo
   } else if (dia > diaCorte) {
-    entradas = somarComprasPeriodo(rowsCompras, mesNome, ano, diaCorte + 1, dia);
+    entradas = somarPeriodoPreAgregado(porDiaCompras, mesNome, ano, diaCorte + 1, dia);
     direcao = 'subtrai'; // contagem foi DEPOIS do dia 15 -> tira compras do intervalo
   }
 
@@ -1401,12 +1431,12 @@ function ajustarContagemParaDia15(contagemInfo, rowsCompras, mesNome, ano, diaCo
 
 // ── CMV Quinzenal (metodologia EI + Compras − EF já existente) ──────────
 
-function calcularCMVQuinzenal(cmvMesCompleto, rowsEstoque, rowsCompras, mesNome, ano, diaCorte) {
+function calcularCMVQuinzenal(cmvMesCompleto, porTsContagens, porDiaCompras, mesNome, ano, diaCorte) {
   if (!cmvMesCompleto || cmvMesCompleto.ei_total === undefined) {
     return { disponivel: false, motivo: 'CMV do mês completo ainda não está disponível (precisa de duas contagens de estoque consecutivas envolvendo esse mês).' };
   }
 
-  var contagem = acharContagemProximaDia15(rowsEstoque, mesNome, ano, diaCorte);
+  var contagem = acharContagemProximaDia15(porTsContagens, mesNome, ano, diaCorte);
   if (!contagem) {
     return {
       disponivel: false,
@@ -1416,8 +1446,8 @@ function calcularCMVQuinzenal(cmvMesCompleto, rowsEstoque, rowsCompras, mesNome,
     };
   }
 
-  var ajuste = ajustarContagemParaDia15(contagem, rowsCompras, mesNome, ano, diaCorte);
-  var comprasQuinzenal = buscarComprasQuinzenais(rowsCompras, mesNome, ano, diaCorte);
+  var ajuste = ajustarContagemParaDia15(contagem, porDiaCompras, mesNome, ano, diaCorte);
+  var comprasQuinzenal = buscarComprasQuinzenais(porDiaCompras, mesNome, ano, diaCorte);
 
   var ei = cmvMesCompleto.ei_total;
   var ef = ajuste.valor;

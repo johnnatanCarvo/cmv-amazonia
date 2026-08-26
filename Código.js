@@ -856,11 +856,11 @@ function inferirAnoPorMes(rowsCompras, meses) {
 
 // Monta o pacote quinzenal (compras, vendas, CMC%, CMV) de UM período —
 // reaproveitado tanto pro período de referência quanto pros anteriores.
-function analisarPeriodoQuinzenal(mesNome, ano, rowsCompras, rowsVendas, rowsEstoque, cmv, diaCorte) {
-  var comprasQ = buscarComprasQuinzenais(rowsCompras, mesNome, ano, diaCorte);
-  var vendasQ  = buscarVendasQuinzenais(rowsVendas, mesNome, ano, diaCorte);
+function analisarPeriodoQuinzenal(mesNome, ano, porDiaCompras, porDiaVendas, porTsContagens, cmv, diaCorte) {
+  var comprasQ = buscarComprasQuinzenais(porDiaCompras, mesNome, ano, diaCorte);
+  var vendasQ  = buscarVendasQuinzenais(porDiaVendas, mesNome, ano, diaCorte);
   var cmc = calcularCMCQuinzenal(comprasQ, vendasQ);
-  var cmvQ = calcularCMVQuinzenal(cmv[mesNome], rowsEstoque, rowsCompras, mesNome, ano, diaCorte);
+  var cmvQ = calcularCMVQuinzenal(cmv[mesNome], porTsContagens, porDiaCompras, mesNome, ano, diaCorte);
   return {
     mes: mesNome, ano: ano,
     temDados: comprasQ.total > 0 || vendasQ.total > 0,
@@ -887,6 +887,13 @@ function calcularAnaliseQuinzenal(cmv, rowsCompras, rowsVendas, rowsEstoque, mes
   var anoHoje = hoje.getFullYear();
   var diaHoje = hoje.getDate();
 
+  // Pré-agrega compras/vendas/contagens UMA VEZ (performance — ver
+  // comentário em preAgregarComprasPorDia no Dados.js). Sem isso, os
+  // milhares de linhas eram reescaneadas dezenas de vezes por mês analisado.
+  var porDiaCompras   = preAgregarComprasPorDia(rowsCompras);
+  var porDiaVendas    = preAgregarVendasPorDia(rowsVendas);
+  var porTsContagens  = preAgregarContagensPorTs(rowsEstoque);
+
   var anoPorMes = inferirAnoPorMes(rowsCompras, meses);
 
   meses.forEach(function(mesNome) {
@@ -903,7 +910,7 @@ function calcularAnaliseQuinzenal(cmv, rowsCompras, rowsVendas, rowsEstoque, mes
       return;
     }
 
-    var atual = analisarPeriodoQuinzenal(mesNome, ano, rowsCompras, rowsVendas, rowsEstoque, cmv, diaCorte);
+    var atual = analisarPeriodoQuinzenal(mesNome, ano, porDiaCompras, porDiaVendas, porTsContagens, cmv, diaCorte);
     if (!atual.temDados) {
       resultado[mesNome] = {
         mes: mesNome, ano: ano, disponivel: false,
@@ -916,7 +923,7 @@ function calcularAnaliseQuinzenal(cmv, rowsCompras, rowsVendas, rowsEstoque, mes
     var anteriores = [];
     for (var n = 1; n <= 3; n++) {
       var ma = mesAnoAnterior(mesNome, ano, n);
-      var p = ma ? analisarPeriodoQuinzenal(ma.mes, ma.ano, rowsCompras, rowsVendas, rowsEstoque, cmv, diaCorte) : null;
+      var p = ma ? analisarPeriodoQuinzenal(ma.mes, ma.ano, porDiaCompras, porDiaVendas, porTsContagens, cmv, diaCorte) : null;
       anteriores.push((p && p.temDados) ? p : null);
     }
     var anterior1 = anteriores[0];
@@ -930,11 +937,11 @@ function calcularAnaliseQuinzenal(cmv, rowsCompras, rowsVendas, rowsEstoque, mes
       if (!mh) continue;
       var ehFechado = !(mh.mes === mesHojeNome && mh.ano === anoHoje && diaHoje < diasNoMes(mh.mes, mh.ano));
       if (!ehFechado) continue;
-      var vQ = somarVendasPeriodo(rowsVendas, mh.mes, mh.ano, 1, diaCorte).total;
-      var vM = somarVendasMesCompleto(rowsVendas, mh.mes, mh.ano).total;
+      var vQ = somarPeriodoPreAgregado(porDiaVendas, mh.mes, mh.ano, 1, diaCorte).total;
+      var vM = somarVendasMesCompleto(porDiaVendas, mh.mes, mh.ano).total;
       if (vQ > 0 && vM > 0) proporcoesVendas.push(vQ / vM);
-      var cQ = somarComprasPeriodo(rowsCompras, mh.mes, mh.ano, 1, diaCorte).total;
-      var cM = somarComprasMesCompleto(rowsCompras, mh.mes, mh.ano).total;
+      var cQ = somarPeriodoPreAgregado(porDiaCompras, mh.mes, mh.ano, 1, diaCorte).total;
+      var cM = somarComprasMesCompleto(porDiaCompras, mh.mes, mh.ano).total;
       if (cQ > 0 && cM > 0) proporcoesCompras.push(cQ / cM);
     }
 
