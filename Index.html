@@ -306,6 +306,7 @@ td.hi{font-weight:600;}
     <button class="tab" data-sec="teorico" onclick="go('teorico')">CMV Teórico</button>
     <button class="tab" data-sec="demanda" onclick="go('demanda')">Demanda de Insumos</button>
     <button class="tab" data-sec="ajustes" onclick="go('ajustes')">Ajustes</button>
+    <button class="tab" data-sec="quinzenal" onclick="go('quinzenal')">Análise Quinzenal</button>
     <button class="tab" data-sec="upload" onclick="go('upload')">Relatórios</button>
   </div>
   <div class="nav-r">
@@ -601,6 +602,19 @@ td.hi{font-weight:600;}
     </div>
   </section>
 
+  <!-- ===== ANÁLISE QUINZENAL (CMC + CMV) ===== -->
+  <section id="quinzenal">
+    <div class="shead">
+      <div>
+        <div class="eyebrow">Análise Gerencial de Meio de Mês</div>
+        <div class="stitle">Análise Quinzenal</div>
+        <div class="ssub">Compras e vendas acumuladas do dia 1 ao dia 15, comparadas com os mesmos períodos dos meses anteriores, com projeção de fechamento e diagnóstico automático.</div>
+      </div>
+      <div class="mseg" id="quinzenal-mseg"></div>
+    </div>
+    <div id="quinzenal-content"></div>
+  </section>
+
   <!-- ===== RELATÓRIOS (UPLOAD) ===== -->
   <section id="upload">
     <div class="shead">
@@ -680,6 +694,7 @@ var ML_MAP={'JANEIRO':'Jan','FEVEREIRO':'Fev','MARÇO':'Mar','ABRIL':'Abr','MAIO
 var DADOS=null, MESES=[], CMC={}, VENDAS={}, CMV={}, mesAtual='', uniAtual='TODAS', grupoAberto=null, charts={};
 var CMVTEORICO={}, FICHAS_DISPONIVEL=false, mesTeorico='', uniTeorico='TODAS';
 var DEMANDAINSUMOS={}, RECONCILIACAOINSUMOS={}, mesDemanda='', uniDemanda='TODAS';
+var ANALISEQUINZENAL={}, mesQuinzenal='';
 var abcOrder='valor', custoCache=null, uniABC='TODAS', mesABC='TODOS';
 var custoMesA='', custoMesB='';
 var SENHA_ATUAL='';
@@ -711,6 +726,7 @@ function go(id){
   if(id==='cmv')   rCMV();
   if(id==='teorico')rTeorico();
   if(id==='demanda')rDemanda();
+  if(id==='quinzenal')rQuinzenal();
   if(id==='ajustes')carregarAjustesSub(ajustesSubAtual);
   if(id==='upload'){popularSeletorData();carregarListaArquivos();}
 }
@@ -753,6 +769,7 @@ function fazerLogin(){
       DADOS=res; CMC=res.cmc; VENDAS=res.vendas; CMV=res.cmv||{}; MESES=res.meses||[];
       CMVTEORICO=res.cmvTeorico||{}; FICHAS_DISPONIVEL=!!res.fichasDisponivel;
       DEMANDAINSUMOS=res.demandaInsumos||{}; RECONCILIACAOINSUMOS=res.reconciliacaoInsumos||{};
+      ANALISEQUINZENAL=res.analiseQuinzenal||{};
       mesAtual=MESES.length?MESES[MESES.length-1]:'';
       var login=document.getElementById('login');
       login.classList.add('hide');
@@ -2024,6 +2041,199 @@ function rDemandaPreparos(){
       '<td>'+it.und+'</td></tr>';
   }).join('');
   if(data.length>400)document.getElementById('demanda-pp-body').innerHTML+='<tr><td colspan="4" class="empty">Exibindo os 400 primeiros de '+data.length+'.</td></tr>';
+}
+
+/* ============================================================
+   ABA ANÁLISE QUINZENAL (CMC + CMV)
+   ============================================================ */
+function fPPBadge(v){
+  if(v===null||v===undefined)return '--';
+  return (v>0?'+':'')+v.toFixed(1).replace('.',',')+' p.p.';
+}
+function statusInfo(s){
+  var map={CRITICO:{cor:'var(--rd)',label:'Crítico'},ATENCAO:{cor:'var(--am)',label:'Atenção'},NORMAL:{cor:'var(--fg2)',label:'Normal'},POSITIVO:{cor:'var(--ac2)',label:'Positivo'}};
+  return map[s]||{cor:'var(--fg3)',label:'--'};
+}
+function tendenciaInfo(t){
+  var map={PIORA:{cor:'var(--rd)',label:'Piora',seta:'▲'},MELHORA:{cor:'var(--ac2)',label:'Melhora',seta:'▼'},ESTAVEL:{cor:'var(--fg2)',label:'Estável',seta:'—'}};
+  return map[t]||{cor:'var(--fg3)',label:'--',seta:''};
+}
+function confiancaInfo(c){
+  var map={ALTA:{cor:'var(--ac2)',label:'Alta'},BOA:{cor:'var(--az)',label:'Boa'},MODERADA:{cor:'var(--am)',label:'Moderada'}};
+  return map[c]||{cor:'var(--fg3)',label:'--'};
+}
+function metricHtml(label, valor, sub, corValor){
+  return '<div class="metric"><div class="metric-l">'+label+'</div>'+
+    '<div class="metric-v" style="'+(corValor?'color:'+corValor+';':'')+'">'+valor+'</div>'+
+    (sub?'<div class="metric-sub" style="color:var(--fg3)">'+sub+'</div>':'')+'</div>';
+}
+
+function setMesQuinzenal(m){
+  mesQuinzenal=m;
+  document.querySelectorAll('#quinzenal-mseg button').forEach(function(b){b.classList.toggle('on',b.dataset.m===m);});
+  rQuinzenal();
+}
+
+function rQuinzenal(){
+  var mesesQ=MESES.filter(function(m){return ANALISEQUINZENAL[m];});
+  var cont=document.getElementById('quinzenal-content');
+
+  if(!mesesQ.length){
+    cont.innerHTML='<div class="card"><div class="empty" style="padding:60px 20px;">Nenhum dado de compras/vendas disponível ainda pra gerar a análise quinzenal.</div></div>';
+    document.getElementById('quinzenal-mseg').style.display='none';
+    return;
+  }
+  if(!mesQuinzenal||mesesQ.indexOf(mesQuinzenal)<0)mesQuinzenal=mesesQ[mesesQ.length-1];
+
+  var mseg=document.getElementById('quinzenal-mseg');
+  if(mseg&&!mseg.dataset.ready){
+    mseg.innerHTML=mesesQ.map(function(m){return '<button class="'+(m===mesQuinzenal?'on':'')+'" data-m="'+m+'" onclick="setMesQuinzenal(\''+m+'\')">'+(ML_MAP[m]||m)+'</button>';}).join('');
+    mseg.dataset.ready='1';
+  }
+  document.querySelectorAll('#quinzenal-mseg button').forEach(function(b){b.classList.toggle('on',b.dataset.m===mesQuinzenal);});
+
+  var d=ANALISEQUINZENAL[mesQuinzenal];
+  if(!d){cont.innerHTML='<div class="card"><div class="empty">Sem dados.</div></div>';return;}
+
+  if(d.aindaNaoChegouDia15||!d.disponivel){
+    cont.innerHTML='<div class="card"><div class="empty" style="padding:60px 20px;line-height:1.8;">'+(d.motivo||'Análise indisponível para este mês.')+'</div></div>';
+    killChart('ch-quinz-evo');killChart('ch-quinz-cv');
+    return;
+  }
+
+  var sg=statusInfo(d.statusGeral);
+  var tCmc=tendenciaInfo(d.tendenciaCmc), tCmv=tendenciaInfo(d.tendenciaCmv);
+
+  var html='';
+
+  // Banner de periodo + status geral
+  html+='<div class="card" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;">'+
+    '<div><div class="lbl" style="margin-bottom:6px;">Período Analisado</div><div style="font-family:\'DM Mono\';font-size:20px;font-weight:600;">'+d.periodo.inicio+' a '+d.periodo.fim+'</div></div>'+
+    '<div style="text-align:right;"><div class="lbl" style="margin-bottom:6px;">Status Geral do Mês</div>'+
+    '<div style="font-size:20px;font-weight:700;color:'+sg.cor+'">'+sg.label.toUpperCase()+'</div></div>'+
+  '</div>';
+
+  // Bloco CMC
+  html+='<div class="card"><div class="card-h"><div class="card-t">CMC Quinzenal</div><div class="card-s">Compras ÷ Vendas — sempre calculável, não depende de contagem de estoque</div></div>'+
+    '<div class="metrics" style="grid-template-columns:1fr 1fr 1fr 1fr 1fr;">'+
+      metricHtml('CMC Atual', fP(d.cmc_pct))+
+      metricHtml('Meta', fP(d.metaCMC))+
+      metricHtml('Desvio', fPPBadge(d.desvioCmcPP), null, d.desvioCmcPP>0?'var(--rd)':(d.desvioCmcPP<0?'var(--ac2)':'var(--fg)'))+
+      metricHtml('Tendência', tCmc.seta+' '+tCmc.label, null, tCmc.cor)+
+      metricHtml('Projetado p/ Fechamento', d.projecaoCmcPct!==null?fP(d.projecaoCmcPct):'--')+
+    '</div></div>';
+
+  // Bloco CMV
+  if(d.cmv&&d.cmv.disponivel){
+    var conf=confiancaInfo(d.cmv.confianca);
+    html+='<div class="card"><div class="card-h"><div class="card-t">CMV Quinzenal</div>'+
+      '<div class="card-s">Mesma metodologia do CMV Real (EI + Compras − EF) — Estoque Final usa a contagem de <b>'+d.cmv.contagemData+'</b>, ajustada pra referência do dia 15</div></div>'+
+      '<div class="metrics" style="grid-template-columns:1fr 1fr 1fr 1fr 1fr;">'+
+        metricHtml('CMV Atual', fP(d.cmvPct))+
+        metricHtml('Meta', fP(d.metaCMV))+
+        metricHtml('Desvio', fPPBadge(d.desvioCmvPP), null, d.desvioCmvPP>0?'var(--rd)':(d.desvioCmvPP<0?'var(--ac2)':'var(--fg)'))+
+        metricHtml('Tendência', tCmv.seta+' '+tCmv.label, null, tCmv.cor)+
+        metricHtml('Confiança da Contagem', conf.label, d.cmv.contagemDistanciaDias+' dia(s) do dia 15', conf.cor)+
+      '</div>'+
+      '<div class="ssub" style="margin:12px 0 0;padding:12px;background:var(--bg3);border-radius:8px;">'+d.cmv.ajusteObs+'</div>'+
+    '</div>';
+  } else {
+    html+='<div class="card"><div class="card-h"><div class="card-t">CMV Quinzenal</div></div>'+
+      '<div class="empty" style="padding:30px 20px;">'+(d.cmv?d.cmv.motivo:'Indisponível.')+' O CMC Quinzenal acima continua válido.</div></div>';
+  }
+
+  // Bloco Compras / Vendas / Pressao
+  var pressao=d.pressaoCompras||{};
+  html+='<div class="card"><div class="card-h"><div class="card-t">Compras e Vendas</div><div class="card-s">'+
+      (d.projecaoVendas.metodologia==='historica'?'Projeção baseada no histórico de proporção quinzena/mês':'Projeção simples proporcional aos dias do mês')+
+    '</div></div>'+
+    '<div class="metrics" style="grid-template-columns:1fr 1fr 1fr 1fr 1fr 1fr;">'+
+      metricHtml('Compras até dia 15', fR2(d.compras))+
+      metricHtml('Compras Projetadas', fR2(d.projecaoCompras.valor), d.projecaoCompras.metodologia==='historica'?'método histórico':'método simples')+
+      metricHtml('Vendas até dia 15', fR2(d.vendas))+
+      metricHtml('Vendas Projetadas', fR2(d.projecaoVendas.valor), d.projecaoVendas.metodologia==='historica'?'método histórico':'método simples')+
+      metricHtml('Crescimento Compras', d.varComprasPct!==null?fP(d.varComprasPct):'--', 'vs. mesmo período do mês anterior')+
+      metricHtml('Crescimento Vendas', d.varVendasPct!==null?fP(d.varVendasPct):'--', 'vs. mesmo período do mês anterior')+
+    '</div>'+
+    (pressao.nivel?('<div class="ssub" style="margin:12px 0 0;padding:12px;background:var(--bg3);border-radius:8px;">'+
+      '<b>Pressão de Compras: <span style="color:'+statusInfo(pressao.nivel).cor+'">'+statusInfo(pressao.nivel).label+'</span></b> — '+
+      'compras crescendo '+fPPBadge(pressao.diferencaPP)+' em relação ao crescimento das vendas.</div>'):'')+
+  '</div>';
+
+  // Diagnostico / analise gerencial
+  html+='<div class="card"><div class="card-h"><div class="card-t">Diagnóstico Gerencial</div></div>'+
+    '<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:16px;">'+
+      diagChip('CMC', d.statusCmc)+diagChip('CMV', d.statusCmv)+diagChip('Compras', d.statusPressao)+diagChip('Vendas', d.statusVendas)+diagChip('Projeção', d.statusProjecao)+
+    '</div>'+
+    '<div class="ssub" style="line-height:1.7;margin-bottom:10px;"><b style="color:var(--fg);">Análise de CMV:</b> '+d.analiseCMV+'</div>'+
+    '<div class="ssub" style="line-height:1.7;"><b style="color:var(--fg);">Análise de CMC:</b> '+d.analiseCMC+'</div>'+
+  '</div>';
+
+  // Tabela historica
+  html+=tabelaHistoricoQuinzenal(d);
+
+  // Graficos
+  html+='<div class="card"><div class="card-h"><div class="card-t">Evolução do CMC e CMV Quinzenal</div><div class="card-s">Últimos períodos (dia 1 a 15)</div></div>'+
+    '<div class="chartbox"><canvas id="ch-quinz-evo"></canvas></div></div>';
+  html+='<div class="card"><div class="card-h"><div class="card-t">Compras x Vendas Quinzenal</div></div>'+
+    '<div class="chartbox"><canvas id="ch-quinz-cv"></canvas></div></div>';
+
+  cont.innerHTML=html;
+  renderGraficosQuinzenal(d);
+}
+
+function diagChip(label, status){
+  var s=statusInfo(status);
+  return '<div style="text-align:center;"><div class="lbl" style="margin-bottom:4px;">'+label+'</div>'+
+    '<div style="font-weight:700;font-size:13px;color:'+s.cor+'">'+s.label+'</div></div>';
+}
+
+function tabelaHistoricoQuinzenal(d){
+  var pontos=d.historico.slice().reverse().concat([{mes:d.mes,ano:d.ano,compras:d.compras,vendas:d.vendas,cmc_pct:d.cmc_pct,cmv_pct:d.cmvPct}]);
+  var thead='<tr><th>Indicador</th>'+pontos.map(function(p,i){
+    var label=p?((ML_MAP[p.mes]||p.mes)+'/'+p.ano):'--';
+    return '<th class="r">'+label+(i===pontos.length-1?' (atual)':'')+'</th>';
+  }).join('')+'</tr>';
+
+  function linha(nome, campo, fmt){
+    return '<tr><td class="hi">'+nome+'</td>'+pontos.map(function(p){
+      var v=p?p[campo]:null;
+      return '<td class="n r">'+(v===null||v===undefined?'<span style="color:var(--fg3)">--</span>':fmt(v))+'</td>';
+    }).join('')+'</tr>';
+  }
+
+  var body=linha('Compras','compras',fR2)+linha('Vendas','vendas',fR2)+linha('CMC %','cmc_pct',fP)+linha('CMV %','cmv_pct',fP);
+
+  return '<div class="card"><div class="card-h"><div class="card-t">Comparação com Meses Anteriores</div><div class="card-s">Mesmo período (dia 1 a 15) de cada mês</div></div>'+
+    '<div class="twrap"><table><thead>'+thead+'</thead><tbody>'+body+'</tbody></table></div></div>';
+}
+
+function renderGraficosQuinzenal(d){
+  var pontos=d.historico.slice().reverse().concat([{mes:d.mes,ano:d.ano,compras:d.compras,vendas:d.vendas,cmc_pct:d.cmc_pct,cmv_pct:d.cmvPct}]);
+  var labels=pontos.map(function(p){return p?((ML_MAP[p.mes]||p.mes)):'--';});
+
+  killChart('ch-quinz-evo');
+  charts['ch-quinz-evo']=new Chart(document.getElementById('ch-quinz-evo'),{type:'line',
+    data:{labels:labels,datasets:[
+      {label:'CMC %',data:pontos.map(function(p){return p?p.cmc_pct:null;}),borderColor:AC,backgroundColor:'transparent',tension:.3},
+      {label:'CMV %',data:pontos.map(function(p){return p?p.cmv_pct:null;}),borderColor:'rgba(214,168,73,.9)',backgroundColor:'transparent',tension:.3},
+      {label:'Meta',data:pontos.map(function(){return d.metaCMC;}),borderColor:cssv('--fg3'),borderDash:[4,4],pointRadius:0}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{position:'top',align:'end',labels:{color:cssv('--fg2'),font:{family:'Manrope',size:11},boxWidth:12,padding:10,usePointStyle:true}},tooltip:tooltip()},
+      scales:{x:{grid:{display:false},ticks:{color:cssv('--fg2'),font:{family:'DM Mono',size:11}}},
+        y:{grid:{color:cssv('--ln')},ticks:{color:cssv('--fg2'),font:{family:'DM Mono',size:9},callback:function(v){return v+'%';}}}}}});
+
+  killChart('ch-quinz-cv');
+  charts['ch-quinz-cv']=new Chart(document.getElementById('ch-quinz-cv'),{type:'bar',
+    data:{labels:labels,datasets:[
+      {label:'Compras',data:pontos.map(function(p){return p?p.compras:null;}),backgroundColor:'rgba(214,168,73,.6)',borderRadius:4},
+      {label:'Vendas',data:pontos.map(function(p){return p?p.vendas:null;}),backgroundColor:AC,borderRadius:4}
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,
+      plugins:{legend:{position:'top',align:'end',labels:{color:cssv('--fg2'),font:{family:'Manrope',size:11},boxWidth:12,padding:10,usePointStyle:true}},tooltip:tooltip()},
+      scales:{x:{grid:{display:false},ticks:{color:cssv('--fg2'),font:{family:'DM Mono',size:11}}},
+        y:{grid:{color:cssv('--ln')},ticks:{color:cssv('--fg2'),font:{family:'DM Mono',size:9},callback:function(v){return 'R$'+(v/1000).toFixed(0)+'K';}}}}}});
 }
 
 /* ============================================================

@@ -1130,3 +1130,518 @@ function calcularCMVTeorico(vendas, fichasMap) {
 
   return resultado;
 }
+
+// ============================================================
+//  ANÁLISE QUINZENAL (CMC + CMV) — dia 1 a dia 15 do mês
+// ============================================================
+//
+// Objetivo: dar visibilidade de meio de mês sobre custo, comparando com
+// meses anteriores, projetando o fechamento e gerando alertas/diagnóstico.
+//
+// CMC Quinzenal (Compras ÷ Vendas) é sempre calculável — não depende de
+// contagem de estoque, só de compras e vendas, que têm data exata em cada
+// linha do CSV.
+//
+// CMV Quinzenal usa a MESMA metodologia já existente (EI + Compras − EF):
+//   - EI = o mesmo Estoque Inicial já calculado por processarCMV pro mês
+//     inteiro (é o mesmo ponto de partida — zero risco de divergência).
+//   - Compras = soma real das compras do dia 1 ao dia 15 (dado exato).
+//   - EF = a contagem de estoque mais próxima do dia 15, dentro de uma
+//     janela de ±3 dias (dia 12 a 18), ajustada pelas compras REAIS
+//     ocorridas entre a data da contagem e o dia 15.
+//     Esse ajuste NÃO cobre saídas/consumo, porque o sistema não tem um
+//     registro diário de baixa por insumo (só o consumo TEÓRICO via ficha
+//     técnica, que é estimativa, não movimento real) — isso fica sempre
+//     explícito no resultado, nunca escondido.
+//   - Se não houver nenhuma contagem dentro da janela, o CMV Quinzenal fica
+//     "não calculado" (nunca inventa um Estoque Final).
+//
+// Todas as funções desta seção são PURAS: recebem os dados já lidos
+// (rowsCompras, rowsVendas, rowsEstoque, o "cmv" já calculado por
+// processarCMV) e não fazem nenhuma leitura adicional de Drive/Planilha —
+// zero I/O repetido, conforme a metodologia de performance do sistema.
+
+var QUINZENAL_DIA_CORTE   = 15;  // corte da quinzena
+var QUINZENAL_JANELA_DIAS = 3;   // contagem elegível pro EF: dia 12 a 18 (15 ± 3)
+var META_PADRAO_PCT       = 40;  // fallback se a Script Property não estiver configurada
+
+var ORDEM_MESES = ['JANEIRO','FEVEREIRO','MARÇO','ABRIL','MAIO','JUNHO',
+                    'JULHO','AGOSTO','SETEMBRO','OUTUBRO','NOVEMBRO','DEZEMBRO'];
+
+// Critérios de alerta centralizados — nada espalhado pelas funções de análise.
+var ALERTA_CONFIG = {
+  desvioCriticoPP:   5,    // desvio ACIMA da meta >= 5 p.p.        => CRITICO
+  desvioAtencaoPP:   0,    // desvio ACIMA da meta >  0 p.p.        => ATENCAO (ou CRITICO se piorando)
+  pressaoCriticaPP:  10,   // (var% compras − var% vendas) >= 10pp  => CRITICO
+  pressaoAtencaoPP:  5,    // (var% compras − var% vendas) >= 5pp   => ATENCAO
+  tendenciaLimitePP: 0.5   // variação mínima entre períodos p/ não considerar "ESTAVEL"
+};
+
+var ORDEM_GRAVIDADE = { 'CRITICO': 3, 'ATENCAO': 2, 'NORMAL': 1, 'POSITIVO': 0 };
+
+// ── Utilitários de calendário ───────────────────────────────────
+
+function diasNoMes(mesNome, ano) {
+  var idx = ORDEM_MESES.indexOf(mesNome);
+  if (idx < 0) return 30;
+  return new Date(ano, idx + 1, 0).getDate();
+}
+
+// Retorna {mes, ano} do mês N meses ANTES de mesNome/ano (n=1 => mês anterior),
+// cruzando virada de ano corretamente (ex: Janeiro/2027, n=1 => Dezembro/2026).
+function mesAnoAnterior(mesNome, ano, n) {
+  var idx = ORDEM_MESES.indexOf(mesNome);
+  if (idx < 0) return null;
+  var total = idx - n;
+  var anoAjustado = ano + Math.floor(total / 12);
+  var idxAjustado = ((total % 12) + 12) % 12;
+  return { mes: ORDEM_MESES[idxAjustado], ano: anoAjustado };
+}
+
+// ── Coleta (filtra linhas já lidas por período — sem acesso a Drive) ────
+
+// Soma COMPRAS (R$) num intervalo de dias [diaMin, diaMax] de um mês/ano
+// específico — consolidado e por filial, respeitando transferência entre
+// unidades EXATAMENTE como processarCompras/processarCMV: a filial de
+// destino recebe normalmente, a de origem tem descontado o que enviou, e o
+// consolidado nunca conta a transferência como compra nova (já foi contada
+// na compra externa de origem).
+function somarComprasPeriodo(rowsCompras, mesNome, ano, diaMin, diaMax) {
+  var resultado = { total: 0, filiais: {} };
+  if (!rowsCompras || rowsCompras.length < 2) return resultado;
+
+  for (var i = 1; i < rowsCompras.length; i++) {
+    var r = rowsCompras[i];
+    if (!r || r.length < 18) continue;
+    var custoUnit = numVal(r[C_COMPRAS.custo_atual]);
+    var total     = numVal(r[C_COMPRAS.total]);
+    if (custoUnit <= 0 || total <= 0) continue;
+
+    var dataInfo = parseDataCompleta(r[C_COMPRAS.data]);
+    if (!dataInfo) continue;
+    if (dataInfo.ano !== ano || NOMES_MESES[dataInfo.mes] !== mesNome) continue;
+    if (dataInfo.dia < diaMin || dataInfo.dia > diaMax) continue;
+
+    var filial = limpaCelula(r[C_COMPRAS.filial]) || 'OUTRA';
+    var fornecedor = limpaCelula(r[C_COMPRAS_FORNECEDOR]);
+    var pareceTransf = fornecedor.toUpperCase().indexOf(TRANSFERENCIA_MARCADOR) >= 0;
+    var filOrig = pareceTransf ? filialOrigem(fornecedor) : null;
+    var ehTransf = pareceTransf && filOrig !== filial;
+
+    if (!resultado.filiais[filial]) resultado.filiais[filial] = 0;
+    resultado.filiais[filial] += total;
+
+    if (ehTransf) {
+      if (!resultado.filiais[filOrig]) resultado.filiais[filOrig] = 0;
+      resultado.filiais[filOrig] -= total;
+    } else {
+      resultado.total += total;
+    }
+  }
+
+  Object.keys(resultado.filiais).forEach(function(f) { resultado.filiais[f] = r2(resultado.filiais[f]); });
+  resultado.total = r2(resultado.total);
+  return resultado;
+}
+
+function buscarComprasQuinzenais(rowsCompras, mesNome, ano, diaCorte) {
+  return somarComprasPeriodo(rowsCompras, mesNome, ano, 1, diaCorte);
+}
+
+// Soma o total de compras do MÊS INTEIRO (dia 1 até o último dia do mês) —
+// usado só pra calcular a proporção histórica quinzena/mês (projeção).
+function somarComprasMesCompleto(rowsCompras, mesNome, ano) {
+  return somarComprasPeriodo(rowsCompras, mesNome, ano, 1, diasNoMes(mesNome, ano));
+}
+
+// Soma VENDAS (R$) num intervalo de dias — consolidado e por filial,
+// excluindo TAXAS OPERACIONAIS (mesma regra de processarVendas).
+function somarVendasPeriodo(rowsVendas, mesNome, ano, diaMin, diaMax) {
+  var resultado = { total: 0, filiais: {} };
+  if (!rowsVendas || rowsVendas.length < 2) return resultado;
+
+  for (var i = 1; i < rowsVendas.length; i++) {
+    var r = rowsVendas[i];
+    if (!r || r.length < 15) continue;
+    var grupo = limpaCelula(r[C_VENDAS.grupo]);
+    var valor = numVal(r[C_VENDAS.valor]);
+    if (valor <= 0) continue;
+    if (GRUPOS_EXCLUIR_ABC.indexOf(grupo.toUpperCase()) >= 0) continue;
+
+    var dataInfo = parseDataCompleta(r[C_VENDAS.data]);
+    if (!dataInfo) continue;
+    if (dataInfo.ano !== ano || NOMES_MESES[dataInfo.mes] !== mesNome) continue;
+    if (dataInfo.dia < diaMin || dataInfo.dia > diaMax) continue;
+
+    var filial = limpaCelula(r[C_VENDAS.filial]) || 'OUTRA';
+    if (!resultado.filiais[filial]) resultado.filiais[filial] = 0;
+    resultado.filiais[filial] += valor;
+    resultado.total += valor;
+  }
+
+  Object.keys(resultado.filiais).forEach(function(f) { resultado.filiais[f] = r2(resultado.filiais[f]); });
+  resultado.total = r2(resultado.total);
+  return resultado;
+}
+
+function buscarVendasQuinzenais(rowsVendas, mesNome, ano, diaCorte) {
+  return somarVendasPeriodo(rowsVendas, mesNome, ano, 1, diaCorte);
+}
+
+function somarVendasMesCompleto(rowsVendas, mesNome, ano) {
+  return somarVendasPeriodo(rowsVendas, mesNome, ano, 1, diasNoMes(mesNome, ano));
+}
+
+// Acha, dentro do mês/ano, a contagem de estoque (linhas de Inventário) mais
+// próxima do dia de corte (15), respeitando a janela configurada
+// (QUINZENAL_JANELA_DIAS pra cada lado). Retorna o VALOR (R$) da contagem,
+// consolidado e por filial, e metadados (data real, distância, confiança).
+// Nunca finge que a contagem é do dia 15 — a data real sempre vai junto.
+function acharContagemProximaDia15(rowsEstoque, mesNome, ano, diaCorte) {
+  if (!rowsEstoque || rowsEstoque.length < 2) return null;
+
+  var porTs = {};
+  for (var i = 1; i < rowsEstoque.length; i++) {
+    var r = rowsEstoque[i];
+    if (!r || r.length < 16) continue;
+    if (limpaCelula(r[C_ESTOQUE.tp_movto]) !== ESTOQUE_TIPO_VALIDO) continue;
+    var dataInfo = parseDataCompleta(r[C_ESTOQUE.data]);
+    if (!dataInfo) continue;
+    if (dataInfo.ano !== ano || NOMES_MESES[dataInfo.mes] !== mesNome) continue;
+
+    var valor = numVal(r[C_ESTOQUE.custo_total]);
+    if (valor <= 0) continue;
+    var filial = limpaCelula(r[C_ESTOQUE.filial]) || 'OUTRA';
+
+    if (!porTs[dataInfo.ts]) porTs[dataInfo.ts] = { dia: dataInfo.dia, total: 0, filiais: {} };
+    porTs[dataInfo.ts].total += valor;
+    porTs[dataInfo.ts].filiais[filial] = (porTs[dataInfo.ts].filiais[filial] || 0) + valor;
+  }
+
+  var tsCandidatos = Object.keys(porTs).filter(function(ts) {
+    return Math.abs(porTs[ts].dia - diaCorte) <= QUINZENAL_JANELA_DIAS;
+  });
+  if (!tsCandidatos.length) return null;
+
+  tsCandidatos.sort(function(a, b) {
+    var da = Math.abs(porTs[a].dia - diaCorte), db = Math.abs(porTs[b].dia - diaCorte);
+    if (da !== db) return da - db;
+    return a.localeCompare(b); // empate na distância: fica com a data mais antiga
+  });
+
+  var tsEscolhido = tsCandidatos[0];
+  var c = porTs[tsEscolhido];
+  var distancia = Math.abs(c.dia - diaCorte);
+
+  Object.keys(c.filiais).forEach(function(f) { c.filiais[f] = r2(c.filiais[f]); });
+
+  return {
+    ts: tsEscolhido, dia: c.dia,
+    data: tsEscolhido.slice(6,8) + '/' + tsEscolhido.slice(4,6) + '/' + tsEscolhido.slice(0,4),
+    distancia: distancia,
+    confianca: calcularConfianca(distancia),
+    valor: r2(c.total),
+    valorFiliais: c.filiais
+  };
+}
+
+function calcularConfianca(distanciaDias) {
+  if (distanciaDias === 0 || distanciaDias === 1) return 'ALTA';
+  if (distanciaDias === 2) return 'BOA';
+  if (distanciaDias === 3) return 'MODERADA';
+  return null;
+}
+
+// Ajusta o valor da contagem (que pode não ser exatamente do dia 15) pra uma
+// referência no dia de corte, usando SOMENTE compras reais conhecidas no
+// intervalo entre a contagem e o dia de corte. Não há como ajustar por
+// saídas/consumo real porque o sistema não tem um registro diário de baixa
+// por insumo (a baixa por venda só existe de forma TEÓRICA, via ficha
+// técnica) — por isso o ajuste é parcial, e isso fica sempre explícito.
+function ajustarContagemParaDia15(contagemInfo, rowsCompras, mesNome, ano, diaCorte) {
+  if (!contagemInfo) return null;
+  var dia = contagemInfo.dia;
+  var entradas = { total: 0, filiais: {} };
+  var direcao = 'nenhum';
+
+  if (dia < diaCorte) {
+    entradas = somarComprasPeriodo(rowsCompras, mesNome, ano, dia + 1, diaCorte);
+    direcao = 'soma';    // contagem foi ANTES do dia 15 -> soma compras do intervalo
+  } else if (dia > diaCorte) {
+    entradas = somarComprasPeriodo(rowsCompras, mesNome, ano, diaCorte + 1, dia);
+    direcao = 'subtrai'; // contagem foi DEPOIS do dia 15 -> tira compras do intervalo
+  }
+
+  var sinal = direcao === 'subtrai' ? -1 : 1;
+  var valorAjustado = r2(contagemInfo.valor + sinal * entradas.total);
+
+  var valorFiliaisAjustado = {};
+  Object.keys(contagemInfo.valorFiliais).forEach(function(f) {
+    var entradaFil = entradas.filiais[f] || 0;
+    valorFiliaisAjustado[f] = r2(contagemInfo.valorFiliais[f] + sinal * entradaFil);
+  });
+  Object.keys(entradas.filiais).forEach(function(f) {
+    if (valorFiliaisAjustado[f] === undefined) valorFiliaisAjustado[f] = r2(sinal * entradas.filiais[f]);
+  });
+
+  return {
+    valor: valorAjustado,
+    valorFiliais: valorFiliaisAjustado,
+    ajusteAplicado: direcao !== 'nenhum',
+    entradasConsideradas: r2(entradas.total),
+    diasAjustados: Math.abs(dia - diaCorte),
+    obs: direcao === 'nenhum'
+      ? 'Contagem realizada exatamente no dia ' + diaCorte + ' — nenhum ajuste necessário.'
+      : 'Ajuste considera apenas compras reais registradas entre a contagem (dia ' + dia + ') e o dia ' +
+        diaCorte + '. Não há registro diário de consumo/saída no sistema, então o valor pode estar levemente ' +
+        (direcao === 'soma' ? 'superestimado' : 'subestimado') +
+        ' se houve consumo relevante nesse intervalo curto.'
+  };
+}
+
+// ── CMV Quinzenal (metodologia EI + Compras − EF já existente) ──────────
+
+function calcularCMVQuinzenal(cmvMesCompleto, rowsEstoque, rowsCompras, mesNome, ano, diaCorte) {
+  if (!cmvMesCompleto || cmvMesCompleto.ei_total === undefined) {
+    return { disponivel: false, motivo: 'CMV do mês completo ainda não está disponível (precisa de duas contagens de estoque consecutivas envolvendo esse mês).' };
+  }
+
+  var contagem = acharContagemProximaDia15(rowsEstoque, mesNome, ano, diaCorte);
+  if (!contagem) {
+    return {
+      disponivel: false,
+      motivo: 'Não há contagem de estoque entre os dias ' + (diaCorte - QUINZENAL_JANELA_DIAS) +
+        ' e ' + (diaCorte + QUINZENAL_JANELA_DIAS) + ' de ' + mesNome.toLowerCase() + '/' + ano +
+        '. O CMV Quinzenal não pode ser calculado sem uma contagem física próxima ao dia ' + diaCorte + '.'
+    };
+  }
+
+  var ajuste = ajustarContagemParaDia15(contagem, rowsCompras, mesNome, ano, diaCorte);
+  var comprasQuinzenal = buscarComprasQuinzenais(rowsCompras, mesNome, ano, diaCorte);
+
+  var ei = cmvMesCompleto.ei_total;
+  var ef = ajuste.valor;
+  var cmvValor = r2(ei + comprasQuinzenal.total - ef);
+
+  var porFilial = {};
+  if (cmvMesCompleto.filiais) {
+    Object.keys(cmvMesCompleto.filiais).forEach(function(fil) {
+      var eiFil = cmvMesCompleto.filiais[fil].ei || 0;
+      var efFil = ajuste.valorFiliais[fil] !== undefined ? ajuste.valorFiliais[fil] : null;
+      var compFil = comprasQuinzenal.filiais[fil] || 0;
+      if (efFil === null) return; // sem dado de contagem pra essa filial na data escolhida
+      porFilial[fil] = { ei: r2(eiFil), compras: r2(compFil), ef: r2(efFil), cmv: r2(eiFil + compFil - efFil) };
+    });
+  }
+
+  return {
+    disponivel: true,
+    ei: r2(ei), compras: comprasQuinzenal.total, ef: r2(ef), cmv: cmvValor,
+    contagemData: contagem.data, contagemDia: contagem.dia,
+    contagemDistanciaDias: contagem.distancia, confianca: contagem.confianca,
+    ajusteAplicado: ajuste.ajusteAplicado, ajusteObs: ajuste.obs,
+    entradasConsideradasNoAjuste: ajuste.entradasConsideradas,
+    filiais: porFilial
+  };
+}
+
+// ── CMC Quinzenal (Compras ÷ Vendas — sempre calculável) ─────────────────
+
+function calcularPct(numerador, denominador) {
+  if (!denominador || denominador <= 0) return null;
+  return Math.round(numerador / denominador * 10000) / 100;
+}
+
+function calcularCMCQuinzenal(comprasQuinzenal, vendasQuinzenal) {
+  var pct = calcularPct(comprasQuinzenal.total, vendasQuinzenal.total);
+  var porFilial = {};
+  Object.keys(vendasQuinzenal.filiais).forEach(function(fil) {
+    var c = comprasQuinzenal.filiais[fil] || 0;
+    var v = vendasQuinzenal.filiais[fil] || 0;
+    porFilial[fil] = { compras: r2(c), vendas: r2(v), cmc_pct: calcularPct(c, v) };
+  });
+  return { compras: comprasQuinzenal.total, vendas: vendasQuinzenal.total, cmc_pct: pct, filiais: porFilial };
+}
+
+// ── Comparação, tendência, projeção ───────────────────────────────────────
+
+// Desvio em pontos percentuais sobre a meta. Positivo = acima da meta (pior,
+// já que CMC/CMV são indicadores de custo), negativo = abaixo (melhor).
+function calcularDesvioPP(realizadoPct, metaPct) {
+  if (realizadoPct === null || realizadoPct === undefined || metaPct === null || metaPct === undefined) return null;
+  return r2(realizadoPct - metaPct);
+}
+
+function calcularVariacaoPct(atual, anterior) {
+  if (atual === null || atual === undefined || !anterior) return null;
+  return r2((atual - anterior) / anterior * 100);
+}
+
+// Tendência de uma série de percentuais (do mais antigo pro mais recente).
+// Só aponta "MELHORA"/"PIORA" se a variação entre o primeiro e o último
+// ponto ultrapassar o limite configurado — evita apontar tendência por causa
+// de oscilação pequena entre dois períodos.
+function calcularTendencia(seriePct) {
+  var validos = (seriePct || []).filter(function(v) { return v !== null && v !== undefined; });
+  if (validos.length < 2) return null;
+  var diff = r2(validos[validos.length - 1] - validos[0]);
+  if (Math.abs(diff) < ALERTA_CONFIG.tendenciaLimitePP) return 'ESTAVEL';
+  return diff > 0 ? 'PIORA' : 'MELHORA'; // CMC/CMV subindo = piora (é custo)
+}
+
+function calcularPressaoCompras(varComprasPct, varVendasPct) {
+  if (varComprasPct === null || varVendasPct === null) return { diferencaPP: null, nivel: null };
+  var diferencaPP = r2(varComprasPct - varVendasPct);
+  var nivel = 'NORMAL';
+  if (diferencaPP >= ALERTA_CONFIG.pressaoCriticaPP) nivel = 'CRITICO';
+  else if (diferencaPP >= ALERTA_CONFIG.pressaoAtencaoPP) nivel = 'ATENCAO';
+  return { diferencaPP: diferencaPP, nivel: nivel };
+}
+
+// Projeção do fechamento do mês. Se houver histórico suficiente (>=2 meses
+// fechados com proporção quinzena/mês calculável), usa a proporção HISTÓRICA
+// média como fator de projeção — reflete o comportamento real do negócio em
+// vez de assumir que as vendas se distribuem igual em todos os dias.
+// Sem histórico suficiente, cai no método simples e transparente: valor
+// quinzenal × (dias do mês ÷ dia de corte) — nunca um "× 2" cego.
+function calcularProjecaoMensal(valorQuinzenal, mesNome, ano, diaCorte, proporcoesHistoricas) {
+  var amostras = (proporcoesHistoricas || []).filter(function(p) { return p > 0; });
+  if (amostras.length >= 2) {
+    var soma = amostras.reduce(function(s, p) { return s + p; }, 0);
+    var proporcaoMedia = soma / amostras.length;
+    return {
+      valor: r2(valorQuinzenal / proporcaoMedia),
+      metodologia: 'historica',
+      proporcaoUsada: r4(proporcaoMedia),
+      amostras: amostras.length,
+      descricao: 'Baseada na proporção histórica média entre o acumulado até o dia ' + diaCorte +
+        ' e o total do mês, observada nos últimos ' + amostras.length + ' meses comparáveis (em média, ' +
+        r2(proporcaoMedia * 100) + '% do mês já ocorre até o dia ' + diaCorte + ').'
+    };
+  }
+  var dias = diasNoMes(mesNome, ano);
+  return {
+    valor: r2(valorQuinzenal * (dias / diaCorte)),
+    metodologia: 'simples',
+    proporcaoUsada: r4(diaCorte / dias),
+    amostras: amostras.length,
+    descricao: 'Histórico insuficiente (menos de 2 meses comparáveis com o mesmo corte) — projeção simples ' +
+      'proporcional aos dias do mês (dia ' + diaCorte + ' de ' + dias + '), sem considerar sazonalidade.'
+  };
+}
+
+// ── Alertas e diagnóstico ─────────────────────────────────────────────────
+
+// Classifica o status de um indicador de custo (CMC ou CMV) frente à meta e
+// à tendência. Critérios em ALERTA_CONFIG — nada espalhado pelo código.
+function classificarStatusCusto(desvioPP, tendencia) {
+  if (desvioPP === null || desvioPP === undefined) return null;
+  if (desvioPP >= ALERTA_CONFIG.desvioCriticoPP) return 'CRITICO';
+  if (desvioPP > ALERTA_CONFIG.desvioAtencaoPP) return (tendencia === 'PIORA') ? 'CRITICO' : 'ATENCAO';
+  if (desvioPP < 0) return 'POSITIVO';
+  return 'NORMAL';
+}
+
+function classificarStatusPressao(nivel) {
+  if (nivel === 'CRITICO') return 'CRITICO';
+  if (nivel === 'ATENCAO') return 'ATENCAO';
+  if (!nivel) return null;
+  return 'NORMAL';
+}
+
+// Pega o pior status entre os avaliados, na ordem CRITICO > ATENCAO > NORMAL > POSITIVO.
+function diagnosticoGeral(statusList) {
+  var validos = (statusList || []).filter(function(s) { return s; });
+  if (!validos.length) return null;
+  return validos.reduce(function(pior, atual) {
+    return ORDEM_GRAVIDADE[atual] > ORDEM_GRAVIDADE[pior] ? atual : pior;
+  });
+}
+
+// ── Análise gerencial textual (gerada só a partir dos dados calculados) ──
+
+function fPPTxt(v) {
+  if (v === null || v === undefined) return '--';
+  return (v > 0 ? '+' : '') + r2(v).toFixed(1).replace('.', ',') + ' p.p.';
+}
+function fPctTxt(v) {
+  if (v === null || v === undefined) return '--';
+  return r2(v).toFixed(1).replace('.', ',') + '%';
+}
+
+// d: { pct, metaPct, desvioPP, status, tendencia, mesAnteriorNome, varAnteriorPP,
+//      varComprasPct, varVendasPct, pressao, projecaoPct, cmvQuinzenal }
+function gerarAnaliseGerencialCMV(mesNome, ano, d) {
+  if (!d.cmvQuinzenal || !d.cmvQuinzenal.disponivel) {
+    return 'CMV Quinzenal de ' + mesNome.toLowerCase() + '/' + ano + ' não pôde ser calculado: ' +
+      (d.cmvQuinzenal ? d.cmvQuinzenal.motivo : 'dados insuficientes.') +
+      ' O CMC Quinzenal apresentado abaixo não depende de contagem de estoque e continua válido.';
+  }
+
+  var partes = [];
+  partes.push('O CMV acumulado até o dia ' + QUINZENAL_DIA_CORTE + ' está em ' + fPctTxt(d.pct) +
+    (d.desvioPP === null ? '.' :
+      d.desvioPP > 0 ? ', acima da meta de ' + fPctTxt(d.metaPct) + ', representando um desvio de ' + fPPTxt(d.desvioPP) + '.' :
+      d.desvioPP < 0 ? ', abaixo da meta de ' + fPctTxt(d.metaPct) + ', com folga de ' + fPPTxt(-d.desvioPP) + '.' :
+      ', exatamente na meta de ' + fPctTxt(d.metaPct) + '.'));
+
+  if (d.varAnteriorPP !== null && d.varAnteriorPP !== undefined && d.mesAnteriorNome) {
+    partes.push('Em comparação com ' + d.mesAnteriorNome.toLowerCase() + ', o CMV ' +
+      (d.varAnteriorPP > 0 ? 'aumentou ' + fPPTxt(d.varAnteriorPP).replace('+','') :
+       d.varAnteriorPP < 0 ? 'reduziu ' + fPPTxt(-d.varAnteriorPP).replace('+','') : 'ficou estável') +
+      (d.varAnteriorPP !== 0 ? (d.varAnteriorPP > 0 ? ', indicando deterioração do indicador.' : ', indicando melhora do indicador.') : '.'));
+  }
+
+  if (d.varComprasPct !== null && d.varComprasPct !== undefined && d.varVendasPct !== null && d.varVendasPct !== undefined) {
+    partes.push('As compras ' + (d.varComprasPct >= 0 ? 'cresceram ' + fPctTxt(d.varComprasPct) : 'caíram ' + fPctTxt(-d.varComprasPct)) +
+      ' enquanto as vendas ' + (d.varVendasPct >= 0 ? 'cresceram apenas ' + fPctTxt(d.varVendasPct) : 'caíram ' + fPctTxt(-d.varVendasPct)) +
+      (d.pressao && d.pressao.nivel && d.pressao.nivel !== 'NORMAL'
+        ? ', indicando que o crescimento das compras está acima do crescimento das vendas.'
+        : '.'));
+  }
+
+  if (d.projecaoPct !== null && d.projecaoPct !== undefined) {
+    partes.push('Mantido o comportamento atual, o CMV projetado para o fechamento do mês é de aproximadamente ' + fPctTxt(d.projecaoPct) + '.');
+  }
+
+  if (d.status === 'CRITICO' || d.status === 'ATENCAO') {
+    partes.push('Ponto de atenção: ' + (d.pressao && d.pressao.nivel && d.pressao.nivel !== 'NORMAL'
+      ? 'o ritmo de compras está acima do ritmo de vendas e pode pressionar o CMV no fechamento.'
+      : 'o CMV está acima da meta e merece acompanhamento até o fechamento do mês.'));
+    partes.push('Recomendação: revisar compras, estoque e possíveis perdas/desvios antes do fechamento do mês.');
+  }
+
+  return partes.join(' ');
+}
+
+function gerarAnaliseGerencialCMC(mesNome, ano, d) {
+  var partes = [];
+  partes.push('Até o dia ' + QUINZENAL_DIA_CORTE + ', as compras representam ' + fPctTxt(d.pct) + ' das vendas realizadas no período' +
+    (d.desvioPP === null ? '.' :
+      d.desvioPP > 0 ? ', acima da meta de ' + fPctTxt(d.metaPct) + '.' :
+      d.desvioPP < 0 ? ', abaixo da meta de ' + fPctTxt(d.metaPct) + '.' :
+      ', exatamente na meta de ' + fPctTxt(d.metaPct) + '.'));
+
+  if (d.varAnteriorPP !== null && d.varAnteriorPP !== undefined && d.mesAnteriorNome) {
+    partes.push('Em comparação com ' + d.mesAnteriorNome.toLowerCase() + ', o CMC apresentou ' +
+      (d.varAnteriorPP > 0 ? 'aumento de ' + fPPTxt(d.varAnteriorPP).replace('+','') :
+       d.varAnteriorPP < 0 ? 'redução de ' + fPPTxt(-d.varAnteriorPP).replace('+','') : 'estabilidade') + '.');
+  }
+
+  if (d.varComprasPct !== null && d.varComprasPct !== undefined && d.varVendasPct !== null && d.varVendasPct !== undefined) {
+    partes.push('As compras cresceram ' + fPctTxt(d.varComprasPct) + ', enquanto as vendas cresceram apenas ' + fPctTxt(d.varVendasPct) +
+      (d.pressao && d.pressao.nivel && d.pressao.nivel !== 'NORMAL'
+        ? '. Esse comportamento indica que o ritmo de compras está superior ao crescimento das vendas.'
+        : '.'));
+  }
+
+  if (d.projecaoPct !== null && d.projecaoPct !== undefined) {
+    partes.push('Mantido o comportamento atual, o CMC projetado para o fechamento do mês é de ' + fPctTxt(d.projecaoPct) + '.');
+  }
+
+  if (d.status === 'CRITICO' || d.status === 'ATENCAO') {
+    partes.push('Ponto de atenção: controlar o ritmo de compras e verificar se o aumento está relacionado a formação de estoque, aumento de preços, compras antecipadas ou excesso de aquisição.');
+  }
+
+  return partes.join(' ');
+}
