@@ -607,13 +607,17 @@ td.hi{font-weight:600;}
         <div class="ssub" style="margin:0;">Configurações do painel — mudanças aqui já valem no próximo carregamento, sem precisar mexer em código.</div>
       </div>
       <div class="card">
-        <div class="card-h"><div class="card-t">Grupos de Menu de Escolha Livre</div></div>
-        <div class="ssub" style="margin:0 0 14px;">Grupos de venda onde o cliente escolhe o prato na hora (ex: "MENU DEGUSTACAO"). Esses grupos, quando não têm ficha técnica própria, ganham a tag "MENU" no CMV Teórico e na Demanda de Insumos em vez de "sem ficha" — porque o custo real deles já está no CMV Real. Separe os nomes por vírgula.</div>
-        <div class="ctrl" style="align-items:flex-start;">
-          <input type="text" id="config-menu-grupos" placeholder="Ex: MENU DEGUSTACAO, MENU EXECUTIVO" style="min-width:420px;">
+        <div class="card-h"><div class="card-t">Produtos de Menu de Escolha Livre</div><div class="card-s" id="config-menu-count"></div></div>
+        <div class="ssub" style="margin:0 0 14px;">Marque os produtos onde o cliente escolhe o prato na hora (o Cloudfy dá baixa no prato real, não no menu). Esses produtos, quando não têm ficha técnica própria, ganham a tag "MENU" no CMV Teórico e na Demanda de Insumos em vez de "sem ficha" — porque o custo real deles já está no CMV Real. A lista abaixo mostra todo produto vendido sem ficha técnica (histórico completo).</div>
+        <div class="ctrl"><input type="text" id="config-menu-busca" placeholder="Buscar produto..." oninput="rConfigMenuLista()"></div>
+        <div class="twrap"><table>
+          <thead><tr><th style="width:40px;"></th><th>Produto</th><th>Grupo</th><th class="r">Valor Vendido (histórico)</th></tr></thead>
+          <tbody id="config-menu-body"><tr><td colspan="4" class="empty">Abra esta aba para carregar.</td></tr></tbody>
+        </table></div>
+        <div class="ctrl" style="margin-top:14px;">
           <button class="gd-close" onclick="salvarConfigGrupos()">Salvar</button>
+          <span id="config-menu-status" class="ssub" style="margin:0;"></span>
         </div>
-        <div id="config-menu-status" class="ssub" style="margin:10px 0 0;"></div>
       </div>
     </div>
   </section>
@@ -2274,39 +2278,76 @@ function carregarAjustesSub(s){
   if(s==='config')carregarConfigGrupos();
 }
 
+var CONFIG_MENU_CANDIDATOS=[]; // {produto,grupo,valor} — todo produto sem ficha, de todos os meses
+var CONFIG_MENU_MARCADOS={};   // {NOME_PRODUTO_UPPER: true} — estado dos checkboxes, sobrevive ao filtro de busca
+
 function carregarConfigGrupos(){
-  var inp=document.getElementById('config-menu-grupos');
   var status=document.getElementById('config-menu-status');
   status.textContent='Carregando...';status.style.color='var(--fg3)';
+
+  // Candidatos vem do CMVTEORICO ja carregado no login — sem chamada nova ao servidor.
+  var porProduto={};
+  Object.keys(CMVTEORICO).forEach(function(mes){
+    (CMVTEORICO[mes].produtos||[]).forEach(function(p){
+      if(p.tem_ficha)return;
+      if(!porProduto[p.produto])porProduto[p.produto]={produto:p.produto,grupo:p.grupo,valor:0};
+      porProduto[p.produto].valor+=p.valor_vendido||0;
+    });
+  });
+  CONFIG_MENU_CANDIDATOS=Object.keys(porProduto).map(function(k){return porProduto[k];}).sort(function(a,b){return b.valor-a.valor;});
+
   google.script.run
     .withSuccessHandler(function(json){
       var res;try{res=JSON.parse(json);}catch(e){status.textContent='Erro ao carregar.';status.style.color='var(--rd)';return;}
       if(!res.ok){status.textContent=res.erro||'Erro ao carregar.';status.style.color='var(--rd)';return;}
-      inp.value=res.grupos.join(', ');
+      CONFIG_MENU_MARCADOS={};
+      res.produtos.forEach(function(p){CONFIG_MENU_MARCADOS[p.toUpperCase()]=true;});
       status.textContent='';
+      rConfigMenuLista();
     })
     .withFailureHandler(function(err){
       status.textContent='Falha: '+(err.message||err);status.style.color='var(--rd)';
     })
-    .listarGruposMenuEscolha(SENHA_ATUAL);
+    .listarProdutosMenuEscolha(SENHA_ATUAL);
+}
+
+function toggleConfigMenu(produto, marcado){
+  var chave=produto.toUpperCase();
+  if(marcado)CONFIG_MENU_MARCADOS[chave]=true;else delete CONFIG_MENU_MARCADOS[chave];
+}
+
+function rConfigMenuLista(){
+  var busca=(document.getElementById('config-menu-busca').value||'').toLowerCase();
+  var data=CONFIG_MENU_CANDIDATOS.filter(function(p){return !busca||p.produto.toLowerCase().indexOf(busca)>=0;});
+  document.getElementById('config-menu-count').textContent=data.length+' de '+CONFIG_MENU_CANDIDATOS.length+' produtos sem ficha';
+  if(!data.length){
+    document.getElementById('config-menu-body').innerHTML='<tr><td colspan="4" class="empty">Nenhum produto sem ficha técnica encontrado.</td></tr>';
+    return;
+  }
+  document.getElementById('config-menu-body').innerHTML=data.map(function(p){
+    var marcado=!!CONFIG_MENU_MARCADOS[p.produto.toUpperCase()];
+    var prodEsc=p.produto.replace(/'/g,"\\'");
+    return '<tr><td><input type="checkbox" '+(marcado?'checked':'')+' onchange="toggleConfigMenu(\''+prodEsc+'\',this.checked)"></td>'+
+      '<td class="hi">'+p.produto+'</td>'+
+      '<td><span class="gdot"><span style="background:'+gc(p.grupo)+'"></span>'+p.grupo+'</span></td>'+
+      '<td class="n r">'+fR2(p.valor)+'</td></tr>';
+  }).join('');
 }
 
 function salvarConfigGrupos(){
-  var inp=document.getElementById('config-menu-grupos');
   var status=document.getElementById('config-menu-status');
-  if(!inp.value.trim()){status.textContent='Informe pelo menos um grupo.';status.style.color='var(--rd)';return;}
+  var marcados=Object.keys(CONFIG_MENU_MARCADOS);
   status.textContent='Salvando...';status.style.color='var(--fg3)';
   google.script.run
     .withSuccessHandler(function(json){
       var res;try{res=JSON.parse(json);}catch(e){status.textContent='Erro ao salvar.';status.style.color='var(--rd)';return;}
       if(!res.ok){status.textContent=res.erro||'Erro ao salvar.';status.style.color='var(--rd)';return;}
-      inp.value=res.grupos.join(', ');
-      status.textContent='Salvo — vale a partir do próximo carregamento do painel.';status.style.color='var(--ac2)';
+      status.textContent='Salvo ('+res.produtos.length+' produtos) — vale a partir do próximo carregamento do painel.';status.style.color='var(--ac2)';
     })
     .withFailureHandler(function(err){
       status.textContent='Falha: '+(err.message||err);status.style.color='var(--rd)';
     })
-    .salvarGruposMenuEscolha(SENHA_ATUAL, inp.value);
+    .salvarProdutosMenuEscolha(SENHA_ATUAL, marcados);
 }
 
 /* ============================================================

@@ -61,8 +61,8 @@ function getPayload(senha) {
     var vendas     = processarVendas(rowsVendas);
     var cmv        = processarCMV(rowsEstoque, rowsCompras);
     var fichasMap  = processarFichas(rowsFichas);
-    var gruposMenuEscolha = obterGruposMenuEscolha();
-    var cmvTeorico = calcularCMVTeorico(vendas, fichasMap, gruposMenuEscolha);
+    var produtosMenuEscolha = obterProdutosMenuEscolha();
+    var cmvTeorico = calcularCMVTeorico(vendas, fichasMap, produtosMenuEscolha);
     var receitas   = processarReceitas(rowsFichas);
     var demandaInsumos = calcularDemandaInsumos(vendas, receitas);
     var reconciliacaoInsumos = reconciliarInsumos(demandaInsumos, receitas);
@@ -835,50 +835,48 @@ function obterMetaPct(chave) {
 
 function pad2(n) { return String(n).padStart(2, '0'); }
 
-// Lê quais GRUPOS de venda são tratados como "menu de escolha livre" no CMV
-// Teórico/Demanda de Insumos (Script Properties, chave GRUPOS_MENU_ESCOLHA,
-// nomes separados por vírgula — ex: "MENU DEGUSTACAO, MENU EXECUTIVO").
-// Sem configurar, usa só "MENU DEGUSTACAO" (o valor padrão do sistema).
-function obterGruposMenuEscolha() {
-  var valor = PropertiesService.getScriptProperties().getProperty('GRUPOS_MENU_ESCOLHA');
-  if (!valor) return ['MENU DEGUSTACAO'];
-  return valor.split(',')
+// Lê quais PRODUTOS são tratados como "menu de escolha livre" no CMV
+// Teórico/Demanda de Insumos (Script Properties, chave PRODUTOS_MENU_ESCOLHA,
+// nomes separados por ponto e vírgula — nome de produto pode ter vírgula).
+// Sem configurar, usa a lista padrão do sistema (PRODUTOS_MENU_ESCOLHA_PADRAO, em Dados.js).
+function obterProdutosMenuEscolha() {
+  var valor = PropertiesService.getScriptProperties().getProperty('PRODUTOS_MENU_ESCOLHA');
+  if (!valor) return PRODUTOS_MENU_ESCOLHA_PADRAO;
+  return valor.split(';')
     .map(function(s) { return s.trim().toUpperCase(); })
     .filter(function(s) { return s; });
 }
 
-// Lista os grupos configurados como "menu de escolha livre" — pra exibir/editar na aba Ajustes.
-function listarGruposMenuEscolha(senha) {
+// Lista os produtos configurados como "menu de escolha livre" — pra marcar
+// os checkboxes certos na tela de Ajustes > Configurações.
+function listarProdutosMenuEscolha(senha) {
   if (!validarSenha(senha)) {
     return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
   }
   try {
-    return JSON.stringify({ ok: true, grupos: obterGruposMenuEscolha() });
+    return JSON.stringify({ ok: true, produtos: obterProdutosMenuEscolha() });
   } catch (err) {
-    Logger.log('listarGruposMenuEscolha ERROR: ' + err.message + '\n' + err.stack);
+    Logger.log('listarProdutosMenuEscolha ERROR: ' + err.message + '\n' + err.stack);
     return JSON.stringify({ ok: false, erro: err.message });
   }
 }
 
-// Salva a lista de grupos tratados como "menu de escolha livre" direto pela
-// tela de Ajustes (Script Properties, chave GRUPOS_MENU_ESCOLHA).
-function salvarGruposMenuEscolha(senha, listaTexto) {
+// Salva a lista de produtos tratados como "menu de escolha livre" — vem da
+// tela como um array com os nomes marcados (pode ser vazio, se nenhum
+// produto dever ser tratado como menu).
+function salvarProdutosMenuEscolha(senha, listaProdutos) {
   if (!validarSenha(senha)) {
     return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
   }
   try {
-    var grupos = String(listaTexto || '')
-      .split(',')
-      .map(function(s) { return s.trim().toUpperCase(); })
+    var produtos = (listaProdutos || [])
+      .map(function(s) { return String(s).trim().toUpperCase(); })
       .filter(function(s) { return s; });
-    if (!grupos.length) {
-      return JSON.stringify({ ok: false, erro: 'Informe pelo menos um grupo.' });
-    }
-    PropertiesService.getScriptProperties().setProperty('GRUPOS_MENU_ESCOLHA', grupos.join(', '));
-    Logger.log('GRUPOS_MENU_ESCOLHA atualizado via tela: ' + grupos.join(', '));
-    return JSON.stringify({ ok: true, grupos: grupos });
+    PropertiesService.getScriptProperties().setProperty('PRODUTOS_MENU_ESCOLHA', produtos.join(';'));
+    Logger.log('PRODUTOS_MENU_ESCOLHA atualizado via tela (' + produtos.length + ' produtos).');
+    return JSON.stringify({ ok: true, produtos: produtos });
   } catch (err) {
-    Logger.log('salvarGruposMenuEscolha ERROR: ' + err.message + '\n' + err.stack);
+    Logger.log('salvarProdutosMenuEscolha ERROR: ' + err.message + '\n' + err.stack);
     return JSON.stringify({ ok: false, erro: err.message });
   }
 }

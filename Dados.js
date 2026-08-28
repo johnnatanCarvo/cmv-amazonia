@@ -893,17 +893,22 @@ var C_FICHAS = {
   insumo_custo_unit: 15   // Custo unitário do insumo
 };
 
-// Grupos de "menu de escolha livre" (o cliente escolhe o prato dentro do
+// Produtos de "menu de escolha livre" (o cliente escolhe o prato dentro do
 // menu na hora, e o Cloudfy dá baixa de estoque no prato REAL escolhido —
-// não no menu). Por isso nunca vai existir ficha técnica própria pra esses
-// itens: o custo real deles já está 100% capturado no CMV Real (via baixa
-// de estoque do prato escolhido), só não é possível atribuir teoricamente
-// por item porque a venda registra o nome do menu, não o prato.
-// Isso é DIFERENTE de um item sem ficha cadastrada por lacuna de cadastro —
-// aqui não há o que cadastrar.
-// Valor PADRÃO — pode ser sobrescrito via Script Properties (chave
-// GRUPOS_MENU_ESCOLHA, nomes separados por vírgula), ver obterGruposMenuEscolha() em Código.js.
-var GRUPOS_MENU_ESCOLHA = ['MENU DEGUSTACAO'];
+// não no menu em si). Por isso nunca vai existir ficha técnica própria pra
+// esses produtos: o custo real deles já está 100% capturado no CMV Real
+// (via baixa de estoque do prato escolhido), só não é possível atribuir
+// teoricamente por item porque a venda registra o nome do menu, não o prato.
+// Isso é DIFERENTE de um produto sem ficha cadastrada por lacuna de
+// cadastro — aqui não há o que cadastrar.
+// Configurável pela tela (Ajustes > Configurações) — ver
+// obterProdutosMenuEscolha()/salvarProdutosMenuEscolha() em Código.js.
+// Valor PADRÃO usado só se ainda não foi configurado nada pela tela.
+var PRODUTOS_MENU_ESCOLHA_PADRAO = [
+  'MENU DA AMAZONIA', 'MENU PREMIUM', 'MENU CLASSICO', 'BANQUETE PARAENSE',
+  'MENU TRADICIONAL', 'MENU SAIA RODADA', 'MENU PESCADOR',
+  'SOBREMESA MENU PREMIUM', 'MENU DE SOBREMESAS'
+];
 
 // Retorna um mapa { "NOME DO PRODUTO": custo_unit_teorico }.
 // Pega o PRIMEIRO custo encontrado por produto (o valor se repete em toda
@@ -1070,12 +1075,14 @@ function calcularDemandaInsumos(vendas, receitas) {
 // Produtos vendidos SEM ficha técnica cadastrada não entram no teórico —
 // o valor dessas vendas fica separado em "sem_ficha_valor" para deixar
 // claro que o teórico pode estar subestimado nesse caso.
-function calcularCMVTeorico(vendas, fichasMap, gruposMenuEscolha) {
+function calcularCMVTeorico(vendas, fichasMap, produtosMenuEscolha) {
   var resultado = {};
   if (!vendas || !vendas.abc_mes || !fichasMap || !Object.keys(fichasMap).length) return resultado;
 
-  // Se nao vier configurado (Script Properties), cai no padrao ['MENU DEGUSTACAO'].
-  var gruposMenu = (gruposMenuEscolha && gruposMenuEscolha.length) ? gruposMenuEscolha : GRUPOS_MENU_ESCOLHA;
+  // Se nao vier configurado (Script Properties), cai no padrao.
+  var listaMenu = (produtosMenuEscolha && produtosMenuEscolha.length) ? produtosMenuEscolha : PRODUTOS_MENU_ESCOLHA_PADRAO;
+  var produtosMenuSet = {};
+  listaMenu.forEach(function(nome) { produtosMenuSet[String(nome).toUpperCase()] = true; });
 
   // Detalha por produto (usado tanto pro total do mes quanto pra tabela por
   // produto na tela) — cada linha mostra se bateu ou nao com a ficha tecnica.
@@ -1084,7 +1091,7 @@ function calcularCMVTeorico(vendas, fichasMap, gruposMenuEscolha) {
     var lista = produtos.map(function(p) {
       var custoUnit = fichasMap[p.produto];
       var temFicha  = custoUnit !== undefined;
-      var ehMenuEscolha = !temFicha && gruposMenu.indexOf(String(p.grupo || '').toUpperCase()) >= 0;
+      var ehMenuEscolha = !temFicha && !!produtosMenuSet[String(p.produto || '').toUpperCase()];
       var custoTotal = temFicha ? r2(custoUnit * p.qtd) : null;
       if (temFicha) teorico += custoUnit * p.qtd;
       else if (ehMenuEscolha) semFichaMenu += p.valor;
