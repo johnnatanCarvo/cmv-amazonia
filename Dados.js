@@ -901,6 +901,8 @@ var C_FICHAS = {
 // por item porque a venda registra o nome do menu, não o prato.
 // Isso é DIFERENTE de um item sem ficha cadastrada por lacuna de cadastro —
 // aqui não há o que cadastrar.
+// Valor PADRÃO — pode ser sobrescrito via Script Properties (chave
+// GRUPOS_MENU_ESCOLHA, nomes separados por vírgula), ver obterGruposMenuEscolha() em Código.js.
 var GRUPOS_MENU_ESCOLHA = ['MENU DEGUSTACAO'];
 
 // Retorna um mapa { "NOME DO PRODUTO": custo_unit_teorico }.
@@ -1068,9 +1070,12 @@ function calcularDemandaInsumos(vendas, receitas) {
 // Produtos vendidos SEM ficha técnica cadastrada não entram no teórico —
 // o valor dessas vendas fica separado em "sem_ficha_valor" para deixar
 // claro que o teórico pode estar subestimado nesse caso.
-function calcularCMVTeorico(vendas, fichasMap) {
+function calcularCMVTeorico(vendas, fichasMap, gruposMenuEscolha) {
   var resultado = {};
   if (!vendas || !vendas.abc_mes || !fichasMap || !Object.keys(fichasMap).length) return resultado;
+
+  // Se nao vier configurado (Script Properties), cai no padrao ['MENU DEGUSTACAO'].
+  var gruposMenu = (gruposMenuEscolha && gruposMenuEscolha.length) ? gruposMenuEscolha : GRUPOS_MENU_ESCOLHA;
 
   // Detalha por produto (usado tanto pro total do mes quanto pra tabela por
   // produto na tela) — cada linha mostra se bateu ou nao com a ficha tecnica.
@@ -1079,7 +1084,7 @@ function calcularCMVTeorico(vendas, fichasMap) {
     var lista = produtos.map(function(p) {
       var custoUnit = fichasMap[p.produto];
       var temFicha  = custoUnit !== undefined;
-      var ehMenuEscolha = !temFicha && GRUPOS_MENU_ESCOLHA.indexOf(String(p.grupo || '').toUpperCase()) >= 0;
+      var ehMenuEscolha = !temFicha && gruposMenu.indexOf(String(p.grupo || '').toUpperCase()) >= 0;
       var custoTotal = temFicha ? r2(custoUnit * p.qtd) : null;
       if (temFicha) teorico += custoUnit * p.qtd;
       else if (ehMenuEscolha) semFichaMenu += p.valor;

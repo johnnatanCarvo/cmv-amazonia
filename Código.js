@@ -61,7 +61,8 @@ function getPayload(senha) {
     var vendas     = processarVendas(rowsVendas);
     var cmv        = processarCMV(rowsEstoque, rowsCompras);
     var fichasMap  = processarFichas(rowsFichas);
-    var cmvTeorico = calcularCMVTeorico(vendas, fichasMap);
+    var gruposMenuEscolha = obterGruposMenuEscolha();
+    var cmvTeorico = calcularCMVTeorico(vendas, fichasMap, gruposMenuEscolha);
     var receitas   = processarReceitas(rowsFichas);
     var demandaInsumos = calcularDemandaInsumos(vendas, receitas);
     var reconciliacaoInsumos = reconciliarInsumos(demandaInsumos, receitas);
@@ -833,6 +834,18 @@ function obterMetaPct(chave) {
 }
 
 function pad2(n) { return String(n).padStart(2, '0'); }
+
+// Lê quais GRUPOS de venda são tratados como "menu de escolha livre" no CMV
+// Teórico/Demanda de Insumos (Script Properties, chave GRUPOS_MENU_ESCOLHA,
+// nomes separados por vírgula — ex: "MENU DEGUSTACAO, MENU EXECUTIVO").
+// Sem configurar, usa só "MENU DEGUSTACAO" (o valor padrão do sistema).
+function obterGruposMenuEscolha() {
+  var valor = PropertiesService.getScriptProperties().getProperty('GRUPOS_MENU_ESCOLHA');
+  if (!valor) return ['MENU DEGUSTACAO'];
+  return valor.split(',')
+    .map(function(s) { return s.trim().toUpperCase(); })
+    .filter(function(s) { return s; });
+}
 
 // Descobre o ANO real de cada mês (o sistema hoje só identifica mês por
 // NOME nas estruturas agregadas — limitação já existente, não introduzida
