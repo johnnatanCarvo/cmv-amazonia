@@ -847,6 +847,42 @@ function obterGruposMenuEscolha() {
     .filter(function(s) { return s; });
 }
 
+// Lista os grupos configurados como "menu de escolha livre" — pra exibir/editar na aba Ajustes.
+function listarGruposMenuEscolha(senha) {
+  if (!validarSenha(senha)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    return JSON.stringify({ ok: true, grupos: obterGruposMenuEscolha() });
+  } catch (err) {
+    Logger.log('listarGruposMenuEscolha ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
+// Salva a lista de grupos tratados como "menu de escolha livre" direto pela
+// tela de Ajustes (Script Properties, chave GRUPOS_MENU_ESCOLHA).
+function salvarGruposMenuEscolha(senha, listaTexto) {
+  if (!validarSenha(senha)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var grupos = String(listaTexto || '')
+      .split(',')
+      .map(function(s) { return s.trim().toUpperCase(); })
+      .filter(function(s) { return s; });
+    if (!grupos.length) {
+      return JSON.stringify({ ok: false, erro: 'Informe pelo menos um grupo.' });
+    }
+    PropertiesService.getScriptProperties().setProperty('GRUPOS_MENU_ESCOLHA', grupos.join(', '));
+    Logger.log('GRUPOS_MENU_ESCOLHA atualizado via tela: ' + grupos.join(', '));
+    return JSON.stringify({ ok: true, grupos: grupos });
+  } catch (err) {
+    Logger.log('salvarGruposMenuEscolha ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
 // Descobre o ANO real de cada mês (o sistema hoje só identifica mês por
 // NOME nas estruturas agregadas — limitação já existente, não introduzida
 // por esta funcionalidade). Resolve olhando a primeira data real encontrada

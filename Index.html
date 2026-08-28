@@ -553,6 +553,7 @@ td.hi{font-weight:600;}
         <button class="on" data-s="compras" onclick="setAjustesSub('compras')">Compras</button>
         <button data-s="continicial" onclick="setAjustesSub('continicial')">Contagem Inicial</button>
         <button data-s="contfinal" onclick="setAjustesSub('contfinal')">Contagem Final</button>
+        <button data-s="config" onclick="setAjustesSub('config')">Configurações</button>
       </div>
     </div>
 
@@ -598,6 +599,21 @@ td.hi{font-weight:600;}
           <thead><tr><th>Filial</th><th>Centro</th><th>Produto</th><th>Grupo</th><th class="r">Saldo</th><th>Unid.</th><th class="r">Custo Unit.</th><th class="r">Custo Total</th><th></th></tr></thead>
           <tbody id="contfinal-body"><tr><td colspan="9" class="empty">Abra esta aba para carregar.</td></tr></tbody>
         </table></div>
+      </div>
+    </div>
+
+    <div class="ajustes-sub" id="sub-config" style="display:none">
+      <div class="shead" style="margin-bottom:14px;">
+        <div class="ssub" style="margin:0;">Configurações do painel — mudanças aqui já valem no próximo carregamento, sem precisar mexer em código.</div>
+      </div>
+      <div class="card">
+        <div class="card-h"><div class="card-t">Grupos de Menu de Escolha Livre</div></div>
+        <div class="ssub" style="margin:0 0 14px;">Grupos de venda onde o cliente escolhe o prato na hora (ex: "MENU DEGUSTACAO"). Esses grupos, quando não têm ficha técnica própria, ganham a tag "MENU" no CMV Teórico e na Demanda de Insumos em vez de "sem ficha" — porque o custo real deles já está no CMV Real. Separe os nomes por vírgula.</div>
+        <div class="ctrl" style="align-items:flex-start;">
+          <input type="text" id="config-menu-grupos" placeholder="Ex: MENU DEGUSTACAO, MENU EXECUTIVO" style="min-width:420px;">
+          <button class="gd-close" onclick="salvarConfigGrupos()">Salvar</button>
+        </div>
+        <div id="config-menu-status" class="ssub" style="margin:10px 0 0;"></div>
       </div>
     </div>
   </section>
@@ -2240,7 +2256,7 @@ function renderGraficosQuinzenal(d){
    ABA AJUSTES (sub-abas: Compras, Contagem Inicial, Contagem Final)
    ============================================================ */
 var ajustesSubAtual='compras';
-var AJUSTES_SUBS=['compras','continicial','contfinal'];
+var AJUSTES_SUBS=['compras','continicial','contfinal','config'];
 
 function setAjustesSub(s){
   ajustesSubAtual=s;
@@ -2255,6 +2271,42 @@ function carregarAjustesSub(s){
   if(s==='compras')carregarCompras();
   if(s==='continicial')carregarContagem('inicial');
   if(s==='contfinal')carregarContagem('final');
+  if(s==='config')carregarConfigGrupos();
+}
+
+function carregarConfigGrupos(){
+  var inp=document.getElementById('config-menu-grupos');
+  var status=document.getElementById('config-menu-status');
+  status.textContent='Carregando...';status.style.color='var(--fg3)';
+  google.script.run
+    .withSuccessHandler(function(json){
+      var res;try{res=JSON.parse(json);}catch(e){status.textContent='Erro ao carregar.';status.style.color='var(--rd)';return;}
+      if(!res.ok){status.textContent=res.erro||'Erro ao carregar.';status.style.color='var(--rd)';return;}
+      inp.value=res.grupos.join(', ');
+      status.textContent='';
+    })
+    .withFailureHandler(function(err){
+      status.textContent='Falha: '+(err.message||err);status.style.color='var(--rd)';
+    })
+    .listarGruposMenuEscolha(SENHA_ATUAL);
+}
+
+function salvarConfigGrupos(){
+  var inp=document.getElementById('config-menu-grupos');
+  var status=document.getElementById('config-menu-status');
+  if(!inp.value.trim()){status.textContent='Informe pelo menos um grupo.';status.style.color='var(--rd)';return;}
+  status.textContent='Salvando...';status.style.color='var(--fg3)';
+  google.script.run
+    .withSuccessHandler(function(json){
+      var res;try{res=JSON.parse(json);}catch(e){status.textContent='Erro ao salvar.';status.style.color='var(--rd)';return;}
+      if(!res.ok){status.textContent=res.erro||'Erro ao salvar.';status.style.color='var(--rd)';return;}
+      inp.value=res.grupos.join(', ');
+      status.textContent='Salvo — vale a partir do próximo carregamento do painel.';status.style.color='var(--ac2)';
+    })
+    .withFailureHandler(function(err){
+      status.textContent='Falha: '+(err.message||err);status.style.color='var(--rd)';
+    })
+    .salvarGruposMenuEscolha(SENHA_ATUAL, inp.value);
 }
 
 /* ============================================================
