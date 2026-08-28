@@ -327,6 +327,59 @@ function lerFichaTecnica() {
   return linhas;
 }
 
+// ── INTEGRAÇÃO COM O SISTEMA DE CONTAGEM/ESTOQUE (projeto Apps Script separado) ──
+//
+// EXPERIMENTAL / EM VALIDAÇÃO — ainda não é usada por nenhum cálculo de CMV.
+// Busca o inventário inicial da semana (setores de domingo à noite + Estoquista
+// de segunda de manhã) direto da planilha do outro sistema. Não altera nada
+// no fluxo atual — serve só pra testar leitura/permissão antes de integrar de fato.
+function buscarInventarioSemanalCMV(unidade, dataDomingo) {
+  // dataDomingo: string 'dd/MM/yyyy' referente ao domingo daquela semana (ex: '24/08/2026')
+  var SHEET_ID    = '15NWs6IiDMJEOYaiDWPzSSAtHsJoziSpkwaz2yjgkppU';
+  var ABA_CONT    = 'CONTAGENS';
+  var ABA_ITENS_C = 'ITENS_CONTAGEM';
+
+  var ss      = SpreadsheetApp.openById(SHEET_ID);
+  var abaCont = ss.getSheetByName(ABA_CONT);
+  var abaIt   = ss.getSheetByName(ABA_ITENS_C);
+  if (!abaCont || !abaIt) return { ok: false, erro: 'Abas de contagem não encontradas na planilha.' };
+
+  var partes  = dataDomingo.split('/');
+  var domingo = new Date(Number(partes[2]), Number(partes[1]) - 1, Number(partes[0]));
+  var segunda = new Date(domingo.getTime() + 24 * 60 * 60 * 1000);
+  var dataSegunda = Utilities.formatDate(segunda, 'America/Belem', 'dd/MM/yyyy');
+
+  var contRows   = abaCont.getDataRange().getValues();
+  var idsValidos = [];
+  for (var i = 1; i < contRows.length; i++) {
+    var r       = contRows[i];
+    var uni     = String(r[2]).trim();
+    var setor   = String(r[3]).trim().toUpperCase();
+    var status  = String(r[6]).trim().toUpperCase();
+    var dataTxt = String(r[1]).trim();
+    if (uni !== unidade || status !== 'CONCLUIDO') continue;
+
+    var dataAlvo = (setor === 'ESTOQUISTA') ? dataSegunda : dataDomingo;
+    if (dataTxt.indexOf(dataAlvo) === 0) idsValidos.push(String(r[0]).trim());
+  }
+  if (!idsValidos.length) {
+    return { ok: true, itens: [], aviso: 'Nenhuma contagem encontrada (setores em ' + dataDomingo + ', Estoquista em ' + dataSegunda + ') para ' + unidade };
+  }
+
+  var itRows = abaIt.getDataRange().getValues();
+  var mapa = {};
+  for (var j = 1; j < itRows.length; j++) {
+    var ir  = itRows[j];
+    var cid = String(ir[0]).trim();
+    if (idsValidos.indexOf(cid) === -1) continue;
+    var cod = String(ir[1]).trim();
+    if (!mapa[cod]) mapa[cod] = { cod: cod, produto: String(ir[2]).trim(), und: String(ir[3]).trim(), qtde: 0 };
+    mapa[cod].qtde += Number(ir[4]) || 0;
+  }
+
+  return { ok: true, unidade: unidade, dataSetores: dataDomingo, dataEstoquista: dataSegunda, itens: Object.values(mapa) };
+}
+
 // ── UPLOAD DE RELATÓRIOS ──────────────────────────────────────
 
 // Detecta o tipo do arquivo pelo nome, usando os mesmos padrões da leitura.
