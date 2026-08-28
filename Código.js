@@ -61,16 +61,23 @@ function getPayload(senha) {
     var vendas     = processarVendas(rowsVendas);
     var cmv        = processarCMV(rowsEstoque, rowsCompras);
     var fichasMap  = processarFichas(rowsFichas);
-    var produtosMenuEscolha = obterProdutosMenuEscolha();
-    var cmvTeorico = calcularCMVTeorico(vendas, fichasMap, produtosMenuEscolha);
     var receitas   = processarReceitas(rowsFichas);
-    var demandaInsumos = calcularDemandaInsumos(vendas, receitas);
-    var reconciliacaoInsumos = reconciliarInsumos(demandaInsumos, receitas);
 
     // Meses disponíveis — derivados dos dados de compras
     var mOrdem = ['JANEIRO','FEVEREIRO','MARÇO','ABRIL','MAIO','JUNHO',
                   'JULHO','AGOSTO','SETEMBRO','OUTUBRO','NOVEMBRO','DEZEMBRO'];
     var meses = mOrdem.filter(function(m) { return cmc[m]; });
+    var anoPorMes = inferirAnoPorMes(rowsCompras, meses);
+
+    // Custo médio de compra de cada insumo por mês — usado pro CMV Teórico
+    // reprecificar pelo custo real de compra, em vez do valor estático da
+    // ficha técnica (ver calcularCustoExplodido em Dados.js).
+    var historicoPorInsumo = preAgregarCustoMedioPorInsumo(rowsCompras);
+
+    var produtosMenuEscolha = obterProdutosMenuEscolha();
+    var cmvTeorico = calcularCMVTeorico(vendas, fichasMap, produtosMenuEscolha, receitas, historicoPorInsumo, anoPorMes);
+    var demandaInsumos = calcularDemandaInsumos(vendas, receitas);
+    var reconciliacaoInsumos = reconciliarInsumos(demandaInsumos, receitas);
 
     var analiseQuinzenal = calcularAnaliseQuinzenal(cmv, rowsCompras, rowsVendas, rowsEstoque, meses);
 

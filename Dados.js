@@ -1070,12 +1070,127 @@ function calcularDemandaInsumos(vendas, receitas) {
   return resultado;
 }
 
+// ── CMV TEÓRICO REPRECIFICADO PELO CUSTO REAL DE COMPRA DO MÊS ──────────
+//
+// O "Custo unit." que vem na ficha técnica é uma FOTO do momento do envio —
+// não varia mês a mês, mesmo que o preço do insumo tenha mudado de verdade.
+// Pra refletir a variação real, cada insumo da receita é reprecificado pelo
+// CUSTO MÉDIO PONDERADO de compra daquele insumo NO PRÓPRIO MÊS da venda
+// (total comprado ÷ quantidade comprada). Se não houve compra daquele
+// insumo no mês, usa o mês anterior mais próximo que teve compra (e assim
+// sucessivamente, só olhando pra trás). Se o insumo nunca foi comprado (sem
+// nenhum histórico), cai no custo registrado na própria ficha técnica —
+// nunca fica sem preço nenhum.
+
+// Pré-agrega o custo médio ponderado de cada insumo por mês/ano — uma
+// única vez (mesma lógica de performance da Análise Quinzenal: evita
+// reescanear rowsCompras a cada produto/mês). Ignora transferência entre
+// unidades (não é preço de mercado, é só movimento de estoque).
+function preAgregarCustoMedioPorInsumo(rowsCompras) {
+  var porProdutoMes = {};
+  if (!rowsCompras || rowsCompras.length < 2) return {};
+
+  for (var i = 1; i < rowsCompras.length; i++) {
+    var r = rowsCompras[i];
+    if (!r || r.length < 18) continue;
+    var custoUnit = numVal(r[C_COMPRAS.custo_atual]);
+    var total = numVal(r[C_COMPRAS.total]);
+    var qtd = numVal(r[C_COMPRAS.qtd]);
+    if (custoUnit <= 0 || total <= 0 || qtd <= 0) continue;
+
+    var dataInfo = parseDataCompleta(r[C_COMPRAS.data]);
+    if (!dataInfo) continue;
+
+    var filial = limpaCelula(r[C_COMPRAS.filial]) || 'OUTRA';
+    var fornecedor = limpaCelula(r[C_COMPRAS_FORNECEDOR]);
+    var pareceTransf = fornecedor.toUpperCase().indexOf(TRANSFERENCIA_MARCADOR) >= 0;
+    var filOrig = pareceTransf ? filialOrigem(fornecedor) : null;
+    var ehTransf = pareceTransf && filOrig !== filial;
+    if (ehTransf) continue;
+
+    var produto = limpaCelula(r[C_COMPRAS.produto]);
+    if (!produto) continue;
+
+    var chave = produto + '|' + dataInfo.ano + '|' + dataInfo.mes;
+    if (!porProdutoMes[chave]) porProdutoMes[chave] = { produto: produto, ano: dataInfo.ano, mes: dataInfo.mes, totalValor: 0, totalQtd: 0 };
+    porProdutoMes[chave].totalValor += total;
+    porProdutoMes[chave].totalQtd += qtd;
+  }
+
+  var porInsumo = {};
+  Object.keys(porProdutoMes).forEach(function(chave) {
+    var e = porProdutoMes[chave];
+    if (!porInsumo[e.produto]) porInsumo[e.produto] = [];
+    porInsumo[e.produto].push({ ano: e.ano, mes: e.mes, custoUnit: r4(e.totalValor / e.totalQtd) });
+  });
+  Object.keys(porInsumo).forEach(function(produto) {
+    porInsumo[produto].sort(function(a, b) { return (a.ano * 12 + a.mes) - (b.ano * 12 + b.mes); });
+  });
+  return porInsumo;
+}
+
+// Acha o custo médio de compra de um insumo num mês/ano específico, com
+// fallback pro mês anterior mais próximo que teve compra — só olha pra
+// trás, nunca pra frente ("mês anterior e assim sucessivamente").
+function buscarCustoInsumoComFallback(historicoPorInsumo, insumoNome, mesNome, ano) {
+  var lista = historicoPorInsumo[insumoNome];
+  if (!lista || !lista.length) return null;
+  var idxMes = ORDEM_MESES.indexOf(mesNome);
+  if (idxMes < 0) return null;
+  var alvoOrdinal = ano * 12 + (idxMes + 1);
+
+  var melhor = null, melhorOrdinal = -Infinity;
+  lista.forEach(function(e) {
+    var ordinal = e.ano * 12 + e.mes;
+    if (ordinal <= alvoOrdinal && ordinal > melhorOrdinal) { melhor = e; melhorOrdinal = ordinal; }
+  });
+  return melhor ? melhor.custoUnit : null;
+}
+
+// Explode a receita de UM produto (recursivamente, mesma lógica de
+// explodirInsumos) e soma o custo usando o preço de compra de cada insumo
+// NO MÊS (com fallback pro mês anterior); quando o insumo nunca foi
+// comprado, cai no custo registrado na própria ficha técnica pra aquele
+// insumo. Retorna o custo TOTAL pra "qtdeNecessaria" unidades do produto,
+// ou null se o produto não tiver receita nenhuma (sem ficha).
+function calcularCustoExplodido(receitas, produtoNome, qtdeNecessaria, mesNome, ano, historicoPorInsumo, cadeia) {
+  var receita = receitas[produtoNome];
+  if (!receita || !receita.insumos.length) return null;
+  if (cadeia.indexOf(produtoNome) >= 0) return 0; // guarda contra ciclo
+
+  var novaCadeia = cadeia.concat([produtoNome]);
+  var rendimento = receita.rendimento || 1;
+  var lotes = qtdeNecessaria / rendimento;
+  var custoTotal = 0;
+
+  receita.insumos.forEach(function(ins) {
+    var qtdeInsumo = lotes * ins.qtde;
+    var subReceita = receitas[ins.nome];
+    var ehPreparoComReceita = subReceita && subReceita.insumos.length > 0;
+
+    if (ehPreparoComReceita) {
+      var subCusto = calcularCustoExplodido(receitas, ins.nome, qtdeInsumo, mesNome, ano, historicoPorInsumo, novaCadeia);
+      custoTotal += (subCusto !== null) ? subCusto : (ins.custo_unit * qtdeInsumo);
+    } else {
+      var custoReal = buscarCustoInsumoComFallback(historicoPorInsumo, ins.nome, mesNome, ano);
+      var custoUnit = (custoReal !== null) ? custoReal : ins.custo_unit; // fallback final: ficha técnica
+      custoTotal += custoUnit * qtdeInsumo;
+    }
+  });
+
+  return custoTotal;
+}
+
 // Calcula o CMV Teórico por mês (e por filial): para cada produto vendido,
-// quantidade vendida × custo unitário teórico da ficha técnica.
+// quantidade vendida × custo unitário teórico — reprecificado pelo custo
+// real de compra do mês quando o produto tem receita completa (ver
+// calcularCustoExplodido acima); cai no valor estático da ficha técnica
+// quando não dá pra reprecificar (produto sem estrutura de receita, ou mês
+// sem ano identificável).
 // Produtos vendidos SEM ficha técnica cadastrada não entram no teórico —
 // o valor dessas vendas fica separado em "sem_ficha_valor" para deixar
 // claro que o teórico pode estar subestimado nesse caso.
-function calcularCMVTeorico(vendas, fichasMap, produtosMenuEscolha) {
+function calcularCMVTeorico(vendas, fichasMap, produtosMenuEscolha, receitas, historicoPorInsumo, anoPorMes) {
   var resultado = {};
   if (!vendas || !vendas.abc_mes || !fichasMap || !Object.keys(fichasMap).length) return resultado;
 
@@ -1084,14 +1199,24 @@ function calcularCMVTeorico(vendas, fichasMap, produtosMenuEscolha) {
   var produtosMenuSet = {};
   listaMenu.forEach(function(nome) { produtosMenuSet[String(nome).toUpperCase()] = true; });
 
+  // Custo unitário teórico de UM produto NO MÊS: se der pra explodir a
+  // receita (produtosMenuSet/fichasMap já garantem que so chega aqui quem
+  // tem ficha), reprecifica pelo custo real de compra do mês; senão cai no
+  // valor estático da ficha técnica (fallback final).
+  function custoUnitarioNoMes(produtoNome, mesNome, ano) {
+    if (!receitas || !receitas[produtoNome] || !mesNome || !ano) return fichasMap[produtoNome];
+    var custoTotal = calcularCustoExplodido(receitas, produtoNome, 1, mesNome, ano, historicoPorInsumo || {}, []);
+    return (custoTotal !== null) ? custoTotal : fichasMap[produtoNome];
+  }
+
   // Detalha por produto (usado tanto pro total do mes quanto pra tabela por
   // produto na tela) — cada linha mostra se bateu ou nao com a ficha tecnica.
-  function detalharProdutos(produtos) {
+  function detalharProdutos(produtos, mesNome, ano) {
     var teorico = 0, semFichaCadastro = 0, semFichaMenu = 0;
     var lista = produtos.map(function(p) {
-      var custoUnit = fichasMap[p.produto];
-      var temFicha  = custoUnit !== undefined;
+      var temFicha  = fichasMap[p.produto] !== undefined;
       var ehMenuEscolha = !temFicha && !!produtosMenuSet[String(p.produto || '').toUpperCase()];
+      var custoUnit = temFicha ? custoUnitarioNoMes(p.produto, mesNome, ano) : undefined;
       var custoTotal = temFicha ? r2(custoUnit * p.qtd) : null;
       if (temFicha) teorico += custoUnit * p.qtd;
       else if (ehMenuEscolha) semFichaMenu += p.valor;
@@ -1117,12 +1242,13 @@ function calcularCMVTeorico(vendas, fichasMap, produtosMenuEscolha) {
   }
 
   Object.keys(vendas.abc_mes).forEach(function(mes) {
-    var base = detalharProdutos(vendas.abc_mes[mes].produtos);
+    var ano = anoPorMes ? anoPorMes[mes] : null;
+    var base = detalharProdutos(vendas.abc_mes[mes].produtos, mes, ano);
     base.filiais = {};
 
     if (vendas.abc_mes_filial[mes]) {
       Object.keys(vendas.abc_mes_filial[mes]).forEach(function(fil) {
-        base.filiais[fil] = detalharProdutos(vendas.abc_mes_filial[mes][fil].produtos);
+        base.filiais[fil] = detalharProdutos(vendas.abc_mes_filial[mes][fil].produtos, mes, ano);
       });
     }
 
