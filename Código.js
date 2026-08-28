@@ -491,6 +491,65 @@ function excluirInventarioSemanal(senha, id) {
   }
 }
 
+// Índices reais da aba ITENS_CONTAGEM — confirmados com quem mantém o
+// sistema de contagem: a função de gravação (salvarContagem) escreve só 5
+// colunas, sempre nesta ordem: CONTAGEM_ID, COD, PRODUTO, UND, CONTADO
+// (índice 4 pro valor contado). O cabeçalho de 7 colunas que existe na
+// planilha (com MIN, MAX, SUGESTAO) não corresponde a nada que o backend
+// escreva — foi inserido manualmente em algum momento pra uma feature que
+// nunca saiu do papel. Por isso essas 3 colunas nunca têm valor confiável.
+var C_ITENS_CONTAGEM = { contagemId: 0, cod: 1, produto: 2, und: 3, contado: 4 };
+
+// Soma o CONTADO por PRODUTO (nome) de uma seleção de inventário semanal já
+// salva — casa pelo NOME do produto (não pelo COD), porque o resto do
+// sistema (compras/vendas/estoque do Cloudfy) já casa tudo por nome, e o
+// nome já vem certo na própria aba ITENS_CONTAGEM.
+function buscarItensDoInventarioSalvo(senha, inventarioId) {
+  if (!validarSenha(senha)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var valor = props.getProperty('INVENTARIOS_SEMANAIS_SALVOS');
+    var lista = valor ? JSON.parse(valor) : [];
+    var inv = null;
+    for (var i = 0; i < lista.length; i++) { if (lista[i].id === inventarioId) { inv = lista[i]; break; } }
+    if (!inv) return JSON.stringify({ ok: false, erro: 'Seleção de inventário não encontrada.' });
+
+    var itens = buscarItensDeContagens_(inv.contagemIds);
+    return JSON.stringify({ ok: true, label: inv.label, unidade: inv.unidade, itens: itens });
+  } catch (err) {
+    Logger.log('buscarItensDoInventarioSalvo ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
+// Helper interno (sem checagem de senha própria — só chamado por funções
+// que já validaram): soma CONTADO por produto pra uma lista de contagemIds.
+function buscarItensDeContagens_(contagemIds) {
+  var ss  = SpreadsheetApp.openById(CONTAGEM_SHEET_ID);
+  var aba = ss.getSheetByName('ITENS_CONTAGEM');
+  if (!aba) throw new Error('Aba ITENS_CONTAGEM não encontrada na planilha.');
+
+  var idsValidos = {};
+  contagemIds.forEach(function(id) { idsValidos[String(id).trim()] = true; });
+
+  var rows = aba.getDataRange().getValues();
+  var mapa = {};
+  for (var j = 1; j < rows.length; j++) {
+    var r = rows[j];
+    var cid = String(r[C_ITENS_CONTAGEM.contagemId]).trim();
+    if (!idsValidos[cid]) continue;
+    var produto = String(r[C_ITENS_CONTAGEM.produto]).trim();
+    if (!produto) continue;
+    var contado = Number(r[C_ITENS_CONTAGEM.contado]) || 0;
+    var und = String(r[C_ITENS_CONTAGEM.und] || '').trim();
+    if (!mapa[produto]) mapa[produto] = { produto: produto, und: und, qtde: 0 };
+    mapa[produto].qtde += contado;
+  }
+  return Object.values(mapa);
+}
+
 // ── UPLOAD DE RELATÓRIOS ──────────────────────────────────────
 
 // Detecta o tipo do arquivo pelo nome, usando os mesmos padrões da leitura.
