@@ -4,6 +4,7 @@
 //  Versão: 1.1
 // ============================================================
 
+
 // ── CONFIGURAÇÃO ─────────────────────────────────────────────
 var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 
@@ -335,11 +336,10 @@ function lerFichaTecnica() {
 // no fluxo atual — serve só pra testar leitura/permissão antes de integrar de fato.
 function buscarInventarioSemanalCMV(unidade, dataDomingo) {
   // dataDomingo: string 'dd/MM/yyyy' referente ao domingo daquela semana (ex: '24/08/2026')
-  var SHEET_ID    = '15NWs6IiDMJEOYaiDWPzSSAtHsJoziSpkwaz2yjgkppU';
   var ABA_CONT    = 'CONTAGENS';
   var ABA_ITENS_C = 'ITENS_CONTAGEM';
 
-  var ss      = SpreadsheetApp.openById(SHEET_ID);
+  var ss      = SpreadsheetApp.openById(CONTAGEM_SHEET_ID);
   var abaCont = ss.getSheetByName(ABA_CONT);
   var abaIt   = ss.getSheetByName(ABA_ITENS_C);
   if (!abaCont || !abaIt) return { ok: false, erro: 'Abas de contagem não encontradas na planilha.' };
@@ -378,6 +378,117 @@ function buscarInventarioSemanalCMV(unidade, dataDomingo) {
   }
 
   return { ok: true, unidade: unidade, dataSetores: dataDomingo, dataEstoquista: dataSegunda, itens: Object.values(mapa) };
+}
+
+var CONTAGEM_SHEET_ID = '15NWs6IiDMJEOYaiDWPzSSAtHsJoziSpkwaz2yjgkppU';
+
+// Lista as contagens registradas no sistema de contagem (aba CONTAGENS),
+// pra unidade escolhida — usado na tela de Ajustes > Inventário, pra o
+// usuário escolher manualmente quais contagens representam o inventário de
+// uma semana (a operação real não segue um padrão fixo de dia/turno, então
+// a escolha é manual em vez de tentar adivinhar por data).
+function listarContagensDisponiveis(senha, unidade) {
+  if (!validarSenha(senha)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var ss  = SpreadsheetApp.openById(CONTAGEM_SHEET_ID);
+    var aba = ss.getSheetByName('CONTAGENS');
+    if (!aba) return JSON.stringify({ ok: false, erro: 'Aba CONTAGENS não encontrada na planilha.' });
+
+    var rows = aba.getDataRange().getValues();
+    var lista = [];
+    for (var i = 1; i < rows.length; i++) {
+      var r = rows[i];
+      if (!r[0]) continue;
+      var uni = String(r[2]).trim();
+      if (unidade && uni !== unidade) continue;
+      lista.push({
+        id: String(r[0]).trim(),
+        data: String(r[1]).trim(),
+        unidade: uni,
+        setor: String(r[3]).trim(),
+        turno: String(r[4]).trim(),
+        responsavel: String(r[5]).trim(),
+        status: String(r[6]).trim(),
+        dataFechamento: String(r[7] || '').trim()
+      });
+    }
+    lista.sort(function(a, b) { return b.data.localeCompare(a.data); });
+    return JSON.stringify({ ok: true, contagens: lista });
+  } catch (err) {
+    Logger.log('listarContagensDisponiveis ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
+// Lista as seleções de inventário semanal já salvas (Script Properties).
+function listarInventariosSalvos(senha) {
+  if (!validarSenha(senha)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var valor = PropertiesService.getScriptProperties().getProperty('INVENTARIOS_SEMANAIS_SALVOS');
+    var lista = valor ? JSON.parse(valor) : [];
+    return JSON.stringify({ ok: true, inventarios: lista });
+  } catch (err) {
+    Logger.log('listarInventariosSalvos ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
+// Salva (cria ou atualiza, se "id" já existir) uma seleção de inventário
+// semanal: um nome (label), a unidade, e a lista de IDs de contagem
+// escolhidos manualmente como representando o inventário daquela semana.
+function salvarInventarioSemanal(senha, dados) {
+  if (!validarSenha(senha)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    if (!dados || !dados.label || !dados.unidade || !dados.contagemIds || !dados.contagemIds.length) {
+      return JSON.stringify({ ok: false, erro: 'Informe um nome, a unidade e pelo menos uma contagem selecionada.' });
+    }
+    var props = PropertiesService.getScriptProperties();
+    var valor = props.getProperty('INVENTARIOS_SEMANAIS_SALVOS');
+    var lista = valor ? JSON.parse(valor) : [];
+
+    var novo = {
+      id: dados.id || ('INV-' + new Date().getTime()),
+      label: String(dados.label).trim(),
+      unidade: String(dados.unidade).trim(),
+      contagemIds: dados.contagemIds
+    };
+
+    var idx = -1;
+    for (var i = 0; i < lista.length; i++) { if (lista[i].id === novo.id) { idx = i; break; } }
+    if (idx >= 0) lista[idx] = novo; else lista.push(novo);
+
+    props.setProperty('INVENTARIOS_SEMANAIS_SALVOS', JSON.stringify(lista));
+    Logger.log('Inventario semanal salvo: ' + novo.label + ' (' + novo.unidade + ', ' + novo.contagemIds.length + ' contagens)');
+    return JSON.stringify({ ok: true, inventario: novo, inventarios: lista });
+  } catch (err) {
+    Logger.log('salvarInventarioSemanal ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
+// Exclui uma seleção de inventário semanal salva.
+function excluirInventarioSemanal(senha, id) {
+  if (!validarSenha(senha)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var valor = props.getProperty('INVENTARIOS_SEMANAIS_SALVOS');
+    var lista = valor ? JSON.parse(valor) : [];
+    var nova = lista.filter(function(x) { return x.id !== id; });
+    props.setProperty('INVENTARIOS_SEMANAIS_SALVOS', JSON.stringify(nova));
+    Logger.log('Inventario semanal excluido: ' + id);
+    return JSON.stringify({ ok: true, inventarios: nova });
+  } catch (err) {
+    Logger.log('excluirInventarioSemanal ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
 }
 
 // ── UPLOAD DE RELATÓRIOS ──────────────────────────────────────

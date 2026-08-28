@@ -554,6 +554,7 @@ td.hi{font-weight:600;}
         <button data-s="continicial" onclick="setAjustesSub('continicial')">Contagem Inicial</button>
         <button data-s="contfinal" onclick="setAjustesSub('contfinal')">Contagem Final</button>
         <button data-s="config" onclick="setAjustesSub('config')">Configurações</button>
+        <button data-s="inventario" onclick="setAjustesSub('inventario')">Inventário</button>
       </div>
     </div>
 
@@ -618,6 +619,40 @@ td.hi{font-weight:600;}
           <button class="gd-close" onclick="salvarConfigGrupos()">Salvar</button>
           <span id="config-menu-status" class="ssub" style="margin:0;"></span>
         </div>
+      </div>
+    </div>
+
+    <div class="ajustes-sub" id="sub-inventario" style="display:none">
+      <div class="shead" style="margin-bottom:14px;">
+        <div class="ssub" style="margin:0;">Escolha manualmente quais contagens (do sistema de contagem separado) representam o inventário de uma semana, dê um nome e salve — fica gravado permanentemente até você trocar. Usado como fonte alternativa ao upload manual de estoque.</div>
+        <div class="mseg" id="inventario-uniseg">
+          <button class="on" data-u="MARCO" onclick="setInventarioUnidade('MARCO')">Marco</button>
+          <button data-u="PORTO FUTURO" onclick="setInventarioUnidade('PORTO FUTURO')">Porto Futuro</button>
+          <button data-u="UMARIZAL" onclick="setInventarioUnidade('UMARIZAL')">Umarizal</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-h"><div class="card-t">Contagens Registradas</div><div class="card-s" id="inventario-count"></div></div>
+        <div class="ctrl"><input type="text" id="inventario-busca" placeholder="Buscar por setor, responsável ou data..." oninput="rInventarioLista()"></div>
+        <div class="twrap"><table>
+          <thead><tr><th style="width:40px;"></th><th>Data</th><th>Setor</th><th>Turno</th><th>Responsável</th><th>Status</th></tr></thead>
+          <tbody id="inventario-body"><tr><td colspan="6" class="empty">Abra esta aba para carregar.</td></tr></tbody>
+        </table></div>
+        <div class="ctrl" style="margin-top:14px;">
+          <input type="text" id="inventario-label" placeholder="Nome desta semana (ex: Semana 24/08)" style="min-width:280px;">
+          <button class="gd-close" onclick="salvarInventarioSemanal()">Salvar Seleção</button>
+          <button class="gd-close" onclick="limparSelecaoInventario()">Limpar Seleção</button>
+          <span id="inventario-status" class="ssub" style="margin:0;"></span>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-h"><div class="card-t">Semanas Salvas</div><div class="card-s" id="inventario-salvos-count"></div></div>
+        <div class="twrap"><table>
+          <thead><tr><th>Nome</th><th>Unidade</th><th class="r">Contagens Selecionadas</th><th></th></tr></thead>
+          <tbody id="inventario-salvos-body"><tr><td colspan="4" class="empty">Abra esta aba para carregar.</td></tr></tbody>
+        </table></div>
       </div>
     </div>
   </section>
@@ -2260,7 +2295,7 @@ function renderGraficosQuinzenal(d){
    ABA AJUSTES (sub-abas: Compras, Contagem Inicial, Contagem Final)
    ============================================================ */
 var ajustesSubAtual='compras';
-var AJUSTES_SUBS=['compras','continicial','contfinal','config'];
+var AJUSTES_SUBS=['compras','continicial','contfinal','config','inventario'];
 
 function setAjustesSub(s){
   ajustesSubAtual=s;
@@ -2276,6 +2311,7 @@ function carregarAjustesSub(s){
   if(s==='continicial')carregarContagem('inicial');
   if(s==='contfinal')carregarContagem('final');
   if(s==='config')carregarConfigGrupos();
+  if(s==='inventario')carregarInventario();
 }
 
 var CONFIG_MENU_CANDIDATOS=[]; // {produto,grupo,valor} — todo produto sem ficha, de todos os meses
@@ -2348,6 +2384,171 @@ function salvarConfigGrupos(){
       status.textContent='Falha: '+(err.message||err);status.style.color='var(--rd)';
     })
     .salvarProdutosMenuEscolha(SENHA_ATUAL, marcados);
+}
+
+/* ============================================================
+   SUB-ABA INVENTÁRIO (seleção manual de contagens do sistema separado)
+   ============================================================ */
+var inventarioUnidadeAtual='MARCO';
+var INVENTARIO_CONTAGENS=[];      // contagens carregadas pra unidade atual
+var INVENTARIO_MARCADOS={};       // {id: true} — sobrevive ao filtro de busca
+var INVENTARIOS_SALVOS=[];        // selecoes ja salvas (todas as unidades)
+var INVENTARIO_EDITANDO_ID=null;  // se estiver editando uma selecao salva
+
+function setInventarioUnidade(u){
+  inventarioUnidadeAtual=u;
+  document.querySelectorAll('#inventario-uniseg button').forEach(function(b){b.classList.toggle('on',b.dataset.u===u);});
+  limparSelecaoInventario();
+  carregarInventarioContagens();
+}
+
+function carregarInventario(){
+  carregarInventarioContagens();
+  carregarInventariosSalvos();
+}
+
+function carregarInventarioContagens(){
+  var body=document.getElementById('inventario-body');
+  body.innerHTML='<tr><td colspan="6" class="empty">Carregando…</td></tr>';
+  google.script.run
+    .withSuccessHandler(function(json){
+      var res;try{res=JSON.parse(json);}catch(e){body.innerHTML='<tr><td colspan="6" class="empty">Erro ao carregar.</td></tr>';return;}
+      if(!res.ok){body.innerHTML='<tr><td colspan="6" class="empty">'+(res.erro||'Erro ao carregar.')+'</td></tr>';return;}
+      INVENTARIO_CONTAGENS=res.contagens;
+      rInventarioLista();
+    })
+    .withFailureHandler(function(err){
+      body.innerHTML='<tr><td colspan="6" class="empty">Falha: '+(err.message||err)+'</td></tr>';
+    })
+    .listarContagensDisponiveis(SENHA_ATUAL, inventarioUnidadeAtual);
+}
+
+function toggleInventarioContagem(id, marcado){
+  if(marcado)INVENTARIO_MARCADOS[id]=true;else delete INVENTARIO_MARCADOS[id];
+}
+
+function rInventarioLista(){
+  var busca=(document.getElementById('inventario-busca').value||'').toLowerCase();
+  var data=INVENTARIO_CONTAGENS.filter(function(c){
+    if(!busca)return true;
+    return (c.setor+' '+c.responsavel+' '+c.data).toLowerCase().indexOf(busca)>=0;
+  });
+  document.getElementById('inventario-count').textContent=data.length+' de '+INVENTARIO_CONTAGENS.length+' contagens — '+Object.keys(INVENTARIO_MARCADOS).length+' selecionada(s)';
+  if(!data.length){
+    document.getElementById('inventario-body').innerHTML='<tr><td colspan="6" class="empty">Nenhuma contagem encontrada pra esta unidade.</td></tr>';
+    return;
+  }
+  document.getElementById('inventario-body').innerHTML=data.map(function(c){
+    var marcado=!!INVENTARIO_MARCADOS[c.id];
+    var idEsc=c.id.replace(/'/g,"\\'");
+    return '<tr><td><input type="checkbox" '+(marcado?'checked':'')+' onchange="toggleInventarioContagem(\''+idEsc+'\',this.checked)"></td>'+
+      '<td class="hi">'+c.data+'</td>'+
+      '<td>'+c.setor+'</td>'+
+      '<td>'+c.turno+'</td>'+
+      '<td>'+c.responsavel+'</td>'+
+      '<td>'+(c.status==='CONCLUIDO'?'<span class="tag tA">CONCLUÍDO</span>':'<span class="tag tC">'+c.status+'</span>')+'</td></tr>';
+  }).join('');
+}
+
+function limparSelecaoInventario(){
+  INVENTARIO_MARCADOS={};
+  INVENTARIO_EDITANDO_ID=null;
+  var label=document.getElementById('inventario-label');
+  if(label)label.value='';
+  var status=document.getElementById('inventario-status');
+  if(status)status.textContent='';
+  rInventarioLista();
+}
+
+function salvarInventarioSemanal(){
+  var label=document.getElementById('inventario-label').value.trim();
+  var status=document.getElementById('inventario-status');
+  var contagemIds=Object.keys(INVENTARIO_MARCADOS);
+  if(!label){status.textContent='Dê um nome pra essa semana.';status.style.color='var(--rd)';return;}
+  if(!contagemIds.length){status.textContent='Marque pelo menos uma contagem.';status.style.color='var(--rd)';return;}
+
+  status.textContent='Salvando...';status.style.color='var(--fg3)';
+  google.script.run
+    .withSuccessHandler(function(json){
+      var res;try{res=JSON.parse(json);}catch(e){status.textContent='Erro ao salvar.';status.style.color='var(--rd)';return;}
+      if(!res.ok){status.textContent=res.erro||'Erro ao salvar.';status.style.color='var(--rd)';return;}
+      INVENTARIO_EDITANDO_ID=res.inventario.id;
+      INVENTARIOS_SALVOS=res.inventarios;
+      status.textContent='Salvo — "'+res.inventario.label+'" ('+contagemIds.length+' contagens).';status.style.color='var(--ac2)';
+      rInventarioSalvosLista();
+    })
+    .withFailureHandler(function(err){
+      status.textContent='Falha: '+(err.message||err);status.style.color='var(--rd)';
+    })
+    .salvarInventarioSemanal(SENHA_ATUAL, {id:INVENTARIO_EDITANDO_ID, label:label, unidade:inventarioUnidadeAtual, contagemIds:contagemIds});
+}
+
+function carregarInventariosSalvos(){
+  var body=document.getElementById('inventario-salvos-body');
+  body.innerHTML='<tr><td colspan="4" class="empty">Carregando…</td></tr>';
+  google.script.run
+    .withSuccessHandler(function(json){
+      var res;try{res=JSON.parse(json);}catch(e){body.innerHTML='<tr><td colspan="4" class="empty">Erro ao carregar.</td></tr>';return;}
+      if(!res.ok){body.innerHTML='<tr><td colspan="4" class="empty">'+(res.erro||'Erro ao carregar.')+'</td></tr>';return;}
+      INVENTARIOS_SALVOS=res.inventarios;
+      rInventarioSalvosLista();
+    })
+    .withFailureHandler(function(err){
+      body.innerHTML='<tr><td colspan="4" class="empty">Falha: '+(err.message||err)+'</td></tr>';
+    })
+    .listarInventariosSalvos(SENHA_ATUAL);
+}
+
+function rInventarioSalvosLista(){
+  document.getElementById('inventario-salvos-count').textContent=INVENTARIOS_SALVOS.length+' semana(s) salva(s)';
+  if(!INVENTARIOS_SALVOS.length){
+    document.getElementById('inventario-salvos-body').innerHTML='<tr><td colspan="4" class="empty">Nenhuma semana salva ainda.</td></tr>';
+    return;
+  }
+  document.getElementById('inventario-salvos-body').innerHTML=INVENTARIOS_SALVOS.map(function(inv){
+    var idEsc=inv.id.replace(/'/g,"\\'");
+    return '<tr><td class="hi">'+inv.label+'</td>'+
+      '<td>'+nomeUni(inv.unidade)+'</td>'+
+      '<td class="n r">'+inv.contagemIds.length+'</td>'+
+      '<td class="r"><button class="gd-close" onclick="editarInventarioSalvo(\''+idEsc+'\')">Editar</button> '+
+      '<button class="gd-close" style="color:#e5484d;border-color:#e5484d" onclick="excluirInventarioSalvo(\''+idEsc+'\')">Excluir</button></td></tr>';
+  }).join('');
+}
+
+function editarInventarioSalvo(id){
+  var inv=INVENTARIOS_SALVOS.filter(function(x){return x.id===id;})[0];
+  if(!inv)return;
+  INVENTARIO_EDITANDO_ID=inv.id;
+  document.getElementById('inventario-label').value=inv.label;
+  INVENTARIO_MARCADOS={};
+  inv.contagemIds.forEach(function(cid){INVENTARIO_MARCADOS[cid]=true;});
+  setInventarioUnidadeSemLimpar(inv.unidade);
+  document.getElementById('inventario-status').textContent='Editando "'+inv.label+'" — marque/desmarque e salve pra atualizar.';
+  document.getElementById('inventario-status').style.color='var(--fg3)';
+}
+
+// Igual setInventarioUnidade, mas sem limpar a selecao (usado ao carregar
+// uma semana salva pra edicao, que ja vem com contagemIds pra marcar).
+function setInventarioUnidadeSemLimpar(u){
+  inventarioUnidadeAtual=u;
+  document.querySelectorAll('#inventario-uniseg button').forEach(function(b){b.classList.toggle('on',b.dataset.u===u);});
+  carregarInventarioContagens();
+}
+
+function excluirInventarioSalvo(id){
+  if(!confirm('Excluir esta semana salva? Essa ação não afeta as contagens em si, só remove a seleção salva aqui.'))return;
+  google.script.run
+    .withSuccessHandler(function(json){
+      var res;try{res=JSON.parse(json);}catch(e){alert('Erro ao excluir.');return;}
+      if(!res.ok){alert(res.erro||'Erro ao excluir.');return;}
+      INVENTARIOS_SALVOS=res.inventarios;
+      if(INVENTARIO_EDITANDO_ID===id)limparSelecaoInventario();
+      rInventarioSalvosLista();
+    })
+    .withFailureHandler(function(err){
+      alert('Falha ao excluir: '+(err.message||err));
+    })
+    .excluirInventarioSemanal(SENHA_ATUAL, id);
 }
 
 /* ============================================================
