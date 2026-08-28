@@ -60,9 +60,26 @@ function getPayload(senha) {
 
     var cmc        = processarCompras(rowsCompras);
     var vendas     = processarVendas(rowsVendas);
-    var cmv        = processarCMV(rowsEstoque, rowsCompras);
     var fichasMap  = processarFichas(rowsFichas);
     var receitas   = processarReceitas(rowsFichas);
+
+    // Custo médio de compra de cada insumo por mês — usado tanto pro CMV
+    // Teórico (reprecificação) quanto pra precificar o inventário salvo
+    // (Ajustes > Inventário) na conexão com o CMV/CMC logo abaixo.
+    var historicoPorInsumo = preAgregarCustoMedioPorInsumo(rowsCompras);
+
+    // Conecta o CONTADO do sistema de contagem separado (Ajustes >
+    // Inventário) no CMV/CMC: gera linhas de estoque sintéticas SÓ pros
+    // meses que ainda não têm contagem via CSV — meses já calculados hoje
+    // a partir do CSV continuam exatamente como estavam (ver comentário de
+    // gerarLinhasEstoqueDeInventariosSalvos_).
+    var inventarioConectado = gerarLinhasEstoqueDeInventariosSalvos_(rowsEstoque, rowsCompras, rowsVendas, historicoPorInsumo, fichasMap);
+    if (inventarioConectado.avisos.length) {
+      Logger.log('Inventário salvo -> CMV: ' + inventarioConectado.avisos.join(' | '));
+    }
+    var rowsEstoqueCompleto = (rowsEstoque && rowsEstoque.length ? rowsEstoque : [[]]).concat(inventarioConectado.linhas);
+
+    var cmv        = processarCMV(rowsEstoqueCompleto, rowsCompras);
 
     // Meses disponíveis — derivados dos dados de compras
     var mOrdem = ['JANEIRO','FEVEREIRO','MARÇO','ABRIL','MAIO','JUNHO',
@@ -70,17 +87,12 @@ function getPayload(senha) {
     var meses = mOrdem.filter(function(m) { return cmc[m]; });
     var anoPorMes = inferirAnoPorMes(rowsCompras, meses);
 
-    // Custo médio de compra de cada insumo por mês — usado pro CMV Teórico
-    // reprecificar pelo custo real de compra, em vez do valor estático da
-    // ficha técnica (ver calcularCustoExplodido em Dados.js).
-    var historicoPorInsumo = preAgregarCustoMedioPorInsumo(rowsCompras);
-
     var produtosMenuEscolha = obterProdutosMenuEscolha();
     var cmvTeorico = calcularCMVTeorico(vendas, fichasMap, produtosMenuEscolha, receitas, historicoPorInsumo, anoPorMes);
     var demandaInsumos = calcularDemandaInsumos(vendas, receitas);
     var reconciliacaoInsumos = reconciliarInsumos(demandaInsumos, receitas);
 
-    var analiseQuinzenal = calcularAnaliseQuinzenal(cmv, rowsCompras, rowsVendas, rowsEstoque, meses);
+    var analiseQuinzenal = calcularAnaliseQuinzenal(cmv, rowsCompras, rowsVendas, rowsEstoqueCompleto, meses);
 
     // Faturamento por mês a partir das vendas (by_mes)
     var fatPorMes = {};
@@ -221,7 +233,8 @@ function getPayload(senha) {
       demandaInsumos:  demandaInsumos,
       reconciliacaoInsumos: reconciliacaoInsumos,
       analiseQuinzenal: analiseQuinzenal,
-      fichasDisponivel: Object.keys(fichasMap).length > 0
+      fichasDisponivel: Object.keys(fichasMap).length > 0,
+      avisosInventario: inventarioConectado.avisos
     });
 
   } catch (err) {
@@ -548,6 +561,184 @@ function buscarItensDeContagens_(contagemIds) {
     mapa[produto].qtde += contado;
   }
   return Object.values(mapa);
+}
+
+// Converte um valor de célula de data em texto "dd/MM/yyyy" (ou "dd/MM/yyyy HH:mm..."),
+// tratando tanto texto quanto células que o Sheets já devolve como objeto Date.
+function paraTextoData_(v) {
+  if (!v) return '';
+  if (Object.prototype.toString.call(v) === '[object Date]') {
+    return Utilities.formatDate(v, 'America/Belem', 'dd/MM/yyyy');
+  }
+  return String(v).trim();
+}
+
+// ── GERAÇÃO DE LINHAS DE ESTOQUE SINTÉTICAS A PARTIR DO INVENTÁRIO SALVO ──
+//
+// Conecta o CONTADO (sistema de contagem separado) no cálculo de CMV/CMC,
+// SEM tocar em nenhum mês que já é calculado hoje a partir dos CSVs de
+// estoque enviados manualmente (Ajustes > Contagem Inicial/Final):
+//
+//   - Um mês só passa a usar o inventário salvo se NÃO existir NENHUMA
+//     linha de estoque (CSV) válida naquele mês. Se já existe CSV pro mês,
+//     as seleções de inventário salvas daquele mês são ignoradas no
+//     cálculo (continuam salvas e editáveis, só não entram no CMV).
+//   - Dentro de um mês "novo" (sem CSV), se existir mais de uma seleção
+//     salva pra UMA MESMA unidade (ex: 2 semanas do Marco em agosto), só a
+//     mais recente por data conta como o fechamento do mês daquela unidade
+//     — mesma regra que o sistema já usa hoje pra CSV (tsInicialEFinalDoMes:
+//     fica com a contagem mais recente do mês).
+//   - Unidades diferentes fechando em dias diferentes dentro do mesmo mês
+//     (ex: Marco no domingo, Umarizal na segunda) são ancoradas na MESMA
+//     data sintética (a mais recente entre elas) — o motor de CMV
+//     (processarCMV) pressupõe uma única "foto" por data pra todas as
+//     unidades, igual ao CSV consolidado do Cloudfy. É uma aproximação de
+//     poucos dias, do mesmo tamanho da que já existe hoje quando as
+//     contagens não caem exatamente no fim do mês.
+//   - Preço de cada item: mesmo custo médio ponderado de compra do mês (com
+//     fallback pro mês anterior) usado no CMV Teórico (ver
+//     preAgregarCustoMedioPorInsumo / buscarCustoInsumoComFallback em
+//     Dados.js); se o item nunca foi comprado com preço válido (comum em
+//     itens preparados internamente, tipo "PP ..."), cai no custo estático
+//     da própria ficha técnica (fichasMap) — mesma cadeia de fallback do
+//     CMV Teórico. Item sem nenhum dos dois (nem compra, nem ficha) fica de
+//     fora (sem preço não dá pra somar ao estoque) e entra na lista de avisos.
+//
+// Retorna { linhas, avisos } — linhas no MESMO formato de C_ESTOQUE, pra
+// simplesmente concatenar com o rowsEstoque (CSV) antes de chamar
+// processarCMV, sem mudar nada da lógica de cálculo em si.
+function gerarLinhasEstoqueDeInventariosSalvos_(rowsEstoque, rowsCompras, rowsVendas, historicoPorInsumo, fichasMap) {
+  var avisos = [];
+  var props = PropertiesService.getScriptProperties();
+  var valorProp = props.getProperty('INVENTARIOS_SEMANAIS_SALVOS');
+  var inventarios = valorProp ? JSON.parse(valorProp) : [];
+  if (!inventarios.length) return { linhas: [], avisos: avisos };
+
+  // 1. Meses que já têm contagem via CSV — esses meses NÃO usam inventário salvo.
+  var mesesComCSV = {};
+  if (rowsEstoque && rowsEstoque.length > 1) {
+    for (var i = 1; i < rowsEstoque.length; i++) {
+      var r = rowsEstoque[i];
+      if (!r || r.length < 16) continue;
+      if (limpaCelula(r[C_ESTOQUE.tp_movto]) !== ESTOQUE_TIPO_VALIDO) continue;
+      var dInfo = parseDataCompleta(r[C_ESTOQUE.data]);
+      if (!dInfo) continue;
+      mesesComCSV[dInfo.ano + '-' + dInfo.mes] = true;
+    }
+  }
+
+  // 2. Data de cada contagem (aba CONTAGENS), pra achar a data representativa
+  //    de cada inventário salvo.
+  var ss = SpreadsheetApp.openById(CONTAGEM_SHEET_ID);
+  var abaCont = ss.getSheetByName('CONTAGENS');
+  var dataPorContagemId = {};
+  if (abaCont) {
+    var contRows = abaCont.getDataRange().getValues();
+    for (var c = 1; c < contRows.length; c++) {
+      var rc = contRows[c];
+      if (!rc[0]) continue;
+      // Prioriza a data da contagem (r[1]); só cai pro fechamento (r[7]) se faltar.
+      dataPorContagemId[String(rc[0]).trim()] = paraTextoData_(rc[1]) || paraTextoData_(rc[7]);
+    }
+  }
+
+  function dataRepresentativa(inv) {
+    var melhorTs = null, melhorInfo = null;
+    inv.contagemIds.forEach(function(cid) {
+      var txt = dataPorContagemId[String(cid).trim()];
+      if (!txt) return;
+      var info = parseDataCompleta(txt.split(' ')[0]);
+      if (!info) return;
+      if (!melhorTs || info.ts > melhorTs) { melhorTs = info.ts; melhorInfo = info; }
+    });
+    return melhorInfo;
+  }
+
+  // 3. Agrupa por mês (ano-mes), pula meses que já têm CSV, e dentro de cada
+  //    mês mantém só o inventário mais recente POR UNIDADE.
+  var porMes = {}; // 'ano-mes' -> { unidade: {inv, info} }
+  inventarios.forEach(function(inv) {
+    if (!inv.contagemIds || !inv.contagemIds.length) return;
+    var info = dataRepresentativa(inv);
+    if (!info) {
+      avisos.push('Inventário "' + inv.label + '" (' + inv.unidade + '): sem data válida encontrada nas contagens escolhidas — ignorado.');
+      return;
+    }
+
+    var chaveMes = info.ano + '-' + info.mes;
+    if (mesesComCSV[chaveMes]) {
+      avisos.push('Inventário "' + inv.label + '" (' + inv.unidade + '): ' + NOMES_MESES[info.mes] + '/' + info.ano + ' já tem contagem via CSV — ignorado no cálculo (continua salvo).');
+      return;
+    }
+
+    if (!porMes[chaveMes]) porMes[chaveMes] = {};
+    var atual = porMes[chaveMes][inv.unidade];
+    if (!atual || info.ts > atual.info.ts) {
+      if (atual) {
+        avisos.push('Inventário "' + atual.inv.label + '" (' + inv.unidade + '): substituído por "' + inv.label + '" como fechamento de ' + NOMES_MESES[info.mes] + '/' + info.ano + ' (data mais recente).');
+      }
+      porMes[chaveMes][inv.unidade] = { inv: inv, info: info };
+    } else {
+      avisos.push('Inventário "' + inv.label + '" (' + inv.unidade + '): não é o mais recente de ' + NOMES_MESES[info.mes] + '/' + info.ano + ' — ignorado no cálculo (continua salvo).');
+    }
+  });
+
+  var chavesMes = Object.keys(porMes);
+  if (!chavesMes.length) return { linhas: [], avisos: avisos };
+
+  // 4. Preço/grupo: mesmo catálogo e histórico usados no CMV Teórico.
+  var catalogo = preAgregarCatalogoProdutos(rowsCompras, rowsVendas);
+  var linhas = [];
+
+  chavesMes.forEach(function(chaveMes) {
+    var porUnidade = porMes[chaveMes];
+    var unidades = Object.keys(porUnidade);
+
+    // Data sintética compartilhada por TODAS as unidades desse mês: a mais
+    // recente entre elas (ver nota no cabeçalho da função).
+    var tsCompartilhado = null;
+    unidades.forEach(function(u) {
+      var ts = porUnidade[u].info.ts;
+      if (!tsCompartilhado || ts > tsCompartilhado) tsCompartilhado = ts;
+    });
+    var infoData = parseDataCompleta(
+      tsCompartilhado.slice(0, 4) + '-' + tsCompartilhado.slice(4, 6) + '-' + tsCompartilhado.slice(6, 8)
+    );
+    var dataFormatada = String(infoData.dia).padStart(2, '0') + '/' + String(infoData.mes).padStart(2, '0') + '/' + infoData.ano;
+    var mesNome = NOMES_MESES[infoData.mes];
+
+    unidades.forEach(function(u) {
+      var entry = porUnidade[u];
+      var itens = buscarItensDeContagens_(entry.inv.contagemIds);
+      itens.forEach(function(item) {
+        var cat = catalogo[item.produto.toUpperCase()];
+        var nomeCanonico = cat ? cat.nome : item.produto;
+        var grupo = cat ? cat.grupo : '';
+        var custoUnit = buscarCustoInsumoComFallback(historicoPorInsumo, nomeCanonico, mesNome, infoData.ano);
+        if ((custoUnit === null || custoUnit === undefined) && fichasMap) {
+          custoUnit = fichasMap[nomeCanonico];
+        }
+        if (custoUnit === null || custoUnit === undefined) {
+          avisos.push('Item "' + item.produto + '" (' + u + ', ' + entry.inv.label + '): sem histórico de compra nem ficha técnica — não entrou no estoque de ' + mesNome + '/' + infoData.ano + '.');
+          return;
+        }
+        var linha = [];
+        linha[C_ESTOQUE.filial]      = u;
+        linha[C_ESTOQUE.grupo]       = grupo;
+        linha[C_ESTOQUE.produto]     = nomeCanonico;
+        linha[C_ESTOQUE.unid]        = item.und;
+        linha[C_ESTOQUE.data]        = dataFormatada;
+        linha[C_ESTOQUE.centro]      = entry.inv.label;
+        linha[C_ESTOQUE.tp_movto]    = ESTOQUE_TIPO_VALIDO;
+        linha[C_ESTOQUE.saldo]       = item.qtde;
+        linha[C_ESTOQUE.custo_unit]  = custoUnit;
+        linha[C_ESTOQUE.custo_total] = r2(custoUnit * item.qtde);
+        linhas.push(linha);
+      });
+    });
+  });
+
+  return { linhas: linhas, avisos: avisos };
 }
 
 // ── UPLOAD DE RELATÓRIOS ──────────────────────────────────────

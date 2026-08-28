@@ -1082,6 +1082,37 @@ function calcularDemandaInsumos(vendas, receitas) {
 // nenhum histórico), cai no custo registrado na própria ficha técnica —
 // nunca fica sem preço nenhum.
 
+// Catálogo produto → { nome canônico, grupo }, construído a partir de
+// Compras e Vendas (nessa ordem de prioridade). Usado pra casar os itens
+// que vêm do sistema de contagem (nomes podem ter capitalização diferente
+// do relatório do Cloudfy) com o histórico de custo de compra e com o
+// grupo do produto, na hora de gerar linhas sintéticas de estoque a partir
+// de um inventário salvo (ver gerarLinhasEstoqueDeInventariosSalvos_).
+function preAgregarCatalogoProdutos(rowsCompras, rowsVendas) {
+  var catalogo = {};
+  function registrar(nome, grupo) {
+    if (!nome) return;
+    var chave = nome.toUpperCase();
+    if (!catalogo[chave]) catalogo[chave] = { nome: nome, grupo: grupo || '' };
+    else if (!catalogo[chave].grupo && grupo) catalogo[chave].grupo = grupo;
+  }
+  if (rowsCompras && rowsCompras.length > 1) {
+    for (var i = 1; i < rowsCompras.length; i++) {
+      var r = rowsCompras[i];
+      if (!r || r.length < 18) continue;
+      registrar(limpaCelula(r[C_COMPRAS.produto]), limpaCelula(r[C_COMPRAS.grupo]));
+    }
+  }
+  if (rowsVendas && rowsVendas.length > 1) {
+    for (var j = 1; j < rowsVendas.length; j++) {
+      var rv = rowsVendas[j];
+      if (!rv || rv.length < 15) continue;
+      registrar(limpaCelula(rv[C_VENDAS.produto]), limpaCelula(rv[C_VENDAS.grupo]));
+    }
+  }
+  return catalogo;
+}
+
 // Pré-agrega o custo médio ponderado de cada insumo por mês/ano — uma
 // única vez (mesma lógica de performance da Análise Quinzenal: evita
 // reescanear rowsCompras a cada produto/mês). Ignora transferência entre

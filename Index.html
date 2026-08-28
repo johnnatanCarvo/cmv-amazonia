@@ -623,6 +623,11 @@ td.hi{font-weight:600;}
     </div>
 
     <div class="ajustes-sub" id="sub-inventario" style="display:none">
+      <div class="card" id="inventario-avisos-card" style="display:none;">
+        <div class="card-h"><div class="card-t">Avisos da conexão com o CMV/CMC</div></div>
+        <div class="ssub" style="margin:0 0 10px;">O CONTADO destas seleções entra no cálculo automaticamente nos meses que ainda não têm contagem via CSV enviada em Ajustes &gt; Contagem Inicial/Final (esses meses continuam exatamente como estavam). Pontos que merecem sua atenção:</div>
+        <ul id="inventario-avisos-lista" style="margin:0;padding-left:18px;font-size:13px;line-height:1.6;"></ul>
+      </div>
       <div class="shead" style="margin-bottom:14px;">
         <div class="ssub" style="margin:0;">Escolha manualmente quais contagens (do sistema de contagem separado) representam o inventário de uma semana, dê um nome e salve — fica gravado permanentemente até você trocar. Usado como fonte alternativa ao upload manual de estoque.</div>
         <div class="mseg" id="inventario-uniseg">
@@ -750,6 +755,7 @@ var DADOS=null, MESES=[], CMC={}, VENDAS={}, CMV={}, mesAtual='', uniAtual='TODA
 var CMVTEORICO={}, FICHAS_DISPONIVEL=false, mesTeorico='', uniTeorico='TODAS';
 var DEMANDAINSUMOS={}, RECONCILIACAOINSUMOS={}, mesDemanda='', uniDemanda='TODAS';
 var ANALISEQUINZENAL={}, mesQuinzenal='';
+var AVISOSINVENTARIO=[];
 var abcOrder='valor', custoCache=null, uniABC='TODAS', mesABC='TODOS';
 var custoMesA='', custoMesB='';
 var SENHA_ATUAL='';
@@ -825,6 +831,7 @@ function fazerLogin(){
       CMVTEORICO=res.cmvTeorico||{}; FICHAS_DISPONIVEL=!!res.fichasDisponivel;
       DEMANDAINSUMOS=res.demandaInsumos||{}; RECONCILIACAOINSUMOS=res.reconciliacaoInsumos||{};
       ANALISEQUINZENAL=res.analiseQuinzenal||{};
+      AVISOSINVENTARIO=res.avisosInventario||[];
       mesAtual=MESES.length?MESES[MESES.length-1]:'';
       var login=document.getElementById('login');
       login.classList.add('hide');
@@ -2403,8 +2410,17 @@ function setInventarioUnidade(u){
 }
 
 function carregarInventario(){
+  rInventarioAvisos();
   carregarInventarioContagens();
   carregarInventariosSalvos();
+}
+
+function rInventarioAvisos(){
+  var card=document.getElementById('inventario-avisos-card');
+  var lista=document.getElementById('inventario-avisos-lista');
+  if(!AVISOSINVENTARIO.length){card.style.display='none';return;}
+  card.style.display='';
+  lista.innerHTML=AVISOSINVENTARIO.map(function(a){return '<li>'+a+'</li>';}).join('');
 }
 
 function carregarInventarioContagens(){
