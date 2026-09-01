@@ -428,6 +428,7 @@ td.hi{font-weight:600;}
             <th class="r sortable" onclick="abcSort('valor')">Faturamento</th>
             <th class="r sortable" onclick="abcSort('qtd')">Qtd.</th>
             <th class="r">% Fat.</th><th class="r">% Acum.</th><th>Classe</th>
+            <th class="r">Custo Teórico Unit.</th><th class="r">CMV Teórico %</th>
           </tr></thead>
           <tbody id="abc-body"></tbody>
         </table>
@@ -1527,7 +1528,7 @@ function setMesABC(m){mesABC=m;document.querySelectorAll('#abc-mseg button').for
 function setUniABC(u){uniABC=u;document.querySelectorAll('#abc-useg button').forEach(function(b){b.classList.toggle('on',b.textContent===(u==='TODAS'?'Todas':nomeUni(u)));});rABC();}
 
 function rABC(){
-  if(!VENDAS.abc_geral){document.getElementById('abc-body').innerHTML='<tr><td colspan="8" class="empty">Sem dados de vendas.</td></tr>';return;}
+  if(!VENDAS.abc_geral){document.getElementById('abc-body').innerHTML='<tr><td colspan="10" class="empty">Sem dados de vendas.</td></tr>';return;}
 
   // Montar seletor de mês (uma vez)
   var mseg=document.getElementById('abc-mseg');
@@ -1549,7 +1550,7 @@ function rABC(){
 
   var dd=abcData();
   var abc=dd.produtos;
-  if(!abc.length){document.getElementById('abc-body').innerHTML='<tr><td colspan="8" class="empty">Sem dados para esta unidade.</td></tr>';
+  if(!abc.length){document.getElementById('abc-body').innerHTML='<tr><td colspan="10" class="empty">Sem dados para esta unidade.</td></tr>';
     document.getElementById('abc-kpis').innerHTML='';return;}
 
   var nA=abc.filter(function(p){return p.classe==='A';}).length;
@@ -1595,6 +1596,33 @@ function rABC(){
 }
 
 function abcSort(k){abcOrder=k;rABCTable();}
+
+// Custo Teórico por produto, casado com o filtro de mês/unidade atual da
+// Curva ABC. O % CMV Teórico de cada produto usa APENAS o faturamento
+// DELE MESMO (custo_total_teorico/valor_vendido do próprio produto) —
+// nunca o faturamento total do período — mesma lógica já usada na aba CMV
+// Teórico > Produtos. Em "Período" (todos os meses), soma custo e
+// quantidade produto a produto mês a mês (ponderado por quantidade, nunca
+// por faturamento) pra chegar num custo unitário médio do período.
+function custoTeoricoPorProdutoABC(){
+  var mapa={}; // NOME -> {custo_total, qtd, tem_ficha}
+  function somar(lista){
+    (lista||[]).forEach(function(p){
+      if(!p.tem_ficha)return;
+      if(!mapa[p.produto])mapa[p.produto]={custo_total:0,qtd:0,tem_ficha:true};
+      mapa[p.produto].custo_total+=(p.custo_total_teorico||0);
+      mapa[p.produto].qtd+=(p.qtd||0);
+    });
+  }
+  var mesesAlvo=mesABC==='TODOS'?MESES:[mesABC];
+  mesesAlvo.forEach(function(m){
+    var d=CMVTEORICO[m];if(!d)return;
+    if(uniABC==='TODAS')somar(d.produtos);
+    else if(d.filiais&&d.filiais[uniABC])somar(d.filiais[uniABC].produtos);
+  });
+  return mapa;
+}
+
 function rABCTable(){
   var dd=abcData();if(!dd.produtos.length)return;
   var busca=(document.getElementById('abc-busca').value||'').toLowerCase();
@@ -1609,8 +1637,13 @@ function rABCTable(){
   if(abcOrder==='qtd')data.sort(function(a,b){return b.qtd-a.qtd;});
   else data.sort(function(a,b){return b.valor-a.valor;});
 
+  var mapaTeorico=custoTeoricoPorProdutoABC();
+
   document.getElementById('abc-count').textContent=data.length+' de '+dd.produtos.length+' produtos';
   document.getElementById('abc-body').innerHTML=data.slice(0,300).map(function(p,i){
+    var ct=mapaTeorico[p.produto];
+    var custoUnit=(ct&&ct.qtd>0)?(ct.custo_total/ct.qtd):null;
+    var pctTeorico=(ct&&p.valor>0)?(ct.custo_total/p.valor*100):null;
     return '<tr><td class="n" style="color:var(--fg3)">'+String(i+1).padStart(3,'0')+'</td>'+
       '<td class="hi">'+p.produto+'</td>'+
       '<td><span class="gdot"><span style="background:'+gc(p.grupo)+'"></span>'+p.grupo+'</span></td>'+
@@ -1618,9 +1651,11 @@ function rABCTable(){
       '<td class="n r">'+fQ(p.qtd)+'</td>'+
       '<td class="n r">'+fP(p.pct)+'</td>'+
       '<td class="n r" style="color:var(--fg2)">'+fP(p.pct_acum)+'</td>'+
-      '<td><span class="tag t'+p.classe+'">'+p.classe+'</span></td></tr>';
+      '<td><span class="tag t'+p.classe+'">'+p.classe+'</span></td>'+
+      '<td class="n r" style="color:'+(custoUnit!==null?'var(--fg)':'var(--fg3)')+'">'+(custoUnit!==null?fR2(custoUnit):'--')+'</td>'+
+      '<td class="n r" style="color:'+(pctTeorico!==null?(pctTeorico>35?'var(--rd)':'var(--fg)'):'var(--fg3)')+'">'+(pctTeorico!==null?fP(pctTeorico):'--')+'</td></tr>';
   }).join('');
-  if(data.length>300)document.getElementById('abc-body').innerHTML+='<tr><td colspan="8" class="empty">Exibindo os 300 primeiros de '+data.length+'.</td></tr>';
+  if(data.length>300)document.getElementById('abc-body').innerHTML+='<tr><td colspan="10" class="empty">Exibindo os 300 primeiros de '+data.length+'.</td></tr>';
 }
 
 /* ============================================================
