@@ -893,6 +893,34 @@ var C_FICHAS = {
   insumo_custo_unit: 15   // Custo unitário do insumo
 };
 
+// "De-para" de nomes de produto entre relatórios do Cloudfy que, por
+// inconsistência do próprio sistema, usam grafias diferentes pro MESMO
+// prato em relatórios diferentes (ex: "MINI FILE BACURI" nas Vendas vs
+// "MINI BACURI FILE" na Ficha Técnica — mesmas palavras, ordem trocada).
+// Cada entrada mapeia o nome como aparece em VENDAS pro nome como aparece
+// na FICHA TÉCNICA. Aplicado em processarFichas/processarReceitas: o nome
+// de Vendas passa a apontar pro mesmo custo/receita do nome da Ficha,
+// então todo o resto do sistema (CMV Teórico, Demanda de Insumos, Curva
+// ABC) resolve automaticamente, sem precisar mudar nada nesses lugares.
+// Adicione aqui se aparecer um novo caso — o ideal a longo prazo é
+// corrigir a grafia direto no Cloudfy pra não precisar manter isso.
+var APELIDOS_PRODUTO = {
+  'MINI FILE BACURI': 'MINI BACURI FILE'
+};
+
+// Aplica APELIDOS_PRODUTO num mapa já construído (fichasMap ou receitas):
+// pro nome de Vendas que ainda não existe no mapa, copia a entrada do nome
+// correspondente da Ficha Técnica, se existir.
+function aplicarApelidosProduto_(mapa) {
+  Object.keys(APELIDOS_PRODUTO).forEach(function(nomeVenda) {
+    var nomeFicha = APELIDOS_PRODUTO[nomeVenda];
+    if (mapa[nomeFicha] !== undefined && mapa[nomeVenda] === undefined) {
+      mapa[nomeVenda] = mapa[nomeFicha];
+    }
+  });
+  return mapa;
+}
+
 // Produtos de "menu de escolha livre" (o cliente escolhe o prato dentro do
 // menu na hora, e o Cloudfy dá baixa de estoque no prato REAL escolhido —
 // não no menu em si). Por isso nunca vai existir ficha técnica própria pra
@@ -928,6 +956,7 @@ function processarFichas(rows) {
     mapa[produto] = custo;
   }
 
+  aplicarApelidosProduto_(mapa);
   Logger.log('Ficha técnica processada: ' + Object.keys(mapa).length + ' produtos com custo teórico.');
   return mapa;
 }
@@ -974,6 +1003,7 @@ function processarReceitas(rows) {
     }
   }
 
+  aplicarApelidosProduto_(receitas);
   Logger.log('Receitas processadas: ' + Object.keys(receitas).length + ' produtos com lista de insumos.');
   return receitas;
 }
