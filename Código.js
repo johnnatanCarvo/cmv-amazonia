@@ -795,10 +795,46 @@ function buscarItensDeContagens_(contagemIds) {
   return Object.values(mapa);
 }
 
+// Monta, numa única leitura, tudo que valorizarItensInventario_ precisa
+// pra precificar itens contados (mesma cadeia do CMV Teórico/conector
+// mensal/semanal). Reaproveitado sempre que precisar valorizar itens fora
+// desses fluxos principais (lista de contagens, tela de correção).
+function construirContextoPrecificacao_() {
+  var rowsCompras = lerTodosCSVs('compras');
+  var rowsVendas  = lerTodosCSVs('vendas');
+  var rowsFichas  = lerFichaTecnica();
+  var fichasMap   = processarFichas(rowsFichas);
+  return {
+    fichasMap: fichasMap,
+    historicoPorInsumo: preAgregarCustoMedioPorInsumo(rowsCompras),
+    catalogo: preAgregarCatalogoProdutos(rowsCompras, rowsVendas),
+    catalogoPorCodigo: preAgregarCatalogoPorCodigo(rowsCompras),
+    fichaPorCodigo: preAgregarFichaPorCodigo(rowsFichas)
+  };
+}
+
+// Resolve o mês/ano de UMA contagem a partir da aba CONTAGENS (sua própria
+// data — diferente de resolverDataInventario_, que combina VÁRIAS
+// contagens de um inventário salvo). Retorna null se não achar.
+function resolverMesAnoDaContagem_(abaCont, contagemId) {
+  if (!abaCont) return null;
+  var contRows = abaCont.getDataRange().getValues();
+  for (var i = 1; i < contRows.length; i++) {
+    var r = contRows[i];
+    if (String(r[0]).trim() !== String(contagemId).trim()) continue;
+    var dataTxt = paraTextoData_(r[1]) || paraTextoData_(r[7]);
+    var info = dataTxt ? parseDataCompleta(dataTxt.split(' ')[0]) : null;
+    return info ? { mesNome: NOMES_MESES[info.mes], ano: info.ano } : null;
+  }
+  return null;
+}
+
 // Lista os itens CRUS de UMA contagem específica (não agregados — cada
 // linha da planilha vira um item, com o número da linha, pra permitir
-// corrigir o CONTADO diretamente na planilha do sistema de contagem
-// (ver editarContadoItem).
+// corrigir o CONTADO diretamente na planilha do sistema de contagem (ver
+// editarContadoItem). Já vem com o custo unitário/total de cada item e o
+// valor total da contagem, pela mesma precificação usada em todo o resto
+// do sistema.
 function listarItensDeContagem(senha, contagemId) {
   if (!validarSenha(senha)) {
     return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
@@ -818,13 +854,91 @@ function listarItensDeContagem(senha, contagemId) {
         cod: String(r[C_ITENS_CONTAGEM.cod] || '').trim(),
         produto: String(r[C_ITENS_CONTAGEM.produto]).trim(),
         und: String(r[C_ITENS_CONTAGEM.und] || '').trim(),
-        contado: Number(r[C_ITENS_CONTAGEM.contado]) || 0
+        qtde: Number(r[C_ITENS_CONTAGEM.contado]) || 0
       });
     }
     itens.sort(function(a, b) { return a.produto.localeCompare(b.produto); });
-    return JSON.stringify({ ok: true, itens: itens });
+
+    var valorTotal = null, avisos = [];
+    var infoData = resolverMesAnoDaContagem_(ss.getSheetByName('CONTAGENS'), contagemId);
+    if (infoData) {
+      var ctx = construirContextoPrecificacao_();
+      var res = valorizarItensInventario_(itens, infoData.mesNome, infoData.ano, ctx.historicoPorInsumo, ctx.fichasMap, ctx.catalogo, 'contagem ' + contagemId, ctx.catalogoPorCodigo, ctx.fichaPorCodigo);
+      valorTotal = res.total;
+      avisos = res.avisos;
+      var custoPorLinha = {};
+      res.porProduto.forEach(function(p) { custoPorLinha[p.linha] = { custoUnit: p.custoUnit, custoTotal: p.custoTotal }; });
+      itens.forEach(function(it) {
+        var c = custoPorLinha[it.linha];
+        it.contado = it.qtde; // nome usado na tela hoje
+        it.custoUnit = c ? c.custoUnit : null;
+        it.custoTotal = c ? c.custoTotal : null;
+      });
+    } else {
+      itens.forEach(function(it) { it.contado = it.qtde; it.custoUnit = null; it.custoTotal = null; });
+    }
+
+    return JSON.stringify({ ok: true, itens: itens, valorTotal: valorTotal, avisos: avisos });
   } catch (err) {
     Logger.log('listarItensDeContagem ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
+// Calcula o valor total (R$) de CADA contagem de uma unidade, usando a
+// mesma precificação do resto do sistema — pra mostrar "Valor Total" na
+// lista de Contagens Registradas (Ajustes > Inventário), sem precisar
+// abrir uma a uma.
+function listarValoresContagens(senha, unidade) {
+  if (!validarSenha(senha)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var ss = SpreadsheetApp.openById(CONTAGEM_SHEET_ID);
+    var abaCont  = ss.getSheetByName('CONTAGENS');
+    var abaItens = ss.getSheetByName('ITENS_CONTAGEM');
+    if (!abaCont || !abaItens) return JSON.stringify({ ok: false, erro: 'Abas de contagem não encontradas na planilha.' });
+
+    var contRows = abaCont.getDataRange().getValues();
+    var infoPorContagem = {}; // id -> {mesNome, ano}
+    for (var i = 1; i < contRows.length; i++) {
+      var r = contRows[i];
+      if (!r[0] || String(r[2]).trim() !== unidade) continue;
+      var dataTxt = paraTextoData_(r[1]) || paraTextoData_(r[7]);
+      var info = dataTxt ? parseDataCompleta(dataTxt.split(' ')[0]) : null;
+      if (info) infoPorContagem[String(r[0]).trim()] = { mesNome: NOMES_MESES[info.mes], ano: info.ano };
+    }
+    if (!Object.keys(infoPorContagem).length) return JSON.stringify({ ok: true, valores: {} });
+
+    var itRows = abaItens.getDataRange().getValues();
+    var itensPorContagem = {};
+    for (var j = 1; j < itRows.length; j++) {
+      var ir = itRows[j];
+      var cid = String(ir[C_ITENS_CONTAGEM.contagemId]).trim();
+      if (!infoPorContagem[cid]) continue;
+      var produto = String(ir[C_ITENS_CONTAGEM.produto]).trim();
+      if (!produto) continue;
+      if (!itensPorContagem[cid]) itensPorContagem[cid] = [];
+      itensPorContagem[cid].push({
+        cod: String(ir[C_ITENS_CONTAGEM.cod] || '').trim(),
+        produto: produto,
+        und: String(ir[C_ITENS_CONTAGEM.und] || '').trim(),
+        qtde: Number(ir[C_ITENS_CONTAGEM.contado]) || 0
+      });
+    }
+
+    var ctx = construirContextoPrecificacao_();
+    var valores = {};
+    Object.keys(infoPorContagem).forEach(function(cid) {
+      var info = infoPorContagem[cid];
+      var itens = itensPorContagem[cid] || [];
+      var res = valorizarItensInventario_(itens, info.mesNome, info.ano, ctx.historicoPorInsumo, ctx.fichasMap, ctx.catalogo, 'contagem ' + cid, ctx.catalogoPorCodigo, ctx.fichaPorCodigo);
+      valores[cid] = res.total;
+    });
+
+    return JSON.stringify({ ok: true, valores: valores });
+  } catch (err) {
+    Logger.log('listarValoresContagens ERROR: ' + err.message + '\n' + err.stack);
     return JSON.stringify({ ok: false, erro: err.message });
   }
 }
@@ -1009,7 +1123,7 @@ function valorizarItensInventario_(itens, mesNome, ano, historicoPorInsumo, fich
     }
     var custoTotal = r2(custoUnit * item.qtde);
     total += custoTotal;
-    porProduto.push({ produto: nomeCanonico, grupo: grupo, und: item.und, qtd: item.qtde, custoUnit: custoUnit, custoTotal: custoTotal });
+    porProduto.push({ produto: nomeCanonico, grupo: grupo, und: item.und, qtd: item.qtde, custoUnit: custoUnit, custoTotal: custoTotal, linha: item.linha });
   });
   return { total: r2(total), porProduto: porProduto, avisos: avisos };
 }

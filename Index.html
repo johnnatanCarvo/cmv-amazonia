@@ -642,8 +642,8 @@ td.hi{font-weight:600;}
         <div class="card-h"><div class="card-t">Contagens Registradas</div><div class="card-s" id="inventario-count"></div></div>
         <div class="ctrl"><input type="text" id="inventario-busca" placeholder="Buscar por setor, responsável ou data..." oninput="rInventarioLista()"></div>
         <div class="twrap"><table>
-          <thead><tr><th style="width:40px;"></th><th>Data</th><th>Setor</th><th>Turno</th><th>Responsável</th><th>Status</th><th></th></tr></thead>
-          <tbody id="inventario-body"><tr><td colspan="7" class="empty">Abra esta aba para carregar.</td></tr></tbody>
+          <thead><tr><th style="width:40px;"></th><th>Data</th><th>Setor</th><th>Turno</th><th>Responsável</th><th>Status</th><th class="r">Valor Total</th><th></th></tr></thead>
+          <tbody id="inventario-body"><tr><td colspan="8" class="empty">Abra esta aba para carregar.</td></tr></tbody>
         </table></div>
         <div class="ctrl" style="margin-top:14px;">
           <input type="text" id="inventario-label" placeholder="Nome desta semana (ex: Semana 24/08)" style="min-width:280px;">
@@ -655,13 +655,17 @@ td.hi{font-weight:600;}
 
       <div class="card" id="corrigir-contagem-card" style="display:none;">
         <div class="card-h"><div class="card-t">Corrigir Itens da Contagem</div><div class="card-s" id="corrigir-contagem-count"></div></div>
-        <div class="ssub" id="corrigir-contagem-sub" style="margin:0 0 14px;"></div>
+        <div class="ssub" id="corrigir-contagem-sub" style="margin:0 0 10px;"></div>
+        <div class="ssub" id="corrigir-contagem-avisos" style="margin:0 0 14px;color:var(--am);"></div>
         <div class="ctrl"><input type="text" id="corrigir-contagem-busca" placeholder="Buscar produto..." oninput="rCorrigirContagemTable()"></div>
         <div class="twrap"><table>
-          <thead><tr><th>Cód.</th><th>Produto</th><th>Und.</th><th class="r">Contado</th><th style="width:110px;"></th></tr></thead>
-          <tbody id="corrigir-contagem-body"><tr><td colspan="5" class="empty">Carregando…</td></tr></tbody>
+          <thead><tr><th>Cód.</th><th>Produto</th><th>Und.</th><th class="r">Contado</th><th class="r">Custo Unit.</th><th class="r">Custo Total</th><th style="width:110px;"></th></tr></thead>
+          <tbody id="corrigir-contagem-body"><tr><td colspan="7" class="empty">Carregando…</td></tr></tbody>
         </table></div>
-        <div class="ctrl" style="margin-top:14px;"><button class="gd-close" onclick="fecharCorrigirContagem()">Fechar</button></div>
+        <div class="ctrl" style="margin-top:14px;justify-content:space-between;">
+          <span style="font-family:'DM Mono';font-size:15px;font-weight:600;">Valor Total: <span id="corrigir-contagem-total">--</span></span>
+          <button class="gd-close" onclick="fecharCorrigirContagem()">Fechar</button>
+        </div>
       </div>
 
       <div class="card">
@@ -2627,20 +2631,38 @@ function rInventarioAvisos(){
   lista.innerHTML=AVISOSINVENTARIO.map(function(a){return '<li>'+a+'</li>';}).join('');
 }
 
+var INVENTARIO_VALORES={}; // {contagemId: valorTotal}
+
 function carregarInventarioContagens(){
   var body=document.getElementById('inventario-body');
-  body.innerHTML='<tr><td colspan="7" class="empty">Carregando…</td></tr>';
+  body.innerHTML='<tr><td colspan="8" class="empty">Carregando…</td></tr>';
+  INVENTARIO_VALORES={};
   google.script.run
     .withSuccessHandler(function(json){
-      var res;try{res=JSON.parse(json);}catch(e){body.innerHTML='<tr><td colspan="7" class="empty">Erro ao carregar.</td></tr>';return;}
-      if(!res.ok){body.innerHTML='<tr><td colspan="7" class="empty">'+(res.erro||'Erro ao carregar.')+'</td></tr>';return;}
+      var res;try{res=JSON.parse(json);}catch(e){body.innerHTML='<tr><td colspan="8" class="empty">Erro ao carregar.</td></tr>';return;}
+      if(!res.ok){body.innerHTML='<tr><td colspan="8" class="empty">'+(res.erro||'Erro ao carregar.')+'</td></tr>';return;}
       INVENTARIO_CONTAGENS=res.contagens;
       rInventarioLista();
+      carregarValoresContagens();
     })
     .withFailureHandler(function(err){
-      body.innerHTML='<tr><td colspan="7" class="empty">Falha: '+(err.message||err)+'</td></tr>';
+      body.innerHTML='<tr><td colspan="8" class="empty">Falha: '+(err.message||err)+'</td></tr>';
     })
     .listarContagensDisponiveis(SENHA_ATUAL, inventarioUnidadeAtual);
+}
+
+// Busca o valor total (R$) de cada contagem à parte — separado da lista
+// em si pra ela aparecer rápido, com os valores chegando logo em seguida.
+function carregarValoresContagens(){
+  google.script.run
+    .withSuccessHandler(function(json){
+      var res;try{res=JSON.parse(json);}catch(e){return;}
+      if(!res.ok)return;
+      INVENTARIO_VALORES=res.valores||{};
+      rInventarioLista();
+    })
+    .withFailureHandler(function(){})
+    .listarValoresContagens(SENHA_ATUAL, inventarioUnidadeAtual);
 }
 
 function toggleInventarioContagem(id, marcado){
@@ -2655,18 +2677,20 @@ function rInventarioLista(){
   });
   document.getElementById('inventario-count').textContent=data.length+' de '+INVENTARIO_CONTAGENS.length+' contagens — '+Object.keys(INVENTARIO_MARCADOS).length+' selecionada(s)';
   if(!data.length){
-    document.getElementById('inventario-body').innerHTML='<tr><td colspan="7" class="empty">Nenhuma contagem encontrada pra esta unidade.</td></tr>';
+    document.getElementById('inventario-body').innerHTML='<tr><td colspan="8" class="empty">Nenhuma contagem encontrada pra esta unidade.</td></tr>';
     return;
   }
   document.getElementById('inventario-body').innerHTML=data.map(function(c){
     var marcado=!!INVENTARIO_MARCADOS[c.id];
     var idEsc=c.id.replace(/'/g,"\\'");
+    var valor=INVENTARIO_VALORES[c.id];
     return '<tr><td><input type="checkbox" '+(marcado?'checked':'')+' onchange="toggleInventarioContagem(\''+idEsc+'\',this.checked)"></td>'+
       '<td class="hi">'+c.data+'</td>'+
       '<td>'+c.setor+'</td>'+
       '<td>'+c.turno+'</td>'+
       '<td>'+c.responsavel+'</td>'+
       '<td>'+(c.status==='CONCLUIDO'?'<span class="tag tA">CONCLUÍDO</span>':'<span class="tag tC">'+c.status+'</span>')+'</td>'+
+      '<td class="n r">'+(valor!==undefined?fR2(valor):'<span style="color:var(--fg3)">…</span>')+'</td>'+
       '<td class="r"><button class="gd-close" onclick="abrirCorrigirContagem(\''+idEsc+'\',\''+(c.data+' · '+nomeUni(c.unidade)+' · '+c.setor).replace(/'/g,"\\'")+'\')">Corrigir</button></td></tr>';
   }).join('');
 }
@@ -2677,23 +2701,32 @@ function rInventarioLista(){
    ============================================================ */
 var CORRIGIR_CONTAGEM_ID=null;
 var CORRIGIR_CONTAGEM_ITENS=[];
+var CORRIGIR_CONTAGEM_TOTAL=null;
 
 function abrirCorrigirContagem(contagemId, rotulo){
   CORRIGIR_CONTAGEM_ID=contagemId;
   document.getElementById('corrigir-contagem-card').style.display='';
   document.getElementById('corrigir-contagem-sub').textContent=rotulo;
+  document.getElementById('corrigir-contagem-avisos').innerHTML='';
+  document.getElementById('corrigir-contagem-total').textContent='--';
   document.getElementById('corrigir-contagem-busca').value='';
-  document.getElementById('corrigir-contagem-body').innerHTML='<tr><td colspan="5" class="empty">Carregando…</td></tr>';
+  document.getElementById('corrigir-contagem-body').innerHTML='<tr><td colspan="7" class="empty">Carregando…</td></tr>';
   document.getElementById('corrigir-contagem-card').scrollIntoView({behavior:'smooth',block:'start'});
   google.script.run
     .withSuccessHandler(function(json){
-      var res;try{res=JSON.parse(json);}catch(e){document.getElementById('corrigir-contagem-body').innerHTML='<tr><td colspan="5" class="empty">Erro ao carregar.</td></tr>';return;}
-      if(!res.ok){document.getElementById('corrigir-contagem-body').innerHTML='<tr><td colspan="5" class="empty">'+(res.erro||'Erro ao carregar.')+'</td></tr>';return;}
+      var res;try{res=JSON.parse(json);}catch(e){document.getElementById('corrigir-contagem-body').innerHTML='<tr><td colspan="7" class="empty">Erro ao carregar.</td></tr>';return;}
+      if(!res.ok){document.getElementById('corrigir-contagem-body').innerHTML='<tr><td colspan="7" class="empty">'+(res.erro||'Erro ao carregar.')+'</td></tr>';return;}
       CORRIGIR_CONTAGEM_ITENS=res.itens;
+      CORRIGIR_CONTAGEM_TOTAL=res.valorTotal;
+      document.getElementById('corrigir-contagem-total').textContent=res.valorTotal!==null?fR2(res.valorTotal):'--';
+      if(res.avisos&&res.avisos.length){
+        document.getElementById('corrigir-contagem-avisos').innerHTML=res.avisos.length+' item(ns) sem preço encontrado — não entram no valor total. Passe o mouse pra ver quais.';
+        document.getElementById('corrigir-contagem-avisos').title=res.avisos.join('\n');
+      }
       rCorrigirContagemTable();
     })
     .withFailureHandler(function(err){
-      document.getElementById('corrigir-contagem-body').innerHTML='<tr><td colspan="5" class="empty">Falha: '+(err.message||err)+'</td></tr>';
+      document.getElementById('corrigir-contagem-body').innerHTML='<tr><td colspan="7" class="empty">Falha: '+(err.message||err)+'</td></tr>';
     })
     .listarItensDeContagem(SENHA_ATUAL, contagemId);
 }
@@ -2706,15 +2739,18 @@ function rCorrigirContagemTable(){
   });
   document.getElementById('corrigir-contagem-count').textContent=data.length+' de '+CORRIGIR_CONTAGEM_ITENS.length+' itens';
   if(!data.length){
-    document.getElementById('corrigir-contagem-body').innerHTML='<tr><td colspan="5" class="empty">Nenhum item encontrado.</td></tr>';
+    document.getElementById('corrigir-contagem-body').innerHTML='<tr><td colspan="7" class="empty">Nenhum item encontrado.</td></tr>';
     return;
   }
   document.getElementById('corrigir-contagem-body').innerHTML=data.map(function(it){
     var rowId='corrigir-'+it.linha;
+    var temPreco=it.custoUnit!==null&&it.custoUnit!==undefined;
     return '<tr id="'+rowId+'"><td>'+(it.cod||'--')+'</td>'+
       '<td class="hi">'+it.produto+'</td>'+
       '<td>'+it.und+'</td>'+
       '<td class="n r"><input type="text" class="edit-inp" id="'+rowId+'-contado" value="'+fQd(it.contado)+'"></td>'+
+      '<td class="n r" style="color:'+(temPreco?'var(--fg)':'var(--fg3)')+'">'+(temPreco?fR2(it.custoUnit):'--')+'</td>'+
+      '<td class="n r hi" id="'+rowId+'-total" style="color:'+(temPreco?'var(--fg)':'var(--fg3)')+'">'+(temPreco?fR2(it.custoTotal):'--')+'</td>'+
       '<td class="r"><button class="gd-close" onclick="salvarContadoItem('+it.linha+')">Salvar</button></td></tr>';
   }).join('');
 }
@@ -2732,7 +2768,18 @@ function salvarContadoItem(linha){
       if(!res.ok){alert(res.erro||'Erro ao salvar.');btn.disabled=false;btn.textContent=txtOriginal;return;}
       inp.value=fQd(res.contado);
       var item=CORRIGIR_CONTAGEM_ITENS.filter(function(it){return it.linha===linha;})[0];
-      if(item)item.contado=res.contado;
+      if(item){
+        var totalAntigo=item.custoTotal||0;
+        item.contado=res.contado;
+        if(item.custoUnit!==null&&item.custoUnit!==undefined){
+          item.custoTotal=Math.round(item.custoUnit*res.contado*100)/100;
+          document.getElementById(rowId+'-total').textContent=fR2(item.custoTotal);
+          if(CORRIGIR_CONTAGEM_TOTAL!==null){
+            CORRIGIR_CONTAGEM_TOTAL=Math.round((CORRIGIR_CONTAGEM_TOTAL-totalAntigo+item.custoTotal)*100)/100;
+            document.getElementById('corrigir-contagem-total').textContent=fR2(CORRIGIR_CONTAGEM_TOTAL);
+          }
+        }
+      }
       btn.disabled=false;btn.textContent='Salvo!';
       setTimeout(function(){btn.textContent=txtOriginal;},1500);
     })
