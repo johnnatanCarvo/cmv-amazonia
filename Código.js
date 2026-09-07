@@ -795,6 +795,72 @@ function buscarItensDeContagens_(contagemIds) {
   return Object.values(mapa);
 }
 
+// Lista os itens CRUS de UMA contagem específica (não agregados — cada
+// linha da planilha vira um item, com o número da linha, pra permitir
+// corrigir o CONTADO diretamente na planilha do sistema de contagem
+// (ver editarContadoItem).
+function listarItensDeContagem(senha, contagemId) {
+  if (!validarSenha(senha)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var ss  = SpreadsheetApp.openById(CONTAGEM_SHEET_ID);
+    var aba = ss.getSheetByName('ITENS_CONTAGEM');
+    if (!aba) return JSON.stringify({ ok: false, erro: 'Aba ITENS_CONTAGEM não encontrada na planilha.' });
+
+    var rows = aba.getDataRange().getValues();
+    var itens = [];
+    for (var i = 1; i < rows.length; i++) {
+      var r = rows[i];
+      if (String(r[C_ITENS_CONTAGEM.contagemId]).trim() !== String(contagemId).trim()) continue;
+      itens.push({
+        linha: i + 1, // 1-indexado (linha real da planilha), usado só pra escrever de volta
+        cod: String(r[C_ITENS_CONTAGEM.cod] || '').trim(),
+        produto: String(r[C_ITENS_CONTAGEM.produto]).trim(),
+        und: String(r[C_ITENS_CONTAGEM.und] || '').trim(),
+        contado: Number(r[C_ITENS_CONTAGEM.contado]) || 0
+      });
+    }
+    itens.sort(function(a, b) { return a.produto.localeCompare(b.produto); });
+    return JSON.stringify({ ok: true, itens: itens });
+  } catch (err) {
+    Logger.log('listarItensDeContagem ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
+// Corrige o CONTADO de UM item, escrevendo direto na planilha do sistema
+// de contagem (diferente de tudo mais neste projeto, que só LÊ essa
+// planilha). Confere que a linha ainda pertence à mesma contagem antes de
+// escrever — protege contra a linha ter sido deslocada por alguém
+// inserindo/removendo linhas entre a leitura e a edição.
+function editarContadoItem(senha, contagemId, linha, novoContado) {
+  if (!validarSenha(senha)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var valor = numVal(novoContado);
+    if (!(valor >= 0)) return JSON.stringify({ ok: false, erro: 'Quantidade inválida.' });
+
+    var ss  = SpreadsheetApp.openById(CONTAGEM_SHEET_ID);
+    var aba = ss.getSheetByName('ITENS_CONTAGEM');
+    if (!aba) return JSON.stringify({ ok: false, erro: 'Aba ITENS_CONTAGEM não encontrada na planilha.' });
+
+    var linhaNum = Number(linha);
+    var cidNaLinha = String(aba.getRange(linhaNum, C_ITENS_CONTAGEM.contagemId + 1).getValue()).trim();
+    if (cidNaLinha !== String(contagemId).trim()) {
+      return JSON.stringify({ ok: false, erro: 'A linha mudou de posição na planilha — recarregue a lista e tente de novo.' });
+    }
+
+    aba.getRange(linhaNum, C_ITENS_CONTAGEM.contado + 1).setValue(valor);
+    Logger.log('CONTADO editado: contagem ' + contagemId + ', linha ' + linhaNum + ' -> ' + valor);
+    return JSON.stringify({ ok: true, contado: valor });
+  } catch (err) {
+    Logger.log('editarContadoItem ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
 // Converte um valor de célula de data em texto "dd/MM/yyyy" (ou "dd/MM/yyyy HH:mm..."),
 // tratando tanto texto quanto células que o Sheets já devolve como objeto Date.
 function paraTextoData_(v) {

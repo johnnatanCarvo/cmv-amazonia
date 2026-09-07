@@ -642,8 +642,8 @@ td.hi{font-weight:600;}
         <div class="card-h"><div class="card-t">Contagens Registradas</div><div class="card-s" id="inventario-count"></div></div>
         <div class="ctrl"><input type="text" id="inventario-busca" placeholder="Buscar por setor, responsável ou data..." oninput="rInventarioLista()"></div>
         <div class="twrap"><table>
-          <thead><tr><th style="width:40px;"></th><th>Data</th><th>Setor</th><th>Turno</th><th>Responsável</th><th>Status</th></tr></thead>
-          <tbody id="inventario-body"><tr><td colspan="6" class="empty">Abra esta aba para carregar.</td></tr></tbody>
+          <thead><tr><th style="width:40px;"></th><th>Data</th><th>Setor</th><th>Turno</th><th>Responsável</th><th>Status</th><th></th></tr></thead>
+          <tbody id="inventario-body"><tr><td colspan="7" class="empty">Abra esta aba para carregar.</td></tr></tbody>
         </table></div>
         <div class="ctrl" style="margin-top:14px;">
           <input type="text" id="inventario-label" placeholder="Nome desta semana (ex: Semana 24/08)" style="min-width:280px;">
@@ -651,6 +651,17 @@ td.hi{font-weight:600;}
           <button class="gd-close" onclick="limparSelecaoInventario()">Limpar Seleção</button>
           <span id="inventario-status" class="ssub" style="margin:0;"></span>
         </div>
+      </div>
+
+      <div class="card" id="corrigir-contagem-card" style="display:none;">
+        <div class="card-h"><div class="card-t">Corrigir Itens da Contagem</div><div class="card-s" id="corrigir-contagem-count"></div></div>
+        <div class="ssub" id="corrigir-contagem-sub" style="margin:0 0 14px;"></div>
+        <div class="ctrl"><input type="text" id="corrigir-contagem-busca" placeholder="Buscar produto..." oninput="rCorrigirContagemTable()"></div>
+        <div class="twrap"><table>
+          <thead><tr><th>Cód.</th><th>Produto</th><th>Und.</th><th class="r">Contado</th><th style="width:110px;"></th></tr></thead>
+          <tbody id="corrigir-contagem-body"><tr><td colspan="5" class="empty">Carregando…</td></tr></tbody>
+        </table></div>
+        <div class="ctrl" style="margin-top:14px;"><button class="gd-close" onclick="fecharCorrigirContagem()">Fechar</button></div>
       </div>
 
       <div class="card">
@@ -2618,16 +2629,16 @@ function rInventarioAvisos(){
 
 function carregarInventarioContagens(){
   var body=document.getElementById('inventario-body');
-  body.innerHTML='<tr><td colspan="6" class="empty">Carregando…</td></tr>';
+  body.innerHTML='<tr><td colspan="7" class="empty">Carregando…</td></tr>';
   google.script.run
     .withSuccessHandler(function(json){
-      var res;try{res=JSON.parse(json);}catch(e){body.innerHTML='<tr><td colspan="6" class="empty">Erro ao carregar.</td></tr>';return;}
-      if(!res.ok){body.innerHTML='<tr><td colspan="6" class="empty">'+(res.erro||'Erro ao carregar.')+'</td></tr>';return;}
+      var res;try{res=JSON.parse(json);}catch(e){body.innerHTML='<tr><td colspan="7" class="empty">Erro ao carregar.</td></tr>';return;}
+      if(!res.ok){body.innerHTML='<tr><td colspan="7" class="empty">'+(res.erro||'Erro ao carregar.')+'</td></tr>';return;}
       INVENTARIO_CONTAGENS=res.contagens;
       rInventarioLista();
     })
     .withFailureHandler(function(err){
-      body.innerHTML='<tr><td colspan="6" class="empty">Falha: '+(err.message||err)+'</td></tr>';
+      body.innerHTML='<tr><td colspan="7" class="empty">Falha: '+(err.message||err)+'</td></tr>';
     })
     .listarContagensDisponiveis(SENHA_ATUAL, inventarioUnidadeAtual);
 }
@@ -2644,7 +2655,7 @@ function rInventarioLista(){
   });
   document.getElementById('inventario-count').textContent=data.length+' de '+INVENTARIO_CONTAGENS.length+' contagens — '+Object.keys(INVENTARIO_MARCADOS).length+' selecionada(s)';
   if(!data.length){
-    document.getElementById('inventario-body').innerHTML='<tr><td colspan="6" class="empty">Nenhuma contagem encontrada pra esta unidade.</td></tr>';
+    document.getElementById('inventario-body').innerHTML='<tr><td colspan="7" class="empty">Nenhuma contagem encontrada pra esta unidade.</td></tr>';
     return;
   }
   document.getElementById('inventario-body').innerHTML=data.map(function(c){
@@ -2655,8 +2666,86 @@ function rInventarioLista(){
       '<td>'+c.setor+'</td>'+
       '<td>'+c.turno+'</td>'+
       '<td>'+c.responsavel+'</td>'+
-      '<td>'+(c.status==='CONCLUIDO'?'<span class="tag tA">CONCLUÍDO</span>':'<span class="tag tC">'+c.status+'</span>')+'</td></tr>';
+      '<td>'+(c.status==='CONCLUIDO'?'<span class="tag tA">CONCLUÍDO</span>':'<span class="tag tC">'+c.status+'</span>')+'</td>'+
+      '<td class="r"><button class="gd-close" onclick="abrirCorrigirContagem(\''+idEsc+'\',\''+(c.data+' · '+nomeUni(c.unidade)+' · '+c.setor).replace(/'/g,"\\'")+'\')">Corrigir</button></td></tr>';
   }).join('');
+}
+
+/* ============================================================
+   CORRIGIR ITENS DE UMA CONTAGEM (escreve direto na planilha do
+   sistema de contagem separado — diferente do resto do site, que só lê)
+   ============================================================ */
+var CORRIGIR_CONTAGEM_ID=null;
+var CORRIGIR_CONTAGEM_ITENS=[];
+
+function abrirCorrigirContagem(contagemId, rotulo){
+  CORRIGIR_CONTAGEM_ID=contagemId;
+  document.getElementById('corrigir-contagem-card').style.display='';
+  document.getElementById('corrigir-contagem-sub').textContent=rotulo;
+  document.getElementById('corrigir-contagem-busca').value='';
+  document.getElementById('corrigir-contagem-body').innerHTML='<tr><td colspan="5" class="empty">Carregando…</td></tr>';
+  document.getElementById('corrigir-contagem-card').scrollIntoView({behavior:'smooth',block:'start'});
+  google.script.run
+    .withSuccessHandler(function(json){
+      var res;try{res=JSON.parse(json);}catch(e){document.getElementById('corrigir-contagem-body').innerHTML='<tr><td colspan="5" class="empty">Erro ao carregar.</td></tr>';return;}
+      if(!res.ok){document.getElementById('corrigir-contagem-body').innerHTML='<tr><td colspan="5" class="empty">'+(res.erro||'Erro ao carregar.')+'</td></tr>';return;}
+      CORRIGIR_CONTAGEM_ITENS=res.itens;
+      rCorrigirContagemTable();
+    })
+    .withFailureHandler(function(err){
+      document.getElementById('corrigir-contagem-body').innerHTML='<tr><td colspan="5" class="empty">Falha: '+(err.message||err)+'</td></tr>';
+    })
+    .listarItensDeContagem(SENHA_ATUAL, contagemId);
+}
+
+function rCorrigirContagemTable(){
+  var busca=(document.getElementById('corrigir-contagem-busca').value||'').toLowerCase();
+  var data=CORRIGIR_CONTAGEM_ITENS.filter(function(it){
+    if(!busca)return true;
+    return it.produto.toLowerCase().indexOf(busca)>=0;
+  });
+  document.getElementById('corrigir-contagem-count').textContent=data.length+' de '+CORRIGIR_CONTAGEM_ITENS.length+' itens';
+  if(!data.length){
+    document.getElementById('corrigir-contagem-body').innerHTML='<tr><td colspan="5" class="empty">Nenhum item encontrado.</td></tr>';
+    return;
+  }
+  document.getElementById('corrigir-contagem-body').innerHTML=data.map(function(it){
+    var rowId='corrigir-'+it.linha;
+    return '<tr id="'+rowId+'"><td>'+(it.cod||'--')+'</td>'+
+      '<td class="hi">'+it.produto+'</td>'+
+      '<td>'+it.und+'</td>'+
+      '<td class="n r"><input type="text" class="edit-inp" id="'+rowId+'-contado" value="'+fQd(it.contado)+'"></td>'+
+      '<td class="r"><button class="gd-close" onclick="salvarContadoItem('+it.linha+')">Salvar</button></td></tr>';
+  }).join('');
+}
+
+function salvarContadoItem(linha){
+  var rowId='corrigir-'+linha;
+  var inp=document.getElementById(rowId+'-contado');
+  var novoContado=inp.value;
+  var btn=document.querySelector('#'+rowId+' button');
+  var txtOriginal=btn.textContent;
+  btn.disabled=true;btn.textContent='Salvando...';
+  google.script.run
+    .withSuccessHandler(function(json){
+      var res;try{res=JSON.parse(json);}catch(e){alert('Erro ao salvar.');btn.disabled=false;btn.textContent=txtOriginal;return;}
+      if(!res.ok){alert(res.erro||'Erro ao salvar.');btn.disabled=false;btn.textContent=txtOriginal;return;}
+      inp.value=fQd(res.contado);
+      var item=CORRIGIR_CONTAGEM_ITENS.filter(function(it){return it.linha===linha;})[0];
+      if(item)item.contado=res.contado;
+      btn.disabled=false;btn.textContent='Salvo!';
+      setTimeout(function(){btn.textContent=txtOriginal;},1500);
+    })
+    .withFailureHandler(function(err){
+      alert('Falha ao salvar: '+(err.message||err));btn.disabled=false;btn.textContent=txtOriginal;
+    })
+    .editarContadoItem(SENHA_ATUAL, CORRIGIR_CONTAGEM_ID, linha, novoContado);
+}
+
+function fecharCorrigirContagem(){
+  CORRIGIR_CONTAGEM_ID=null;
+  CORRIGIR_CONTAGEM_ITENS=[];
+  document.getElementById('corrigir-contagem-card').style.display='none';
 }
 
 function limparSelecaoInventario(){
