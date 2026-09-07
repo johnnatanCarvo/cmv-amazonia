@@ -12,6 +12,7 @@
 var C_COMPRAS = {
   filial:       0,   // ex: UMARIZAL
   data:         1,   // ex: 01/05/2026
+  cod:          3,   // ex: 1104  (Cód. ref. do produto)
   produto:      4,   // ex: MP CHEIRO VERDE KG
   grupo:        5,   // ex: MP HORTIFRUTI
   qtd:          7,   // ex: 4,6
@@ -1150,6 +1151,30 @@ function preAgregarCatalogoProdutos(rowsCompras, rowsVendas) {
       if (!rv || rv.length < 15) continue;
       registrar(limpaCelula(rv[C_VENDAS.produto]), limpaCelula(rv[C_VENDAS.grupo]));
     }
+  }
+  return catalogo;
+}
+
+// Catálogo COD → { nome canônico, grupo }, construído a partir de Compras
+// (coluna "Cód. ref."). Confirmado contra dados reais: o mesmo COD é usado
+// tanto em Compras quanto no sistema de contagem separado (ex: COD 1104 =
+// "MP TOMATE KG" nos dois) — é um identificador mais confiável que o nome,
+// porque não depende de grafia batendo. Usado em valorizarItensInventario_
+// como PRIMEIRA tentativa de casamento, antes do nome (apelido/exato/
+// aproximado) — só cai pro nome quando o item contado não tem COD ou o
+// COD não existe em nenhuma compra.
+function preAgregarCatalogoPorCodigo(rowsCompras) {
+  var catalogo = {};
+  if (!rowsCompras || rowsCompras.length < 2) return catalogo;
+  for (var i = 1; i < rowsCompras.length; i++) {
+    var r = rowsCompras[i];
+    if (!r || r.length < 18) continue;
+    var cod = limpaCelula(r[C_COMPRAS.cod]);
+    if (!cod) continue;
+    var nome = limpaCelula(r[C_COMPRAS.produto]);
+    var grupo = limpaCelula(r[C_COMPRAS.grupo]);
+    if (!catalogo[cod]) catalogo[cod] = { nome: nome, grupo: grupo || '' };
+    else if (!catalogo[cod].grupo && grupo) catalogo[cod].grupo = grupo;
   }
   return catalogo;
 }

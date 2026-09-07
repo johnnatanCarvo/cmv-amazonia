@@ -384,6 +384,105 @@ function listarContagensDisponiveis(senha, unidade) {
   }
 }
 
+// TEMP DIAGNOSTICO — checa se o COD do sistema de contagem bate com o Cod.
+// ref. de Compras, antes de trocar o casamento de nome pra codigo.
+function testarCodigosContagemVsCompras() {
+  var inventarios = obterInventariosSalvos_();
+  var todosContagemIds = [];
+  inventarios.forEach(function(inv) { todosContagemIds = todosContagemIds.concat(inv.contagemIds || []); });
+
+  var ss = SpreadsheetApp.openById(CONTAGEM_SHEET_ID);
+  var abaItens = ss.getSheetByName('ITENS_CONTAGEM');
+  var itRows = abaItens.getDataRange().getValues();
+  var idsValidos = {};
+  todosContagemIds.forEach(function(id) { idsValidos[String(id).trim()] = true; });
+
+  var porCodContagem = {}; // cod -> Set de produtos vistos com esse cod
+  for (var i = 1; i < itRows.length; i++) {
+    var r = itRows[i];
+    var cid = String(r[C_ITENS_CONTAGEM.contagemId]).trim();
+    if (!idsValidos[cid]) continue;
+    var cod = String(r[C_ITENS_CONTAGEM.cod]).trim();
+    var produto = String(r[C_ITENS_CONTAGEM.produto]).trim();
+    if (!cod) continue;
+    if (!porCodContagem[cod]) porCodContagem[cod] = {};
+    porCodContagem[cod][produto] = true;
+  }
+  Logger.log('Codigos distintos vistos na contagem: ' + Object.keys(porCodContagem).length);
+
+  var rowsCompras = lerTodosCSVs('compras');
+  var porCodCompras = {}; // cod -> Set de produtos
+  for (var j = 1; j < rowsCompras.length; j++) {
+    var rc = rowsCompras[j];
+    if (!rc || rc.length < 18) continue;
+    var codC = limpaCelula(rc[3]);
+    var prodC = limpaCelula(rc[C_COMPRAS.produto]);
+    if (!codC) continue;
+    if (!porCodCompras[codC]) porCodCompras[codC] = {};
+    porCodCompras[codC][prodC] = true;
+  }
+  Logger.log('Codigos distintos vistos em Compras: ' + Object.keys(porCodCompras).length);
+
+  Logger.log('\n=== COMPARACAO (ate 40 exemplos) ===');
+  var n = 0;
+  Object.keys(porCodContagem).forEach(function(cod) {
+    if (n >= 40) return;
+    var produtosContagem = Object.keys(porCodContagem[cod]);
+    var produtosCompras = porCodCompras[cod] ? Object.keys(porCodCompras[cod]) : null;
+    Logger.log('cod=' + cod + ' | contagem=' + produtosContagem.join(', ') + ' | compras=' + (produtosCompras ? produtosCompras.join(', ') : '(cod nao existe em Compras)'));
+    n++;
+  });
+}
+
+// TEMP DIAGNOSTICO — remover depois de gerar o relatorio.
+function testarTodosInventariosSemPreco() {
+  var inventarios = obterInventariosSalvos_();
+  Logger.log('Total de inventarios salvos: ' + inventarios.length);
+
+  var rowsCompras = lerTodosCSVs('compras');
+  var rowsVendas  = lerTodosCSVs('vendas');
+  var rowsFichas  = lerFichaTecnica();
+  var fichasMap = processarFichas(rowsFichas);
+  var historicoPorInsumo = preAgregarCustoMedioPorInsumo(rowsCompras);
+  var catalogo = preAgregarCatalogoProdutos(rowsCompras, rowsVendas);
+  var catalogoPorCodigo = preAgregarCatalogoPorCodigo(rowsCompras);
+  var dataPorContagemId = lerDataPorContagemId_();
+
+  var semPreco = {};   // produto -> [contextos]
+  var casados = {};    // produto -> nomeCanonico
+
+  inventarios.forEach(function(inv) {
+    if (!inv.contagemIds || !inv.contagemIds.length) return;
+    var info = resolverDataInventario_(inv, dataPorContagemId);
+    if (!info) { Logger.log('SEM DATA: ' + inv.label + ' (' + inv.unidade + ')'); return; }
+    var mesNome = NOMES_MESES[info.mes];
+    var itens = buscarItensDeContagens_(inv.contagemIds);
+    var rotulo = inv.label + ' (' + inv.unidade + ', ' + mesNome + '/' + info.ano + ')';
+    var res = valorizarItensInventario_(itens, mesNome, info.ano, historicoPorInsumo, fichasMap, catalogo, rotulo, catalogoPorCodigo);
+    res.avisos.forEach(function(a) {
+      var m = a.match(/^Item "([^"]+)"/);
+      if (!m) return;
+      var produto = m[1];
+      if (a.indexOf('casado automaticamente') >= 0) {
+        var m2 = a.match(/casado automaticamente com "([^"]+)"/);
+        casados[produto] = m2 ? m2[1] : '?';
+      } else {
+        if (!semPreco[produto]) semPreco[produto] = [];
+        semPreco[produto].push(rotulo);
+      }
+    });
+  });
+
+  Logger.log('\n=== SEM NENHUM PRECO (' + Object.keys(semPreco).length + ' produtos) ===');
+  Object.keys(semPreco).sort().forEach(function(p) {
+    Logger.log(p + ' — aparece em: ' + semPreco[p].join(' | '));
+  });
+  Logger.log('\n=== CASADOS POR APROXIMACAO (' + Object.keys(casados).length + ' produtos) ===');
+  Object.keys(casados).sort().forEach(function(p) {
+    Logger.log(p + ' -> ' + casados[p]);
+  });
+}
+
 function obterInventariosSalvos_() {
   var valor = PropertiesService.getScriptProperties().getProperty('INVENTARIOS_SEMANAIS_SALVOS');
   return valor ? JSON.parse(valor) : [];
@@ -591,6 +690,7 @@ function calcularAnaliseSemanal(senha, mes, ano) {
     var fichasMap   = processarFichas(rowsFichas);
     var historicoPorInsumo = preAgregarCustoMedioPorInsumo(rowsCompras);
     var catalogo    = preAgregarCatalogoProdutos(rowsCompras, rowsVendas);
+    var catalogoPorCodigo = preAgregarCatalogoPorCodigo(rowsCompras);
     var porDiaCompras = preAgregarComprasPorDia(rowsCompras);
     var porDiaVendas  = preAgregarVendasPorDia(rowsVendas);
 
@@ -620,8 +720,8 @@ function calcularAnaliseSemanal(senha, mes, ano) {
       var itensInicial = buscarItensDeContagens_(invInicial.contagemIds);
       var itensFinal   = buscarItensDeContagens_(invFinal.contagemIds);
       var rotulo = mes + '/' + ano + ', Semana ' + s.semanaNum + ', ' + s.unidade;
-      var valInicial = valorizarItensInventario_(itensInicial, mes, anoNum, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (inicial)');
-      var valFinal   = valorizarItensInventario_(itensFinal, mes, anoNum, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (final)');
+      var valInicial = valorizarItensInventario_(itensInicial, mes, anoNum, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (inicial)', catalogoPorCodigo);
+      var valFinal   = valorizarItensInventario_(itensFinal, mes, anoNum, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (final)', catalogoPorCodigo);
       avisos = avisos.concat(valInicial.avisos).concat(valFinal.avisos);
 
       blocos[s.semanaNum + '|' + s.unidade] = {
@@ -763,7 +863,10 @@ function buscarItensDoInventarioSalvo(senha, inventarioId) {
 }
 
 // Helper interno (sem checagem de senha própria — só chamado por funções
-// que já validaram): soma CONTADO por produto pra uma lista de contagemIds.
+// que já validaram): soma CONTADO por item pra uma lista de contagemIds.
+// Agrupa pelo COD quando existe (identificador mais confiável — o nome do
+// produto pode vir com grafia levemente diferente entre contagens do
+// mesmo item), caindo pro nome do produto só se o COD vier vazio.
 function buscarItensDeContagens_(contagemIds) {
   var ss  = SpreadsheetApp.openById(CONTAGEM_SHEET_ID);
   var aba = ss.getSheetByName('ITENS_CONTAGEM');
@@ -780,10 +883,12 @@ function buscarItensDeContagens_(contagemIds) {
     if (!idsValidos[cid]) continue;
     var produto = String(r[C_ITENS_CONTAGEM.produto]).trim();
     if (!produto) continue;
+    var cod = String(r[C_ITENS_CONTAGEM.cod] || '').trim();
     var contado = Number(r[C_ITENS_CONTAGEM.contado]) || 0;
     var und = String(r[C_ITENS_CONTAGEM.und] || '').trim();
-    if (!mapa[produto]) mapa[produto] = { produto: produto, und: und, qtde: 0 };
-    mapa[produto].qtde += contado;
+    var chave = cod || produto;
+    if (!mapa[chave]) mapa[chave] = { produto: produto, cod: cod, und: und, qtde: 0 };
+    mapa[chave].qtde += contado;
   }
   return Object.values(mapa);
 }
@@ -871,22 +976,34 @@ function resolverDataInventario_(inv, dataPorContagemId) {
 // fora do total e entra nos avisos — "rotuloContexto" só identifica de
 // onde veio o item, pro aviso ficar claro (não afeta o cálculo).
 // Retorna { total, porProduto:[{produto,grupo,und,qtd,custoUnit,custoTotal}], avisos }.
-function valorizarItensInventario_(itens, mesNome, ano, historicoPorInsumo, fichasMap, catalogo, rotuloContexto) {
+function valorizarItensInventario_(itens, mesNome, ano, historicoPorInsumo, fichasMap, catalogo, rotuloContexto, catalogoPorCodigo) {
   var total = 0;
   var porProduto = [];
   var avisos = [];
   (itens || []).forEach(function(item) {
-    // O sistema de contagem às vezes chama o item por um nome que não bate
-    // com Compras/Ficha Técnica (ex: prefixo "MP" a mais) — resolve isso
-    // ANTES de procurar no catálogo, usando o mesmo de-para de CMV Teórico.
-    var nomeContado = APELIDOS_PRODUTO[item.produto] || item.produto;
-    var cat = catalogo[nomeContado.toUpperCase()];
+    var cat = null;
     var casadoPorAproximacao = null;
 
-    // Sem match exato nem apelido: tenta achar UM único nome em Compras
-    // (ou, se não achar, na Ficha Técnica) cujas palavras contêm todas as
-    // palavras do nome contado (ex: "MP TOMATE" -> "MP TOMATE KG"). Só
-    // resolve se for inequívoco — ver acharUnicoPorSubconjuntoDePalavras_.
+    // 1ª tentativa (mais confiável): casar pelo COD do sistema de contagem
+    // contra o Cód. ref. de Compras — não depende de grafia batendo,
+    // confirmado com dados reais (ex: COD 1104 = "MP TOMATE KG" nos dois
+    // sistemas). Só cai pro nome se o item não tiver COD ou o COD não
+    // existir em nenhuma compra.
+    if (item.cod && catalogoPorCodigo && catalogoPorCodigo[item.cod]) {
+      cat = catalogoPorCodigo[item.cod];
+    }
+
+    // O sistema de contagem às vezes chama o item por um nome que não bate
+    // com Compras/Ficha Técnica (ex: prefixo "MP" a mais) — resolve isso
+    // usando o mesmo de-para de CMV Teórico.
+    var nomeContado = APELIDOS_PRODUTO[item.produto] || item.produto;
+    if (!cat) cat = catalogo[nomeContado.toUpperCase()];
+
+    // Sem match por COD, nem exato, nem apelido: tenta achar UM único nome
+    // em Compras (ou, se não achar, na Ficha Técnica) cujas palavras
+    // contêm todas as palavras do nome contado (ex: "MP TOMATE" -> "MP
+    // TOMATE KG"). Só resolve se for inequívoco — ver
+    // acharUnicoPorSubconjuntoDePalavras_.
     if (!cat) {
       var chaveCatalogo = acharUnicoPorSubconjuntoDePalavras_(nomeContado, catalogo);
       if (chaveCatalogo) {
@@ -981,6 +1098,7 @@ function gerarLinhasEstoqueDeInventariosSalvos_(rowsEstoque, rowsCompras, rowsVe
 
   // 4. Preço/grupo: mesmo catálogo e histórico usados no CMV Teórico.
   var catalogo = preAgregarCatalogoProdutos(rowsCompras, rowsVendas);
+  var catalogoPorCodigo = preAgregarCatalogoPorCodigo(rowsCompras);
   var linhas = [];
 
   chavesMes.forEach(function(chaveMes) {
@@ -1004,7 +1122,7 @@ function gerarLinhasEstoqueDeInventariosSalvos_(rowsEstoque, rowsCompras, rowsVe
       var entry = porUnidade[u];
       var itens = buscarItensDeContagens_(entry.inv.contagemIds);
       var rotulo = mesNome + '/' + infoData.ano + ', ' + u + ', ' + entry.inv.label;
-      var valorizado = valorizarItensInventario_(itens, mesNome, infoData.ano, historicoPorInsumo, fichasMap, catalogo, rotulo);
+      var valorizado = valorizarItensInventario_(itens, mesNome, infoData.ano, historicoPorInsumo, fichasMap, catalogo, rotulo, catalogoPorCodigo);
       avisos = avisos.concat(valorizado.avisos);
       valorizado.porProduto.forEach(function(p) {
         var linha = [];
