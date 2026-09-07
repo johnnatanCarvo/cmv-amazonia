@@ -549,6 +549,216 @@ function parseDataCompleta(str) {
            ts: ano + mes + dia };  // string YYYYMMDD para ordenação
 }
 
+// Motor de agregação de compras para o CMV, generalizado por PERÍODO (mesmo
+// padrão de processarComprasPorPeriodo_): agrupa compras + transferências
+// (entrada/saída, com quebra por grupo e produto) na chave que
+// "resolverPeriodo(dataInfo)" devolver. processarCMV chama isso com "sempre
+// o nome do mês" (comportamento de sempre); o CMV por semana/quinzena chama
+// com um resolvedor que só aceita linhas de um intervalo de dias, agrupando
+// tudo numa única chave — garante que mês e intervalo nunca divergem.
+function agregarComprasPeriodoCMV_(rows, resolverPeriodo) {
+  var comprasMes = {};
+  if (!rows || rows.length < 2) return comprasMes;
+
+  for (var j = 1; j < rows.length; j++) {
+    var rc = rows[j];
+    if (!rc || rc.length < 18) continue;
+    if (numVal(rc[C_COMPRAS.custo_atual]) <= 0) continue;
+    var dataInfo = parseDataCompleta(rc[C_COMPRAS.data]);
+    if (!dataInfo) continue;
+    var mnC = resolverPeriodo(dataInfo);
+    if (!mnC) continue;
+    var grC  = limpaCelula(rc[C_COMPRAS.grupo]);
+    var filC = limpaCelula(rc[C_COMPRAS.filial]) || 'OUTRA';
+    var prodC= limpaCelula(rc[C_COMPRAS.produto]);
+    var totC = numVal(rc[C_COMPRAS.total]);
+    if (totC <= 0) continue;
+
+    if (!comprasMes[mnC]) comprasMes[mnC] = { total:0, grupos:{}, filiais:{}, prodGrupo:{}, saidaFilial:{}, entradaFilial:{} };
+
+    // Transferência: registrar entrada (destino) e saída (origem) separadamente,
+    // com quebra por grupo (para o CMV por grupo dentro de uma unidade).
+    var fornC = limpaCelula(rc[C_COMPRAS_FORNECEDOR]);
+    var pareceTransfCMV = fornC.toUpperCase().indexOf(TRANSFERENCIA_MARCADOR) >= 0;
+    var filOrigemCMV = pareceTransfCMV ? filialOrigem(fornC) : null;
+    // Mesmo ajuste do processarCompras: so tratar como transferencia real
+    // se a origem resolvida for diferente do destino. Caso contrario, cai
+    // para compra externa normal (evita entrada sem saida correspondente).
+    var ehTransfCMV = pareceTransfCMV && filOrigemCMV !== filC;
+    if (pareceTransfCMV && !ehTransfCMV) {
+      Logger.log('AVISO (CMV): transferencia com origem igual ao destino (' + filC +
+                  '), fornecedor="' + fornC + '". Tratando como compra externa.');
+    }
+    if (ehTransfCMV) {
+      var qtdTC = numVal(rc[C_COMPRAS.qtd]);
+
+      // Entrada na filial de destino (recebeu)
+      if (!comprasMes[mnC].entradaFilial) comprasMes[mnC].entradaFilial = {};
+      comprasMes[mnC].entradaFilial[filC] = (comprasMes[mnC].entradaFilial[filC] || 0) + totC;
+      if (!comprasMes[mnC].entradaFilialGrupo) comprasMes[mnC].entradaFilialGrupo = {};
+      if (!comprasMes[mnC].entradaFilialGrupo[filC]) comprasMes[mnC].entradaFilialGrupo[filC] = {};
+      if (!comprasMes[mnC].entradaFilialGrupo[filC][grC]) comprasMes[mnC].entradaFilialGrupo[filC][grC] = { valor:0, qtd:0 };
+      comprasMes[mnC].entradaFilialGrupo[filC][grC].valor += totC;
+      comprasMes[mnC].entradaFilialGrupo[filC][grC].qtd   += qtdTC;
+      // Entrada por produto (para o detalhe de produto dentro do grupo)
+      if (!comprasMes[mnC].entradaProdGrupoFilial) comprasMes[mnC].entradaProdGrupoFilial = {};
+      if (!comprasMes[mnC].entradaProdGrupoFilial[filC]) comprasMes[mnC].entradaProdGrupoFilial[filC] = {};
+      if (!comprasMes[mnC].entradaProdGrupoFilial[filC][grC]) comprasMes[mnC].entradaProdGrupoFilial[filC][grC] = {};
+      if (!comprasMes[mnC].entradaProdGrupoFilial[filC][grC][prodC]) comprasMes[mnC].entradaProdGrupoFilial[filC][grC][prodC] = { valor:0, qtd:0 };
+      comprasMes[mnC].entradaProdGrupoFilial[filC][grC][prodC].valor += totC;
+      comprasMes[mnC].entradaProdGrupoFilial[filC][grC][prodC].qtd   += qtdTC;
+
+      // Saída na filial de origem (enviou)
+      comprasMes[mnC].saidaFilial[filOrigemCMV] = (comprasMes[mnC].saidaFilial[filOrigemCMV] || 0) + totC;
+      if (!comprasMes[mnC].saidaFilialGrupo) comprasMes[mnC].saidaFilialGrupo = {};
+      if (!comprasMes[mnC].saidaFilialGrupo[filOrigemCMV]) comprasMes[mnC].saidaFilialGrupo[filOrigemCMV] = {};
+      if (!comprasMes[mnC].saidaFilialGrupo[filOrigemCMV][grC]) comprasMes[mnC].saidaFilialGrupo[filOrigemCMV][grC] = { valor:0, qtd:0 };
+      comprasMes[mnC].saidaFilialGrupo[filOrigemCMV][grC].valor += totC;
+      comprasMes[mnC].saidaFilialGrupo[filOrigemCMV][grC].qtd   += qtdTC;
+      // Saída por produto (para o detalhe de produto dentro do grupo)
+      if (!comprasMes[mnC].saidaProdGrupoFilial) comprasMes[mnC].saidaProdGrupoFilial = {};
+      if (!comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV]) comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV] = {};
+      if (!comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV][grC]) comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV][grC] = {};
+      if (!comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV][grC][prodC]) comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV][grC][prodC] = { valor:0, qtd:0 };
+      comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV][grC][prodC].valor += totC;
+      comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV][grC][prodC].qtd   += qtdTC;
+    }
+
+    var qtdC = numVal(rc[C_COMPRAS.qtd]);
+
+    // Totais CONSOLIDADOS (empresa toda): excluem transferência por completo.
+    // Uma transferência não é uma segunda compra: a mercadoria já foi contada
+    // quando a unidade de origem comprou de verdade do fornecedor. Contar a
+    // entrada de novo no consolidado duplicaria o valor da mercadoria.
+    if (!ehTransfCMV) {
+      comprasMes[mnC].total += totC;
+      comprasMes[mnC].grupos[grC] = (comprasMes[mnC].grupos[grC] || 0) + totC;
+      if (grC && prodC) {
+        if (!comprasMes[mnC].prodGrupo[grC]) comprasMes[mnC].prodGrupo[grC] = {};
+        if (!comprasMes[mnC].prodGrupo[grC][prodC]) comprasMes[mnC].prodGrupo[grC][prodC] = { valor:0, qtd:0 };
+        comprasMes[mnC].prodGrupo[grC][prodC].valor += totC;
+        comprasMes[mnC].prodGrupo[grC][prodC].qtd   += qtdC;
+      }
+    }
+    if (!comprasMes[mnC].filiais[filC]) comprasMes[mnC].filiais[filC] = { total:0, grupos:{}, prodGrupo:{} };
+    comprasMes[mnC].filiais[filC].total += totC;
+    comprasMes[mnC].filiais[filC].grupos[grC] = (comprasMes[mnC].filiais[filC].grupos[grC] || 0) + totC;
+
+    // Compras por produto dentro do grupo, DESTA filial (valor e quantidade)
+    if (grC && prodC) {
+      if (!comprasMes[mnC].filiais[filC].prodGrupo[grC]) comprasMes[mnC].filiais[filC].prodGrupo[grC] = {};
+      if (!comprasMes[mnC].filiais[filC].prodGrupo[grC][prodC]) comprasMes[mnC].filiais[filC].prodGrupo[grC][prodC] = { valor:0, qtd:0 };
+      comprasMes[mnC].filiais[filC].prodGrupo[grC][prodC].valor += totC;
+      comprasMes[mnC].filiais[filC].prodGrupo[grC][prodC].qtd   += qtdC;
+    }
+  }
+  return comprasMes;
+}
+
+// Mesma agregação de compras do CMV, mas pra um intervalo de dias dentro de
+// um mês/ano específico (usado pelo CMV por Semana/Quinzena) — reaproveita
+// agregarComprasPeriodoCMV_ com um resolvedor que só aceita as linhas do
+// intervalo, todas jogadas numa única chave. Retorna o objeto no formato de
+// comprasMes[mes] de dentro de processarCMV (default vazio se nada bateu).
+function comprasPeriodoCMV_(rowsCompras, mesNome, ano, diaMin, diaMax) {
+  var CHAVE = 'PERIODO';
+  var resultado = agregarComprasPeriodoCMV_(rowsCompras || [], function(dataInfo) {
+    if (dataInfo.ano !== ano) return null;
+    if (NOMES_MESES[dataInfo.mes] !== mesNome) return null;
+    if (dataInfo.dia < diaMin || dataInfo.dia > diaMax) return null;
+    return CHAVE;
+  });
+  return resultado[CHAVE] || {
+    total:0, grupos:{}, filiais:{}, prodGrupo:{}, saidaFilial:{}, entradaFilial:{},
+    entradaFilialGrupo:{}, saidaFilialGrupo:{}, entradaProdGrupoFilial:{}, saidaProdGrupoFilial:{}
+  };
+}
+
+// Monta o array "grupos" do CMV de UMA filial/unidade (mesmo formato de
+// cmv[mes].filiais[f].grupos): recebe os mapas já extraídos de EI, EF e
+// compras (com transferência) daquela unidade e devolve
+// [{grupo, ei, compras, ef, cmv, qtd, transf_entrada, transf_saida,
+// produtos:[...]}]. Usado tanto por processarCMV (mês inteiro, mapas vindos
+// de contagensPorData) quanto pelo CMV por semana/quinzena (mapas vindos de
+// valorizarItensInventario_ + comprasPeriodoCMV_) — o mesmo motor garante
+// que os dois nunca divergem silenciosamente.
+function montarGruposCMV_(eiPorGrupoF, eiProdGrupoF, efPorGrupoF, efProdGrupoF,
+    coPorGrupoF, coProdGrupoFilialF, entradaGrupoF, saidaGrupoF, entradaProdGrupoF, saidaProdGrupoF) {
+  eiPorGrupoF = eiPorGrupoF || {};
+  eiProdGrupoF = eiProdGrupoF || {};
+  efPorGrupoF = efPorGrupoF || {};
+  efProdGrupoF = efProdGrupoF || {};
+  coPorGrupoF = coPorGrupoF || {};
+  coProdGrupoFilialF = coProdGrupoFilialF || {};
+  entradaGrupoF = entradaGrupoF || {};
+  saidaGrupoF = saidaGrupoF || {};
+  entradaProdGrupoF = entradaProdGrupoF || {};
+  saidaProdGrupoF = saidaProdGrupoF || {};
+
+  var gruposSetF = {};
+  Object.keys(eiPorGrupoF).forEach(function(g){ gruposSetF[g]=1; });
+  Object.keys(efPorGrupoF).forEach(function(g){ gruposSetF[g]=1; });
+  Object.keys(coPorGrupoF).forEach(function(g){ gruposSetF[g]=1; });
+  Object.keys(entradaGrupoF).forEach(function(g){ gruposSetF[g]=1; });
+  Object.keys(saidaGrupoF).forEach(function(g){ gruposSetF[g]=1; });
+
+  return Object.keys(gruposSetF).map(function(g){
+    var eiG = eiPorGrupoF[g] || 0;
+    var efG = efPorGrupoF[g] || 0;
+    var coG = coPorGrupoF[g] || 0;
+    var entradaG = (entradaGrupoF[g] ? entradaGrupoF[g].valor : 0) || 0;
+    var saidaG   = (saidaGrupoF[g]   ? saidaGrupoF[g].valor   : 0) || 0;
+    var entradaQtdG = (entradaGrupoF[g] ? entradaGrupoF[g].qtd : 0) || 0;
+    var saidaQtdG   = (saidaGrupoF[g]   ? saidaGrupoF[g].qtd   : 0) || 0;
+    var coGAjust = coG - saidaG;  // coG já inclui a entrada; desconta a saída
+
+    // Produtos do grupo, dentro desta filial.
+    // Inclui produtos com estoque, compra OU movimentacao de transferencia,
+    // para a soma dos produtos bater exatamente com o total do grupo.
+    var prodSetG = {};
+    var eiProdsG = (eiProdGrupoF[g]) || {};
+    var efProdsG = (efProdGrupoF[g]) || {};
+    var coProdsG = (coProdGrupoFilialF[g]) || {};
+    var entradaProdG = (entradaProdGrupoF[g]) || {};
+    var saidaProdG   = (saidaProdGrupoF[g])   || {};
+    Object.keys(eiProdsG).forEach(function(p){ prodSetG[p]=1; });
+    Object.keys(efProdsG).forEach(function(p){ prodSetG[p]=1; });
+    Object.keys(coProdsG).forEach(function(p){ prodSetG[p]=1; });
+    Object.keys(entradaProdG).forEach(function(p){ prodSetG[p]=1; });
+    Object.keys(saidaProdG).forEach(function(p){ prodSetG[p]=1; });
+
+    var produtosG = Object.keys(prodSetG).map(function(p){
+      var eiP = eiProdsG[p] || 0;
+      var efP = efProdsG[p] || 0;
+      var coObjP = coProdsG[p] || { valor:0, qtd:0 };
+      var coP = coObjP.valor || 0;   // já inclui a entrada, se esta filial recebeu o produto
+      var qtdP = coObjP.qtd || 0;
+      var entObjP = entradaProdG[p] || { valor:0, qtd:0 };
+      var saiObjP = saidaProdG[p]   || { valor:0, qtd:0 };
+      // Compras líquidas do produto: desconta apenas a saída (a entrada já está em coP)
+      var coPLiquido = coP - (saiObjP.valor || 0);
+      return {
+        nome: p,
+        ei: r2(eiP), compras: r2(coPLiquido), ef: r2(efP),
+        cmv: r2(eiP + coPLiquido - efP),
+        qtd: r2(qtdP),
+        transf_entrada: r2(entObjP.valor||0), transf_entrada_qtd: r2(entObjP.qtd||0),
+        transf_saida:   r2(saiObjP.valor||0), transf_saida_qtd:   r2(saiObjP.qtd||0)
+      };
+    }).sort(function(a,b){ return b.cmv - a.cmv; });
+
+    return {
+      grupo: g,
+      ei: r2(eiG), compras: r2(coGAjust), ef: r2(efG),
+      cmv: r2(eiG + coGAjust - efG),
+      qtd: r2(produtosG.reduce(function(s,p){ return s + (p.qtd||0); }, 0)),
+      transf_entrada: r2(entradaG), transf_entrada_qtd: r2(entradaQtdG),
+      transf_saida:   r2(saidaG),   transf_saida_qtd:   r2(saidaQtdG),
+      produtos: produtosG
+    };
+  }).sort(function(a,b){ return b.cmv - a.cmv; });
+}
+
 function processarCMV(rowsEstoque, rowsCompras) {
   if (!rowsEstoque || rowsEstoque.length < 2) {
     Logger.log('CSV de estoque nao disponivel. CMV nao calculado.');
@@ -614,100 +824,9 @@ function processarCMV(rowsEstoque, rowsCompras) {
   }
 
   // ── 2. Compras por mes + grupo + filial ──
-  var comprasMes = {};        // mes → { total, grupos:{}, filiais:{ FIL:{total,grupos:{}} } }
-  if (rowsCompras && rowsCompras.length > 1) {
-    for (var j = 1; j < rowsCompras.length; j++) {
-      var rc = rowsCompras[j];
-      if (!rc || rc.length < 18) continue;
-      if (numVal(rc[C_COMPRAS.custo_atual]) <= 0) continue;
-      var mC = mesNum(rc[C_COMPRAS.data]);
-      if (!mC) continue;
-      var mnC  = NOMES_MESES[mC];
-      var grC  = limpaCelula(rc[C_COMPRAS.grupo]);
-      var filC = limpaCelula(rc[C_COMPRAS.filial]) || 'OUTRA';
-      var prodC= limpaCelula(rc[C_COMPRAS.produto]);
-      var totC = numVal(rc[C_COMPRAS.total]);
-      if (totC <= 0) continue;
-
-      if (!comprasMes[mnC]) comprasMes[mnC] = { total:0, grupos:{}, filiais:{}, prodGrupo:{}, saidaFilial:{}, entradaFilial:{} };
-
-      // Transferência: registrar entrada (destino) e saída (origem) separadamente,
-      // com quebra por grupo (para o CMV por grupo dentro de uma unidade).
-      var fornC = limpaCelula(rc[C_COMPRAS_FORNECEDOR]);
-      var pareceTransfCMV = fornC.toUpperCase().indexOf(TRANSFERENCIA_MARCADOR) >= 0;
-      var filOrigemCMV = pareceTransfCMV ? filialOrigem(fornC) : null;
-      // Mesmo ajuste do processarCompras: so tratar como transferencia real
-      // se a origem resolvida for diferente do destino. Caso contrario, cai
-      // para compra externa normal (evita entrada sem saida correspondente).
-      var ehTransfCMV = pareceTransfCMV && filOrigemCMV !== filC;
-      if (pareceTransfCMV && !ehTransfCMV) {
-        Logger.log('AVISO (CMV): transferencia com origem igual ao destino (' + filC +
-                    '), fornecedor="' + fornC + '". Tratando como compra externa.');
-      }
-      if (ehTransfCMV) {
-        var qtdTC = numVal(rc[C_COMPRAS.qtd]);
-
-        // Entrada na filial de destino (recebeu)
-        if (!comprasMes[mnC].entradaFilial) comprasMes[mnC].entradaFilial = {};
-        comprasMes[mnC].entradaFilial[filC] = (comprasMes[mnC].entradaFilial[filC] || 0) + totC;
-        if (!comprasMes[mnC].entradaFilialGrupo) comprasMes[mnC].entradaFilialGrupo = {};
-        if (!comprasMes[mnC].entradaFilialGrupo[filC]) comprasMes[mnC].entradaFilialGrupo[filC] = {};
-        if (!comprasMes[mnC].entradaFilialGrupo[filC][grC]) comprasMes[mnC].entradaFilialGrupo[filC][grC] = { valor:0, qtd:0 };
-        comprasMes[mnC].entradaFilialGrupo[filC][grC].valor += totC;
-        comprasMes[mnC].entradaFilialGrupo[filC][grC].qtd   += qtdTC;
-        // Entrada por produto (para o detalhe de produto dentro do grupo)
-        if (!comprasMes[mnC].entradaProdGrupoFilial) comprasMes[mnC].entradaProdGrupoFilial = {};
-        if (!comprasMes[mnC].entradaProdGrupoFilial[filC]) comprasMes[mnC].entradaProdGrupoFilial[filC] = {};
-        if (!comprasMes[mnC].entradaProdGrupoFilial[filC][grC]) comprasMes[mnC].entradaProdGrupoFilial[filC][grC] = {};
-        if (!comprasMes[mnC].entradaProdGrupoFilial[filC][grC][prodC]) comprasMes[mnC].entradaProdGrupoFilial[filC][grC][prodC] = { valor:0, qtd:0 };
-        comprasMes[mnC].entradaProdGrupoFilial[filC][grC][prodC].valor += totC;
-        comprasMes[mnC].entradaProdGrupoFilial[filC][grC][prodC].qtd   += qtdTC;
-
-        // Saída na filial de origem (enviou)
-        comprasMes[mnC].saidaFilial[filOrigemCMV] = (comprasMes[mnC].saidaFilial[filOrigemCMV] || 0) + totC;
-        if (!comprasMes[mnC].saidaFilialGrupo) comprasMes[mnC].saidaFilialGrupo = {};
-        if (!comprasMes[mnC].saidaFilialGrupo[filOrigemCMV]) comprasMes[mnC].saidaFilialGrupo[filOrigemCMV] = {};
-        if (!comprasMes[mnC].saidaFilialGrupo[filOrigemCMV][grC]) comprasMes[mnC].saidaFilialGrupo[filOrigemCMV][grC] = { valor:0, qtd:0 };
-        comprasMes[mnC].saidaFilialGrupo[filOrigemCMV][grC].valor += totC;
-        comprasMes[mnC].saidaFilialGrupo[filOrigemCMV][grC].qtd   += qtdTC;
-        // Saída por produto (para o detalhe de produto dentro do grupo)
-        if (!comprasMes[mnC].saidaProdGrupoFilial) comprasMes[mnC].saidaProdGrupoFilial = {};
-        if (!comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV]) comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV] = {};
-        if (!comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV][grC]) comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV][grC] = {};
-        if (!comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV][grC][prodC]) comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV][grC][prodC] = { valor:0, qtd:0 };
-        comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV][grC][prodC].valor += totC;
-        comprasMes[mnC].saidaProdGrupoFilial[filOrigemCMV][grC][prodC].qtd   += qtdTC;
-      }
-
-      var qtdC = numVal(rc[C_COMPRAS.qtd]);
-
-      // Totais CONSOLIDADOS (empresa toda): excluem transferência por completo.
-      // Uma transferência não é uma segunda compra: a mercadoria já foi contada
-      // quando a unidade de origem comprou de verdade do fornecedor. Contar a
-      // entrada de novo no consolidado duplicaria o valor da mercadoria.
-      if (!ehTransfCMV) {
-        comprasMes[mnC].total += totC;
-        comprasMes[mnC].grupos[grC] = (comprasMes[mnC].grupos[grC] || 0) + totC;
-        if (grC && prodC) {
-          if (!comprasMes[mnC].prodGrupo[grC]) comprasMes[mnC].prodGrupo[grC] = {};
-          if (!comprasMes[mnC].prodGrupo[grC][prodC]) comprasMes[mnC].prodGrupo[grC][prodC] = { valor:0, qtd:0 };
-          comprasMes[mnC].prodGrupo[grC][prodC].valor += totC;
-          comprasMes[mnC].prodGrupo[grC][prodC].qtd   += qtdC;
-        }
-      }
-      if (!comprasMes[mnC].filiais[filC]) comprasMes[mnC].filiais[filC] = { total:0, grupos:{}, prodGrupo:{} };
-      comprasMes[mnC].filiais[filC].total += totC;
-      comprasMes[mnC].filiais[filC].grupos[grC] = (comprasMes[mnC].filiais[filC].grupos[grC] || 0) + totC;
-
-      // Compras por produto dentro do grupo, DESTA filial (valor e quantidade)
-      if (grC && prodC) {
-        if (!comprasMes[mnC].filiais[filC].prodGrupo[grC]) comprasMes[mnC].filiais[filC].prodGrupo[grC] = {};
-        if (!comprasMes[mnC].filiais[filC].prodGrupo[grC][prodC]) comprasMes[mnC].filiais[filC].prodGrupo[grC][prodC] = { valor:0, qtd:0 };
-        comprasMes[mnC].filiais[filC].prodGrupo[grC][prodC].valor += totC;
-        comprasMes[mnC].filiais[filC].prodGrupo[grC][prodC].qtd   += qtdC;
-      }
-    }
-  }
+  var comprasMes = (rowsCompras && rowsCompras.length > 1)
+    ? agregarComprasPeriodoCMV_(rowsCompras, function(dataInfo) { return NOMES_MESES[dataInfo.mes]; })
+    : {};
 
   // ── 3. CMV por mes ──
   // Cada par de contagens consecutivas define um periodo.
@@ -814,61 +933,10 @@ function processarCMV(rowsEstoque, rowsCompras) {
       var eiProdGrupoF = (ei.porProdGrupoFilial && ei.porProdGrupoFilial[f]) ? ei.porProdGrupoFilial[f] : {};
       var efProdGrupoF = (ef.porProdGrupoFilial && ef.porProdGrupoFilial[f]) ? ef.porProdGrupoFilial[f] : {};
 
-      var gruposF = Object.keys(gruposSetF).map(function(g){
-        var eiG = eiPorGrupoF[g] || 0;
-        var efG = efPorGrupoF[g] || 0;
-        var coG = coPorGrupoF[g] || 0;
-        var entradaG = (entradaGrupoF[g] ? entradaGrupoF[g].valor : 0) || 0;
-        var saidaG   = (saidaGrupoF[g]   ? saidaGrupoF[g].valor   : 0) || 0;
-        var entradaQtdG = (entradaGrupoF[g] ? entradaGrupoF[g].qtd : 0) || 0;
-        var saidaQtdG   = (saidaGrupoF[g]   ? saidaGrupoF[g].qtd   : 0) || 0;
-        var coGAjust = coG - saidaG;  // coG já inclui a entrada; desconta a saída
-
-        // Produtos do grupo, dentro desta filial.
-        // Inclui produtos com estoque, compra OU movimentacao de transferencia,
-        // para a soma dos produtos bater exatamente com o total do grupo.
-        var prodSetG = {};
-        var eiProdsG = (eiProdGrupoF[g]) || {};
-        var efProdsG = (efProdGrupoF[g]) || {};
-        var coProdsG = (prodGrupoFilialF[g]) || {};
-        var entradaProdG = (cMes && cMes.entradaProdGrupoFilial && cMes.entradaProdGrupoFilial[f] && cMes.entradaProdGrupoFilial[f][g]) ? cMes.entradaProdGrupoFilial[f][g] : {};
-        var saidaProdG   = (cMes && cMes.saidaProdGrupoFilial   && cMes.saidaProdGrupoFilial[f]   && cMes.saidaProdGrupoFilial[f][g])   ? cMes.saidaProdGrupoFilial[f][g]   : {};
-        Object.keys(eiProdsG).forEach(function(p){ prodSetG[p]=1; });
-        Object.keys(efProdsG).forEach(function(p){ prodSetG[p]=1; });
-        Object.keys(coProdsG).forEach(function(p){ prodSetG[p]=1; });
-        Object.keys(entradaProdG).forEach(function(p){ prodSetG[p]=1; });
-        Object.keys(saidaProdG).forEach(function(p){ prodSetG[p]=1; });
-
-        var produtosG = Object.keys(prodSetG).map(function(p){
-          var eiP = eiProdsG[p] || 0;
-          var efP = efProdsG[p] || 0;
-          var coObjP = coProdsG[p] || { valor:0, qtd:0 };
-          var coP = coObjP.valor || 0;   // já inclui a entrada, se esta filial recebeu o produto
-          var qtdP = coObjP.qtd || 0;
-          var entObjP = entradaProdG[p] || { valor:0, qtd:0 };
-          var saiObjP = saidaProdG[p]   || { valor:0, qtd:0 };
-          // Compras líquidas do produto: desconta apenas a saída (a entrada já está em coP)
-          var coPLiquido = coP - (saiObjP.valor || 0);
-          return {
-            nome: p,
-            ei: r2(eiP), compras: r2(coPLiquido), ef: r2(efP),
-            cmv: r2(eiP + coPLiquido - efP),
-            qtd: r2(qtdP),
-            transf_entrada: r2(entObjP.valor||0), transf_entrada_qtd: r2(entObjP.qtd||0),
-            transf_saida:   r2(saiObjP.valor||0), transf_saida_qtd:   r2(saiObjP.qtd||0)
-          };
-        }).sort(function(a,b){ return b.cmv - a.cmv; });
-
-        return {
-          grupo: g,
-          ei: r2(eiG), compras: r2(coGAjust), ef: r2(efG),
-          cmv: r2(eiG + coGAjust - efG),
-          qtd: r2(produtosG.reduce(function(s,p){ return s + (p.qtd||0); }, 0)),
-          transf_entrada: r2(entradaG), transf_entrada_qtd: r2(entradaQtdG),
-          transf_saida:   r2(saidaG),   transf_saida_qtd:   r2(saidaQtdG),
-          produtos: produtosG
-        };
-      }).sort(function(a,b){ return b.cmv - a.cmv; });
+      var entradaProdGrupoF = (cMes && cMes.entradaProdGrupoFilial && cMes.entradaProdGrupoFilial[f]) ? cMes.entradaProdGrupoFilial[f] : {};
+      var saidaProdGrupoF   = (cMes && cMes.saidaProdGrupoFilial   && cMes.saidaProdGrupoFilial[f])   ? cMes.saidaProdGrupoFilial[f]   : {};
+      var gruposF = montarGruposCMV_(eiPorGrupoF, eiProdGrupoF, efPorGrupoF, efProdGrupoF,
+        coPorGrupoF, prodGrupoFilialF, entradaGrupoF, saidaGrupoF, entradaProdGrupoF, saidaProdGrupoF);
 
       filiais[f] = {
         ei: r2(eiF), compras: r2(comprasAjust), ef: r2(efF),
