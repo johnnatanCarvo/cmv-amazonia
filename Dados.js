@@ -1152,6 +1152,56 @@ function preAgregarCatalogoProdutos(rowsCompras, rowsVendas) {
   return catalogo;
 }
 
+// ── CASAMENTO APROXIMADO DE NOME (fallback quando não há match exato nem
+// apelido cadastrado) ────────────────────────────────────────────────────
+//
+// O sistema de contagem às vezes nomeia um insumo de forma mais "curta" do
+// que o Cloudfy (ex: contagem "MP TOMATE" vs Compras "MP TOMATE KG"; ou
+// "LAGOSTA" vs "MP LAGOSTA IN NATURA KG") — o nome de Compras normalmente
+// é o de contagem MAIS alguma palavra a mais (unidade, "IN NATURA",
+// variante). Em vez de adivinhar por semelhança de texto (arriscado — um
+// palpite errado precifica errado, silenciosamente), a regra aqui é
+// estrita: só resolve automaticamente se TODAS as palavras do nome contado
+// aparecerem em EXATAMENTE UM nome do universo de busca. Se aparecer em
+// zero ou em mais de um (ex: "SEM COLINHA" vs "COM COLINHA" do mesmo
+// camarão), fica sem resolver — mais vale avisar do que arriscar o preço
+// errado.
+
+// Remove acentos e normaliza pra maiúsculas — nomes vêm com acentuação
+// inconsistente entre os dois sistemas (ex: "MARAJÓ" vs "MARAJO").
+function normalizarNomeProduto_(nome) {
+  return String(nome || '')
+    .toUpperCase()
+    .normalize('NFD').replace(/[̀-ͯ]/g, '') // remove diacríticos
+    .replace(/[^A-Z0-9 ]/g, ' ') // pontuação/parênteses viram espaço
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function palavrasProduto_(nome) {
+  var norm = normalizarNomeProduto_(nome);
+  return norm ? norm.split(' ') : [];
+}
+
+// Acha, dentro de um mapa { NOME_UPPER: qualquer coisa }, a ÚNICA chave cujo
+// conjunto de palavras contém todas as palavras de "nomeContado" (nome
+// contado pode ter MENOS palavras que o nome de origem, nunca mais).
+// Retorna a chave original (não normalizada) do mapa, ou null se não achar
+// exatamente uma.
+function acharUnicoPorSubconjuntoDePalavras_(nomeContado, mapaChaves) {
+  var palavrasAlvo = palavrasProduto_(nomeContado);
+  if (!palavrasAlvo.length) return null;
+
+  var achados = [];
+  Object.keys(mapaChaves).forEach(function(chave) {
+    var palavrasChave = palavrasProduto_(chave);
+    var contemTodas = palavrasAlvo.every(function(p) { return palavrasChave.indexOf(p) >= 0; });
+    if (contemTodas) achados.push(chave);
+  });
+
+  return achados.length === 1 ? achados[0] : null;
+}
+
 // Pré-agrega o custo médio ponderado de cada insumo por mês/ano — uma
 // única vez (mesma lógica de performance da Análise Quinzenal: evita
 // reescanear rowsCompras a cada produto/mês). Ignora transferência entre

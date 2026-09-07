@@ -881,7 +881,24 @@ function valorizarItensInventario_(itens, mesNome, ano, historicoPorInsumo, fich
     // ANTES de procurar no catálogo, usando o mesmo de-para de CMV Teórico.
     var nomeContado = APELIDOS_PRODUTO[item.produto] || item.produto;
     var cat = catalogo[nomeContado.toUpperCase()];
-    var nomeCanonico = cat ? cat.nome : nomeContado;
+    var casadoPorAproximacao = null;
+
+    // Sem match exato nem apelido: tenta achar UM único nome em Compras
+    // (ou, se não achar, na Ficha Técnica) cujas palavras contêm todas as
+    // palavras do nome contado (ex: "MP TOMATE" -> "MP TOMATE KG"). Só
+    // resolve se for inequívoco — ver acharUnicoPorSubconjuntoDePalavras_.
+    if (!cat) {
+      var chaveCatalogo = acharUnicoPorSubconjuntoDePalavras_(nomeContado, catalogo);
+      if (chaveCatalogo) {
+        cat = catalogo[chaveCatalogo];
+        casadoPorAproximacao = cat.nome;
+      } else if (fichasMap) {
+        var chaveFicha = acharUnicoPorSubconjuntoDePalavras_(nomeContado, fichasMap);
+        if (chaveFicha) casadoPorAproximacao = chaveFicha;
+      }
+    }
+
+    var nomeCanonico = casadoPorAproximacao || (cat ? cat.nome : nomeContado);
     var grupo = cat ? cat.grupo : '';
     var custoUnit = buscarCustoInsumoComFallback(historicoPorInsumo, nomeCanonico, mesNome, ano);
     if ((custoUnit === null || custoUnit === undefined) && fichasMap) {
@@ -891,6 +908,10 @@ function valorizarItensInventario_(itens, mesNome, ano, historicoPorInsumo, fich
       avisos.push('Item "' + item.produto + '"' + (rotuloContexto ? ' (' + rotuloContexto + ')' : '') +
         ': sem histórico de compra nem ficha técnica — não entrou no valor do inventário.');
       return;
+    }
+    if (casadoPorAproximacao) {
+      avisos.push('Item "' + item.produto + '"' + (rotuloContexto ? ' (' + rotuloContexto + ')' : '') +
+        ': casado automaticamente com "' + nomeCanonico + '" (aproximação de nome) — confirme se é o mesmo produto.');
     }
     var custoTotal = r2(custoUnit * item.qtde);
     total += custoTotal;
