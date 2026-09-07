@@ -330,6 +330,7 @@ td.hi{font-weight:600;}
       <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end;">
         <div class="mseg" id="mes-seg"></div>
         <div class="useg" id="mes-useg"></div>
+        <div class="mseg" id="mes-granseg" style="display:none;"></div>
       </div>
     </div>
 
@@ -502,6 +503,7 @@ td.hi{font-weight:600;}
       <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end;">
         <div class="mseg" id="cmv-mseg"></div>
         <div class="useg" id="cmv-useg"></div>
+        <div class="mseg" id="cmv-granseg" style="display:none;"></div>
       </div>
     </div>
 
@@ -910,14 +912,178 @@ function iniciar(){
 }
 
 /* ============================================================
+   GRANULARIDADE (Semana / Quinzena) — compartilhado entre
+   "Análise Mês a Mês" e "CMV". Reaproveita o mesmo endpoint da
+   Análise Quinzenal (calcularAnaliseSemanal), com cache por mês,
+   pra mostrar Semana 1-4 / 1ª e 2ª Quinzena ao lado do mês, sem
+   duplicar a chamada quando as duas abas olham o mesmo mês.
+   ============================================================ */
+var ANALISE_SEMANAL_CACHE={};
+var periodoAtualCMC={tipo:'mes'};
+var periodoAtualCMV={tipo:'mes'};
+
+function obterAnaliseSemanalCache_(mesNome, callback){
+  if(ANALISE_SEMANAL_CACHE[mesNome]){callback(ANALISE_SEMANAL_CACHE[mesNome]);return;}
+  google.script.run.withSuccessHandler(function(json){
+    var res;try{res=JSON.parse(json);}catch(e){res=null;}
+    var dados=(res&&res.ok)?res:{semanas:{},quinzenas:{},avisos:[]};
+    ANALISE_SEMANAL_CACHE[mesNome]=dados;
+    callback(dados);
+  }).withFailureHandler(function(){
+    var dados={semanas:{},quinzenas:{},avisos:[]};
+    ANALISE_SEMANAL_CACHE[mesNome]=dados;
+    callback(dados);
+  }).calcularAnaliseSemanal(SENHA_ATUAL, mesNome, ANO_OPERACIONAL);
+}
+
+// Quais granularidades (das 6 possíveis) têm pelo menos uma unidade
+// configurada pro mês — reaproveita QUINZENAL_SUB_DEFS (já usado na aba
+// Análise Quinzenal) como fonte única da lista/ordem/rótulos.
+function periodosDisponiveis_(mesNome){
+  var dados=ANALISE_SEMANAL_CACHE[mesNome];
+  if(!dados)return [];
+  return QUINZENAL_SUB_DEFS.filter(function(d){
+    var dd=d.tipo==='semana'?dados.semanas[d.num]:dados.quinzenas[d.nome];
+    return dd&&Object.keys(dd).length;
+  });
+}
+function periodoParaChave_(periodo){
+  if(!periodo||periodo.tipo==='mes')return null;
+  var def=QUINZENAL_SUB_DEFS.filter(function(d){
+    return periodo.tipo==='semana'?(d.tipo==='semana'&&d.num===periodo.num):(d.tipo==='quinzena'&&d.nome===periodo.nome);
+  })[0];
+  return def?def.key:null;
+}
+function chaveParaPeriodo_(key){
+  var def=QUINZENAL_SUB_DEFS.filter(function(d){return d.key===key;})[0];
+  if(!def)return {tipo:'mes'};
+  return def.tipo==='semana'?{tipo:'semana',num:def.num}:{tipo:'quinzena',nome:def.nome};
+}
+
+// Renderiza o seletor "Mês Todo | Semana N | Quinzena" na div indicada.
+// Só aparece quando há alguma semana/quinzena salva pro mês (senão fica
+// escondido — comportamento idêntico ao de hoje).
+function montarGranSeg_(elId, mesNome, periodoAtual, onSelectFn){
+  var el=document.getElementById(elId);
+  if(!el)return;
+  var disponiveis=periodosDisponiveis_(mesNome);
+  if(!disponiveis.length){el.style.display='none';el.innerHTML='';return;}
+  el.style.display='';
+  var chaveAtual=periodoParaChave_(periodoAtual);
+  var html='<button class="'+(!chaveAtual?'on':'')+'" onclick="'+onSelectFn+'(null)">Mês Todo</button>';
+  html+=disponiveis.map(function(d){
+    return '<button class="'+(d.key===chaveAtual?'on':'')+'" onclick="'+onSelectFn+'(\''+d.key+'\')">'+d.label+'</button>';
+  }).join('');
+  el.innerHTML=html;
+}
+
+// Extrai o CMC de um período salvo (semana/quinzena) no MESMO formato que
+// dadosMes() devolve pro mês inteiro — mesma forma, fonte diferente
+// (cmcDetalhado de calcularAnaliseSemanal em vez de CMC[mes] direto).
+// "TODAS" nesse nível fica só com os totais (sem grupo/produto): cada
+// unidade pode ter um intervalo de dias diferente pra "mesma" semana
+// (contagens em datas distintas), então não dá pra somar grupo a grupo
+// com segurança — mantém o consolidado simples que calcularAnaliseSemanal
+// já calcula.
+function dadosPeriodoCMC(mesNome, periodo, unidade){
+  if(unidade===undefined)unidade=uniAtual;
+  var dados=ANALISE_SEMANAL_CACHE[mesNome];
+  if(!dados)return null;
+  var bloco=periodo.tipo==='semana'?dados.semanas[periodo.num]:dados.quinzenas[periodo.nome];
+  if(!bloco)return null;
+  if(unidade==='TODAS'){
+    var consolidado=bloco.TODAS;
+    if(!consolidado)return null;
+    return {cmc_total:consolidado.compras,faturamento:consolidado.faturamento||0,grupos:{},transf:null,transfUni:null,
+      transfSaldo:0,transfEntrada:0,transfSaida:0,transfEntradaQtd:0,
+      cmcComTransf:consolidado.compras,cmcPctFatComTransf:consolidado.cmc_pct};
+  }
+  var unidadeBloco=bloco[unidade];
+  if(!unidadeBloco||!unidadeBloco.cmcDetalhado)return null;
+  var d=unidadeBloco.cmcDetalhado;
+  var tr=d.transferencias||null;
+  if(d.filiais&&d.filiais[unidade]){
+    var f=d.filiais[unidade];
+    var trUni=(tr&&tr.filiais&&tr.filiais[unidade])?tr.filiais[unidade]:null;
+    return {cmc_total:f.cmc_total,faturamento:f.faturamento||0,grupos:f.grupos,transf:tr,transfUni:trUni,
+      transfSaldo:f.transf_saldo||0,transfEntrada:f.transf_entrada||0,transfSaida:f.transf_saida||0,
+      transfEntradaQtd:f.transf_entrada_qtd||0,
+      cmcComTransf:(f.cmc_com_transf!==undefined?f.cmc_com_transf:f.cmc_total),
+      cmcPctFatComTransf:(f.cmc_pct_fat_com_transf!==undefined?f.cmc_pct_fat_com_transf:null)};
+  }
+  return {cmc_total:0,faturamento:0,grupos:{},transf:null,transfUni:null,transfSaldo:0,transfEntrada:0,transfSaida:0,
+    transfEntradaQtd:0,cmcComTransf:0,cmcPctFatComTransf:null};
+}
+
+// Mesma ideia, pro CMV: extrai de cmvDetalhado o formato que cmvDados()
+// devolve pro mês inteiro.
+function dadosPeriodoCMV(mesNome, periodo){
+  var dados=ANALISE_SEMANAL_CACHE[mesNome];
+  if(!dados)return null;
+  var bloco=periodo.tipo==='semana'?dados.semanas[periodo.num]:dados.quinzenas[periodo.nome];
+  if(!bloco)return null;
+  if(uniCMV==='TODAS'){
+    var consolidado=bloco.TODAS;
+    if(!consolidado)return null;
+    return {ei:consolidado.ei,ef:consolidado.ef,compras:consolidado.compras,cmv:consolidado.cmv,
+      pct:consolidado.cmv_pct,fat:consolidado.faturamento,data_ei:null,data_ef:null,grupos:null,
+      transfEntrada:0,transfSaida:0,transfSaldo:0,cmvAjustado:consolidado.cmv,pctAjustado:consolidado.cmv_pct};
+  }
+  var unidadeBloco=bloco[uniCMV];
+  if(!unidadeBloco||!unidadeBloco.cmvDetalhado)return null;
+  var f=unidadeBloco.cmvDetalhado;
+  var fatFil=unidadeBloco.faturamento||0;
+  var pct=(fatFil>0)?Math.round(f.cmv/fatFil*10000)/100:null;
+  var pctPuro=(fatFil>0&&f.cmv_puro!==undefined)?Math.round(f.cmv_puro/fatFil*10000)/100:null;
+  var pctSemAjuste=(fatFil>0&&f.cmv_sem_ajuste!==undefined)?Math.round(f.cmv_sem_ajuste/fatFil*10000)/100:null;
+  return {ei:f.ei,ef:f.ef,compras:f.compras,cmv:f.cmv,pct:pct,fat:fatFil,
+    data_ei:unidadeBloco.dataInicio||null,data_ef:unidadeBloco.dataFim||null,grupos:(f.grupos||null),
+    transfEntrada:f.transf_entrada||0,transfSaida:f.transf_saida||0,transfSaldo:f.transf_saldo||0,
+    cmvAjustado:f.cmv,pctAjustado:pct,
+    cmvSemAjuste:(f.cmv_sem_ajuste!==undefined?f.cmv_sem_ajuste:f.cmv),pctSemAjuste:pctSemAjuste,
+    comprasPuro:(f.compras_puro!==undefined?f.compras_puro:f.compras),
+    cmvPuro:(f.cmv_puro!==undefined?f.cmv_puro:f.cmv),pctPuro:pctPuro};
+}
+
+/* ============================================================
    ABA 1: ANÁLISE MÊS A MÊS
    ============================================================ */
-function setMes(m){mesAtual=m;document.querySelectorAll('#mes-seg button').forEach(function(b){b.classList.toggle('on',b.textContent===(ML_MAP[m]||m));});rMes();}
+function setMes(m){mesAtual=m;periodoAtualCMC={tipo:'mes'};document.querySelectorAll('#mes-seg button').forEach(function(b){b.classList.toggle('on',b.textContent===(ML_MAP[m]||m));});rMes();}
 function setUni(u){uniAtual=u;document.querySelectorAll('#mes-useg button').forEach(function(b){b.classList.toggle('on',b.textContent===(u==='TODAS'?'Todas':nomeUni(u)));});rMes();}
 function nomeUni(f){var map={'MARCO':'Marco','PORTO FUTURO':'Porto Futuro','UMARIZAL':'Umarizal'};return map[f]||f.charAt(0)+f.slice(1).toLowerCase();}
 
-// Retorna o objeto de dados do mês conforme a unidade selecionada
+function atualizarGranularidadeCMC(){
+  var mesNoMomento=mesAtual;
+  obterAnaliseSemanalCache_(mesNoMomento, function(){
+    if(mesAtual!==mesNoMomento)return; // usuário já trocou de mês antes da resposta voltar
+    montarGranSeg_('mes-granseg', mesNoMomento, periodoAtualCMC, 'setPeriodoCMC');
+  });
+}
+function setPeriodoCMC(key){
+  periodoAtualCMC=key?chaveParaPeriodo_(key):{tipo:'mes'};
+  montarGranSeg_('mes-granseg', mesAtual, periodoAtualCMC, 'setPeriodoCMC');
+  rMes();
+}
+// Lista de {key,label} pra evolução/comparação: o mês inteiro percorre
+// MESES (como sempre); uma semana/quinzena selecionada percorre as
+// semanas/quinzenas salvas do MESMO mês, não os outros meses do ano.
+function listaEvolucaoCMC(){
+  if(periodoAtualCMC.tipo==='mes')return MESES.map(function(m){return {key:m,label:ML_MAP[m]||m};});
+  return periodosDisponiveis_(mesAtual).map(function(d){return {key:d.key,label:d.label};});
+}
+function valorEvolucaoCMC(key){
+  if(periodoAtualCMC.tipo==='mes')return dadosMes(key);
+  return dadosPeriodoCMC(mesAtual, chaveParaPeriodo_(key));
+}
+
+// Retorna o objeto de dados do mês conforme a unidade selecionada -- ou,
+// quando mesAtual tem uma semana/quinzena selecionada, os dados desse
+// período (mesma forma, fonte diferente — ver dadosPeriodoCMC).
 function dadosMes(mes){
+  if(mes===mesAtual&&periodoAtualCMC.tipo!=='mes'){
+    var dp=dadosPeriodoCMC(mes, periodoAtualCMC);
+    if(dp)return dp;
+  }
   var d=CMC[mes];if(!d)return null;
   var tr=d.transferencias||null;
   if(uniAtual==='TODAS')return {cmc_total:d.cmc_total,faturamento:d.faturamento||0,grupos:d.grupos,transf:tr,transfUni:null,transfSaldo:tr?tr.total:0,transfEntrada:0,transfSaida:0,
@@ -936,15 +1102,20 @@ function dadosMes(mes){
 }
 
 function rMes(){
+  atualizarGranularidadeCMC();
   var d=dadosMes(mesAtual);
   if(!d||!d.grupos||Object.keys(d.grupos).length===0){
     document.getElementById('mes-metrics').innerHTML='';
-    document.getElementById('mes-rank').innerHTML='<div class="empty">Sem dados para '+(uniAtual==='TODAS'?'este mês':nomeUni(uniAtual))+'.</div>';
+    document.getElementById('mes-rank').innerHTML='<div class="empty">Sem dados para '+(uniAtual==='TODAS'?'este mês':nomeUni(uniAtual))+(periodoAtualCMC.tipo!=='mes'?' neste período':'')+'.</div>';
     document.getElementById('mes-mov').innerHTML='';killChart('ch-evo');return;
   }
 
-  var idx=MESES.indexOf(mesAtual);
-  var prev=idx>0?dadosMes(MESES[idx-1]):null;
+  var evoLista=listaEvolucaoCMC();
+  var chaveAtualEvo=periodoAtualCMC.tipo==='mes'?mesAtual:periodoParaChave_(periodoAtualCMC);
+  var idx=evoLista.map(function(e){return e.key;}).indexOf(chaveAtualEvo);
+  var prev=idx>0?valorEvolucaoCMC(evoLista[idx-1].key):null;
+  var labelAtual=evoLista[idx]?evoLista[idx].label:(ML_MAP[mesAtual]||mesAtual);
+  var labelAnterior=idx>0?evoLista[idx-1].label:'';
 
   var grupos=Object.keys(d.grupos).map(function(g){return {nome:g,total:d.grupos[g].total,pct:d.grupos[g].pct_cmc,n:d.grupos[g].produtos.length};});
   grupos.sort(function(a,b){return b.total-a.total;});
@@ -954,14 +1125,14 @@ function rMes(){
   var sufUni=uniAtual==='TODAS'?'':' · '+nomeUni(uniAtual);
 
   // ===== MÉTRICAS =====
-  var trendHtml='<span class="flat">Primeiro mês do período</span>';
+  var trendHtml='<span class="flat">Primeiro '+(periodoAtualCMC.tipo==='mes'?'mês':'período')+' do período</span>';
   if(prev&&prev.cmc_total>0){
     var diff=d.cmc_total-prev.cmc_total;var pct=(diff/prev.cmc_total*100);var up=diff>0;
     trendHtml='<span class="'+(up?'up':'down')+'">'+(up?'&#9650;':'&#9660;')+' '+(up?'+':'')+pct.toFixed(1)+'%</span>'+
-      '<span style="color:var(--fg3)">vs '+(ML_MAP[MESES[idx-1]]||MESES[idx-1])+'</span>';
+      '<span style="color:var(--fg3)">vs '+labelAnterior+'</span>';
   }
   var html='';
-  html+='<div class="metric lead"><div class="metric-l">CMC Total · '+(ML_MAP[mesAtual]||mesAtual)+' 2026'+sufUni+'</div>'+
+  html+='<div class="metric lead"><div class="metric-l">CMC Total · '+labelAtual+(periodoAtualCMC.tipo==='mes'?' 2026':' · '+(ML_MAP[mesAtual]||mesAtual))+sufUni+'</div>'+
     '<div class="metric-v">'+fR2(d.cmc_total)+'</div><div class="metric-sub">'+trendHtml+'</div></div>';
   if(fat>0){
     html+='<div class="metric"><div class="metric-l">Faturamento</div><div class="metric-v ac">'+fR(fat)+'</div>'+
@@ -993,12 +1164,12 @@ function rMes(){
 
   // ===== EVOLUÇÃO =====
   killChart('ch-evo');
-  var labels=MESES.map(function(m){return ML_MAP[m]||m;});
-  var serieCMC=MESES.map(function(m){var dm=dadosMes(m);return dm?dm.cmc_total:0;});
-  var serieFat=MESES.map(function(m){var dm=dadosMes(m);return dm&&dm.faturamento?dm.faturamento:null;});
+  var labels=evoLista.map(function(e){return e.label;});
+  var serieCMC=evoLista.map(function(e){var dm=valorEvolucaoCMC(e.key);return dm?dm.cmc_total:0;});
+  var serieFat=evoLista.map(function(e){var dm=valorEvolucaoCMC(e.key);return dm&&dm.faturamento?dm.faturamento:null;});
   var temFat=serieFat.some(function(v){return v;});
   var dsets=[{type:'bar',label:'CMC',data:serieCMC,
-      backgroundColor:MESES.map(function(m){return m===mesAtual?AC:'rgba(29,158,117,.30)';}),
+      backgroundColor:evoLista.map(function(e){return e.key===chaveAtualEvo?AC:'rgba(29,158,117,.30)';}),
       borderRadius:5,order:2}];
   if(temFat){dsets.push({type:'line',label:'Faturamento',data:serieFat,borderColor:cssv('--fg2'),borderWidth:2,
       borderDash:[5,4],pointRadius:3,pointBackgroundColor:cssv('--fg2'),tension:.25,order:1});}
@@ -1010,7 +1181,7 @@ function rMes(){
     (temFat?'<span><i class="line" style="background:'+cssv('--fg2')+'"></i>Faturamento</span>':'');
 
   // ===== RANKING =====
-  document.getElementById('rank-mes').textContent=(ML_MAP[mesAtual]||mesAtual)+' · '+grupos.length+' grupos';
+  document.getElementById('rank-mes').textContent=labelAtual+' · '+grupos.length+' grupos';
   var maxV=grupos[0]?grupos[0].total:1;
   document.getElementById('mes-rank').innerHTML=grupos.slice(0,12).map(function(g){
     var w=(g.total/maxV*100).toFixed(1);
@@ -1029,8 +1200,8 @@ function rMes(){
 
   // ===== MOVIMENTAÇÃO =====
   var movEl=document.getElementById('mes-mov');
-  if(!prev||!prev.grupos){document.getElementById('mov-mes').textContent='';movEl.innerHTML='<div class="empty">Primeiro mês do período.</div>';return;}
-  document.getElementById('mov-mes').textContent='vs '+(ML_MAP[MESES[idx-1]]||MESES[idx-1]);
+  if(!prev||!prev.grupos||!Object.keys(prev.grupos).length){document.getElementById('mov-mes').textContent='';movEl.innerHTML='<div class="empty">Primeiro '+(periodoAtualCMC.tipo==='mes'?'mês':'período')+' do período.</div>';return;}
+  document.getElementById('mov-mes').textContent='vs '+labelAnterior;
   var movs=grupos.map(function(g){
     var ant=prev.grupos[g.nome]?prev.grupos[g.nome].total:0;
     var diff=g.total-ant;var pct=ant>0?(diff/ant*100):null;
@@ -1115,9 +1286,13 @@ function abrirGrupo(nome, manter){
   document.querySelectorAll('#mes-rank .rankrow').forEach(function(r){r.classList.remove('sel');});
 
   var g=d.grupos[nome];
-  var idx=MESES.indexOf(mesAtual);
-  var prevD=idx>0?dadosMes(MESES[idx-1]):null;
-  var gPrev=prevD&&prevD.grupos[nome]?prevD.grupos[nome]:null;
+  var evoLista=listaEvolucaoCMC();
+  var chaveAtualEvo=periodoAtualCMC.tipo==='mes'?mesAtual:periodoParaChave_(periodoAtualCMC);
+  var idx=evoLista.map(function(e){return e.key;}).indexOf(chaveAtualEvo);
+  var prevD=idx>0?valorEvolucaoCMC(evoLista[idx-1].key):null;
+  var gPrev=prevD&&prevD.grupos&&prevD.grupos[nome]?prevD.grupos[nome]:null;
+  var labelAtual=evoLista[idx]?evoLista[idx].label:(ML_MAP[mesAtual]||mesAtual);
+  var labelAnterior=idx>0?evoLista[idx-1].label:'';
   var sufUni=uniAtual==='TODAS'?'':' · '+nomeUni(uniAtual);
 
   document.getElementById('gd-nome').textContent=nome;
@@ -1128,8 +1303,8 @@ function abrirGrupo(nome, manter){
   var trend='';
   if(gPrev&&gPrev.total>0){
     var diff=g.total-gPrev.total;var pct=diff/gPrev.total*100;var up=diff>0;
-    trend='<span class="'+(up?'up':'down')+'">'+(up?'&#9650;':'&#9660;')+' '+(up?'+':'')+pct.toFixed(1)+'%</span> <span style="color:var(--fg3)">vs '+(ML_MAP[MESES[idx-1]]||MESES[idx-1])+'</span>';
-  }else{trend='<span class="flat">Sem mês anterior</span>';}
+    trend='<span class="'+(up?'up':'down')+'">'+(up?'&#9650;':'&#9660;')+' '+(up?'+':'')+pct.toFixed(1)+'%</span> <span style="color:var(--fg3)">vs '+labelAnterior+'</span>';
+  }else{trend='<span class="flat">Sem '+(periodoAtualCMC.tipo==='mes'?'mês':'período')+' anterior</span>';}
 
   document.getElementById('gd-metrics').innerHTML=
     '<div class="gd-m lead"><div class="gd-mv">'+fR2(g.total)+'</div><div class="gd-ml">Total Comprado'+sufUni+'</div><div class="gd-ms">'+trend+'</div></div>'+
@@ -1138,37 +1313,46 @@ function abrirGrupo(nome, manter){
 
   // ===== EVOLUÇÃO DO GRUPO NO PERÍODO =====
   killChart('ch-gd-evo');
-  var serie=MESES.map(function(m){var dm=dadosMes(m);return dm&&dm.grupos[nome]?dm.grupos[nome].total:0;});
+  var serie=evoLista.map(function(e){var dm=valorEvolucaoCMC(e.key);return dm&&dm.grupos&&dm.grupos[nome]?dm.grupos[nome].total:0;});
   charts['ch-gd-evo']=new Chart(document.getElementById('ch-gd-evo'),{type:'bar',
-    data:{labels:MESES.map(function(m){return ML_MAP[m]||m;}),
-      datasets:[{data:serie,backgroundColor:MESES.map(function(m){return m===mesAtual?gc(nome):'rgba(128,128,128,.25)';}),borderRadius:4}]},
+    data:{labels:evoLista.map(function(e){return e.label;}),
+      datasets:[{data:serie,backgroundColor:evoLista.map(function(e){return e.key===chaveAtualEvo?gc(nome):'rgba(128,128,128,.25)';}),borderRadius:4}]},
     options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:tooltip()},
       scales:{x:{grid:{display:false},ticks:{color:cssv('--fg2'),font:{family:'DM Mono',size:10}}},
         y:{grid:{color:cssv('--ln')},ticks:{color:cssv('--fg2'),font:{family:'DM Mono',size:9},callback:function(v){return 'R$'+(v/1000).toFixed(0)+'K';}}}}}});
 
   // ===== COMPARAÇÃO ENTRE UNIDADES =====
+  // Só disponível pro mês inteiro: cada unidade pode ter um intervalo de
+  // dias diferente pra "mesma" semana/quinzena (contagens em datas
+  // distintas), então não dá pra comparar grupo a grupo entre unidades
+  // com segurança nesse nível de granularidade.
   killChart('ch-gd-uni');
-  document.getElementById('gd-uni-mes').textContent=' · '+(ML_MAP[mesAtual]||mesAtual);
-  var mesObj=CMC[mesAtual];
-  var unidades=mesObj.filiais?Object.keys(mesObj.filiais).sort():[];
   var canvasUni=document.getElementById('ch-gd-uni');
-  if(unidades.length>1){
-    canvasUni.style.display='';
-    var valUni=unidades.map(function(u){
-      var fg=mesObj.filiais[u].grupos[nome];return fg?fg.total:0;
-    });
-    charts['ch-gd-uni']=new Chart(canvasUni,{type:'bar',
-      data:{labels:unidades.map(function(u){return nomeUni(u);}),
-        datasets:[{data:valUni,backgroundColor:unidades.map(function(u){return u===uniAtual?gc(nome):'rgba(128,128,128,.30)';}),borderRadius:4}]},
-      options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:tooltip()},
-        scales:{x:{grid:{color:cssv('--ln')},ticks:{color:cssv('--fg2'),font:{family:'DM Mono',size:9},callback:function(v){return 'R$'+(v/1000).toFixed(0)+'K';}}},
-          y:{grid:{display:false},ticks:{color:cssv('--fg2'),font:{size:11}}}}}});
+  if(periodoAtualCMC.tipo==='mes'){
+    document.getElementById('gd-uni-mes').textContent=' · '+(ML_MAP[mesAtual]||mesAtual);
+    var mesObj=CMC[mesAtual];
+    var unidades=mesObj.filiais?Object.keys(mesObj.filiais).sort():[];
+    if(unidades.length>1){
+      canvasUni.style.display='';
+      var valUni=unidades.map(function(u){
+        var fg=mesObj.filiais[u].grupos[nome];return fg?fg.total:0;
+      });
+      charts['ch-gd-uni']=new Chart(canvasUni,{type:'bar',
+        data:{labels:unidades.map(function(u){return nomeUni(u);}),
+          datasets:[{data:valUni,backgroundColor:unidades.map(function(u){return u===uniAtual?gc(nome):'rgba(128,128,128,.30)';}),borderRadius:4}]},
+        options:{indexAxis:'y',responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:tooltip()},
+          scales:{x:{grid:{color:cssv('--ln')},ticks:{color:cssv('--fg2'),font:{family:'DM Mono',size:9},callback:function(v){return 'R$'+(v/1000).toFixed(0)+'K';}}},
+            y:{grid:{display:false},ticks:{color:cssv('--fg2'),font:{size:11}}}}}});
+    }else{
+      canvasUni.style.display='none';
+    }
   }else{
     canvasUni.style.display='none';
+    document.getElementById('gd-uni-mes').textContent=' · '+labelAtual;
   }
 
   // ===== TABELA DE PRODUTOS =====
-  document.getElementById('gd-prod-ctx').textContent=' · '+(ML_MAP[mesAtual]||mesAtual)+sufUni;
+  document.getElementById('gd-prod-ctx').textContent=' · '+labelAtual+sufUni;
   var prods=g.produtos.slice().sort(function(a,b){return b.valor-a.valor;});
   document.getElementById('gd-body').innerHTML=prods.map(function(p,i){
     var pctG=g.total>0?(p.valor/g.total*100):0;
@@ -1204,6 +1388,10 @@ function fecharGrupo(){
 var mesCMV='', uniCMV='TODAS', cmvGrupoOrder='cmv';
 
 function cmvDados(mes){
+  if(mes===mesCMV&&periodoAtualCMV.tipo!=='mes'){
+    var dp=dadosPeriodoCMV(mes, periodoAtualCMV);
+    if(dp)return dp;
+  }
   var c=CMV[mes];if(!c)return null;
   if(uniCMV==='TODAS')return {ei:c.ei_total,ef:c.ef_total,compras:c.compras_total,cmv:c.cmv_total,
     pct:c.cmv_pct,fat:c.faturamento,data_ei:c.data_ei,data_ef:c.data_ef,grupos:c.grupos,
@@ -1223,10 +1411,33 @@ function cmvDados(mes){
   return null;
 }
 
-function setMesCMV(m){mesCMV=m;document.querySelectorAll('#cmv-mseg button').forEach(function(b){b.classList.toggle('on',b.dataset.m===m);});rCMV();}
+function setMesCMV(m){mesCMV=m;periodoAtualCMV={tipo:'mes'};document.querySelectorAll('#cmv-mseg button').forEach(function(b){b.classList.toggle('on',b.dataset.m===m);});rCMV();}
 function setUniCMV(u){uniCMV=u;document.querySelectorAll('#cmv-useg button').forEach(function(b){b.classList.toggle('on',b.textContent===(u==='TODAS'?'Todas':nomeUni(u)));});rCMV();}
 
+function atualizarGranularidadeCMV(){
+  var mesNoMomento=mesCMV;
+  obterAnaliseSemanalCache_(mesNoMomento, function(){
+    if(mesCMV!==mesNoMomento)return;
+    montarGranSeg_('cmv-granseg', mesNoMomento, periodoAtualCMV, 'setPeriodoCMV');
+  });
+}
+function setPeriodoCMV(key){
+  periodoAtualCMV=key?chaveParaPeriodo_(key):{tipo:'mes'};
+  montarGranSeg_('cmv-granseg', mesCMV, periodoAtualCMV, 'setPeriodoCMV');
+  rCMV();
+}
+// Mesma ideia de listaEvolucaoCMC/valorEvolucaoCMC, pro CMV.
+function listaEvolucaoCMV(mesesComCMV){
+  if(periodoAtualCMV.tipo==='mes')return mesesComCMV.map(function(m){return {key:m,label:ML_MAP[m]||m};});
+  return periodosDisponiveis_(mesCMV).map(function(d){return {key:d.key,label:d.label};});
+}
+function valorEvolucaoCMV(key){
+  if(periodoAtualCMV.tipo==='mes')return cmvDados(key);
+  return dadosPeriodoCMV(mesCMV, chaveParaPeriodo_(key));
+}
+
 function rCMV(){
+  atualizarGranularidadeCMV();
   cmvGrupoAberto=null;
   var mesesCMV=MESES.filter(function(m){return CMV[m];});
   var cont=document.getElementById('cmv-content');
@@ -1263,6 +1474,10 @@ function rCMV(){
   var d=cmvDados(mesCMV);
   if(!d){cont.innerHTML='<div class="card"><div class="empty">Sem dados de CMV para esta selecao.</div></div>';return;}
 
+  var evoListaCMV=listaEvolucaoCMV(mesesCMV);
+  var chaveAtualEvoCMV=periodoAtualCMV.tipo==='mes'?mesCMV:periodoParaChave_(periodoAtualCMV);
+  var labelAtualCMV=(function(){var e=evoListaCMV.filter(function(x){return x.key===chaveAtualEvoCMV;})[0];return e?e.label:(ML_MAP[mesCMV]||mesCMV);})();
+
   var sufUni=uniCMV==='TODAS'?'':' · '+nomeUni(uniCMV);
   var pctTxt=d.pct!==null&&d.pct!==undefined?fP(d.pct):'--';
   var pctCls=(d.pct>35)?'rd':(d.pct>30)?'am':'ac';
@@ -1270,7 +1485,7 @@ function rCMV(){
   // ===== MÉTRICAS =====
   var cmvAtipico = d.cmv < 0;
   var html='<div class="metrics" style="grid-template-columns:1.4fr 1fr 1fr 1fr 1fr;">'+
-    '<div class="metric lead"><div class="metric-l">CMV Real · '+(ML_MAP[mesCMV]||mesCMV)+sufUni+'</div>'+
+    '<div class="metric lead"><div class="metric-l">CMV Real · '+labelAtualCMV+(periodoAtualCMV.tipo!=='mes'?' · '+(ML_MAP[mesCMV]||mesCMV):'')+sufUni+'</div>'+
       '<div class="metric-v'+(cmvAtipico?' rd':'')+'">'+fR2(d.cmv)+'</div>'+
       '<div class="metric-sub" style="color:'+(cmvAtipico?'var(--rd)':'var(--fg3)')+'">'+
         (cmvAtipico?'&#9888; CMV negativo — confira as contagens de estoque':(d.data_ei||'')+' a '+(d.data_ef||''))+
@@ -1287,7 +1502,7 @@ function rCMV(){
     var pctPuroTxt=(d.pctPuro!==null&&d.pctPuro!==undefined)?fP(d.pctPuro):'--';
     var pctPuroCls=(d.pctPuro>35)?'rd':(d.pctPuro>30)?'am':'ac';
     html+='<div class="metrics" style="grid-template-columns:1.4fr 1fr 1fr 1fr 1fr;margin-top:10px;opacity:.82;">'+
-      '<div class="metric lead"><div class="metric-l">CMV Sem Transferencia · '+(ML_MAP[mesCMV]||mesCMV)+sufUni+'</div>'+
+      '<div class="metric lead"><div class="metric-l">CMV Sem Transferencia · '+labelAtualCMV+(periodoAtualCMV.tipo!=='mes'?' · '+(ML_MAP[mesCMV]||mesCMV):'')+sufUni+'</div>'+
         '<div class="metric-v">'+fR2(d.cmvPuro)+'</div>'+
         '<div class="metric-sub" style="color:var(--fg3)">compra externa pura, sem entrada nem saida</div></div>'+
       '<div class="metric"><div class="metric-l">Estoque Inicial</div><div class="metric-v az">'+fR(d.ei)+'</div></div>'+
@@ -1336,19 +1551,19 @@ function rCMV(){
   // Gráficos
   var mesesComCMV=MESES.filter(function(m){return CMV[m];});
   killChart('ch-cmv-evo');
-  var serieCMV=mesesComCMV.map(function(m){var dd=cmvDadosMes(m);return dd?dd.cmv:0;});
+  var serieCMV=evoListaCMV.map(function(e){var dd=valorEvolucaoCMV(e.key);return dd?dd.cmv:0;});
   charts['ch-cmv-evo']=new Chart(document.getElementById('ch-cmv-evo'),{type:'bar',
-    data:{labels:mesesComCMV.map(function(m){return ML_MAP[m]||m;}),
-      datasets:[{data:serieCMV,backgroundColor:mesesComCMV.map(function(m){return m===mesCMV?AC:'rgba(29,158,117,.30)';}),borderRadius:5}]},
+    data:{labels:evoListaCMV.map(function(e){return e.label;}),
+      datasets:[{data:serieCMV,backgroundColor:evoListaCMV.map(function(e){return e.key===chaveAtualEvoCMV?AC:'rgba(29,158,117,.30)';}),borderRadius:5}]},
     options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:tooltip()},
       scales:{x:{grid:{display:false},ticks:{color:cssv('--fg2'),font:{family:'DM Mono',size:11}}},
         y:{grid:{color:cssv('--ln')},ticks:{color:cssv('--fg2'),font:{family:'DM Mono',size:9},callback:function(v){return 'R$'+(v/1000).toFixed(0)+'K';}}}}}});
 
   killChart('ch-cmv-cmc');
-  var cmcSerie=mesesComCMV.map(function(m){var dm=dadosMesUni(m);return dm?dm.cmc_total:0;});
-  var cmvSerie2=mesesComCMV.map(function(m){var dd=cmvDadosMes(m);return dd?dd.cmv:0;});
+  var cmcSerie=evoListaCMV.map(function(e){var dm=dadosCMCParaComparativoCMV_(e.key);return dm?dm.cmc_total:0;});
+  var cmvSerie2=evoListaCMV.map(function(e){var dd=valorEvolucaoCMV(e.key);return dd?dd.cmv:0;});
   charts['ch-cmv-cmc']=new Chart(document.getElementById('ch-cmv-cmc'),{type:'bar',
-    data:{labels:mesesComCMV.map(function(m){return ML_MAP[m]||m;}),
+    data:{labels:evoListaCMV.map(function(e){return e.label;}),
       datasets:[
         {label:'CMC',data:cmcSerie,backgroundColor:'rgba(91,191,173,.55)',borderRadius:4},
         {label:'CMV',data:cmvSerie2,backgroundColor:AC,borderRadius:4}
@@ -1365,6 +1580,15 @@ function dadosMesUni(m){
   if(uniCMV==='TODAS')return {cmc_total:d.cmc_total};
   if(d.filiais&&d.filiais[uniCMV])return {cmc_total:d.filiais[uniCMV].cmc_total};
   return {cmc_total:0};
+}
+// CMC pro grafico comparativo CMV/CMC: no mes inteiro usa CMC[mes] direto
+// (dadosMesUni); numa semana/quinzena, usa o CMC do MESMO periodo (pra
+// unidade do CMV, uniCMV -- nao necessariamente a mesma do uniAtual da
+// aba Mes a Mes).
+function dadosCMCParaComparativoCMV_(key){
+  if(periodoAtualCMV.tipo==='mes')return dadosMesUni(key);
+  var dp=dadosPeriodoCMC(mesCMV, chaveParaPeriodo_(key), uniCMV);
+  return dp?{cmc_total:dp.cmc_total}:null;
 }
 
 
