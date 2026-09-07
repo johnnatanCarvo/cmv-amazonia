@@ -1651,10 +1651,13 @@ function abrirCMVGrupo(gi){
     var c=r.querySelector('.chev-cmv');if(c)c.style.transform=on?'rotate(90deg)':'';
   });
 
-  // Evolução do CMV do grupo no período (todos os meses com CMV)
+  // Evolução do CMV do grupo no período (meses com CMV, ou as semanas/
+  // quinzenas do mês quando uma granularidade especifica esta ativa)
   var mesesComCMV=MESES.filter(function(m){return CMV[m];});
-  var serieGrupo=mesesComCMV.map(function(m){
-    var dm=cmvDados(m);if(!dm||!dm.grupos)return 0;
+  var evoListaGrupo=periodoAtualCMV.tipo==='mes'?mesesComCMV.map(function(m){return {key:m,label:ML_MAP[m]||m};}):listaEvolucaoCMV(mesesComCMV);
+  var chaveAtualEvoGrupo=periodoAtualCMV.tipo==='mes'?mesCMV:periodoParaChave_(periodoAtualCMV);
+  var serieGrupo=evoListaGrupo.map(function(e){
+    var dm=valorEvolucaoCMV(e.key);if(!dm||!dm.grupos)return 0;
     var gg=dm.grupos.filter(function(x){return x.grupo===g.grupo;})[0];
     return gg?gg.cmv:0;
   });
@@ -1693,8 +1696,8 @@ function abrirCMVGrupo(gi){
   // Renderizar gráfico
   killChart('ch-cmvg-evo');
   charts['ch-cmvg-evo']=new Chart(document.getElementById('ch-cmvg-evo'),{type:'bar',
-    data:{labels:mesesComCMV.map(function(m){return ML_MAP[m]||m;}),
-      datasets:[{data:serieGrupo,backgroundColor:mesesComCMV.map(function(m){return m===mesCMV?gc(g.grupo):'rgba(128,128,128,.28)';}),borderRadius:4}]},
+    data:{labels:evoListaGrupo.map(function(e){return e.label;}),
+      datasets:[{data:serieGrupo,backgroundColor:evoListaGrupo.map(function(e){return e.key===chaveAtualEvoGrupo?gc(g.grupo):'rgba(128,128,128,.28)';}),borderRadius:4}]},
     options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:tooltip()},
       scales:{x:{grid:{display:false},ticks:{color:cssv('--fg2'),font:{family:'DM Mono',size:10}}},
         y:{grid:{color:cssv('--ln')},ticks:{color:cssv('--fg2'),font:{family:'DM Mono',size:9},callback:function(v){return 'R$'+(v/1000).toFixed(0)+'K';}}}}}});
