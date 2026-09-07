@@ -876,8 +876,12 @@ function valorizarItensInventario_(itens, mesNome, ano, historicoPorInsumo, fich
   var porProduto = [];
   var avisos = [];
   (itens || []).forEach(function(item) {
-    var cat = catalogo[item.produto.toUpperCase()];
-    var nomeCanonico = cat ? cat.nome : item.produto;
+    // O sistema de contagem às vezes chama o item por um nome que não bate
+    // com Compras/Ficha Técnica (ex: prefixo "MP" a mais) — resolve isso
+    // ANTES de procurar no catálogo, usando o mesmo de-para de CMV Teórico.
+    var nomeContado = APELIDOS_PRODUTO[item.produto] || item.produto;
+    var cat = catalogo[nomeContado.toUpperCase()];
+    var nomeCanonico = cat ? cat.nome : nomeContado;
     var grupo = cat ? cat.grupo : '';
     var custoUnit = buscarCustoInsumoComFallback(historicoPorInsumo, nomeCanonico, mesNome, ano);
     if ((custoUnit === null || custoUnit === undefined) && fichasMap) {

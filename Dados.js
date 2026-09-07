@@ -893,19 +893,28 @@ var C_FICHAS = {
   insumo_custo_unit: 15   // Custo unitário do insumo
 };
 
-// "De-para" de nomes de produto entre relatórios do Cloudfy que, por
-// inconsistência do próprio sistema, usam grafias diferentes pro MESMO
-// prato em relatórios diferentes (ex: "MINI FILE BACURI" nas Vendas vs
-// "MINI BACURI FILE" na Ficha Técnica — mesmas palavras, ordem trocada).
-// Cada entrada mapeia o nome como aparece em VENDAS pro nome como aparece
-// na FICHA TÉCNICA. Aplicado em processarFichas/processarReceitas: o nome
-// de Vendas passa a apontar pro mesmo custo/receita do nome da Ficha,
-// então todo o resto do sistema (CMV Teórico, Demanda de Insumos, Curva
-// ABC) resolve automaticamente, sem precisar mudar nada nesses lugares.
+// "De-para" de nomes de produto entre sistemas/relatórios diferentes que,
+// por inconsistência de cadastro, chamam o MESMO item de nomes diferentes.
+// Cada entrada mapeia um nome de origem pro nome "oficial" que existe na
+// Ficha Técnica ou em Compras. Usado em dois pontos:
+//   1) processarFichas/processarReceitas (via aplicarApelidosProduto_) —
+//      resolve nomes de VENDAS que batem com a Ficha Técnica só com
+//      grafia diferente (CMV Teórico, Demanda de Insumos, Curva ABC).
+//   2) valorizarItensInventario_ (Código.js) — resolve nomes do SISTEMA
+//      DE CONTAGEM que batem com Compras/Ficha Técnica só com grafia
+//      diferente (conexão do inventário salvo com o CMV/CMC).
 // Adicione aqui se aparecer um novo caso — o ideal a longo prazo é
-// corrigir a grafia direto no Cloudfy pra não precisar manter isso.
+// corrigir a grafia direto na origem (Cloudfy ou sistema de contagem)
+// pra não precisar manter isso.
 var APELIDOS_PRODUTO = {
-  'MINI FILE BACURI': 'MINI BACURI FILE'
+  'MINI FILE BACURI': 'MINI BACURI FILE',
+  // Nomes do sistema de contagem com prefixo "MP" que não existe nem na
+  // Ficha Técnica nem em Compras — mesmo item, só com prefixo a mais.
+  'MP CJ CERPA PRIME': 'CJ CERPA PRIME',
+  'MP CJ TIJUCA': 'CJ TIJUCA',
+  'MP RF SPRITE KS 290ML': 'RF SPRITE KS 290ML',
+  // Cápsulas de gás: sistema de contagem usa prefixo "MP", Compras usa "UC".
+  'MP CAPSULAS DE GAS': 'UC CAPSULAS DE GAS'
 };
 
 // Aplica APELIDOS_PRODUTO num mapa já construído (fichasMap ou receitas):
