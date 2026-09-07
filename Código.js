@@ -435,14 +435,18 @@ function listarContagensDisponiveis(senha, unidade) {
   }
 }
 
+function obterInventariosSalvos_() {
+  var valor = PropertiesService.getScriptProperties().getProperty('INVENTARIOS_SEMANAIS_SALVOS');
+  return valor ? JSON.parse(valor) : [];
+}
+
 // Lista as seleções de inventário semanal já salvas (Script Properties).
 function listarInventariosSalvos(senha) {
   if (!validarSenha(senha)) {
     return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
   }
   try {
-    var valor = PropertiesService.getScriptProperties().getProperty('INVENTARIOS_SEMANAIS_SALVOS');
-    var lista = valor ? JSON.parse(valor) : [];
+    var lista = obterInventariosSalvos_();
     return JSON.stringify({ ok: true, inventarios: lista });
   } catch (err) {
     Logger.log('listarInventariosSalvos ERROR: ' + err.message + '\n' + err.stack);
@@ -500,6 +504,278 @@ function excluirInventarioSemanal(senha, id) {
     return JSON.stringify({ ok: true, inventarios: nova });
   } catch (err) {
     Logger.log('excluirInventarioSemanal ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
+// ── SEMANAS DO MÊS (CMV/CMC semanal e quinzenal, ancorados em contagem real) ──
+//
+// Uma "semana salva" liga DOIS inventários já salvos (Ajustes > Inventário)
+// como o inicial e o final de uma semana (1 a 4) de um mês, pra UMA unidade.
+// O cálculo em si (calcularAnaliseSemanal) usa isso pra precificar EI/EF e
+// somar compras/vendas do intervalo real de dias entre as duas contagens —
+// nunca um calendário fixo (1-7, 8-14...), sempre a data de verdade das
+// contagens escolhidas.
+function listarSemanasSalvas(senha, mes, ano) {
+  if (!validarSenha(senha)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var lista = obterSemanasSalvas_();
+    if (mes) lista = lista.filter(function(s) { return s.mes === mes && (!ano || s.ano === Number(ano)); });
+    return JSON.stringify({ ok: true, semanas: lista });
+  } catch (err) {
+    Logger.log('listarSemanasSalvas ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
+function obterSemanasSalvas_() {
+  var valor = PropertiesService.getScriptProperties().getProperty('SEMANAS_SALVAS_CMV');
+  return valor ? JSON.parse(valor) : [];
+}
+
+// Salva (cria ou atualiza, se "id" já existir) qual par de inventários
+// marca o início/fim de UMA semana (1-4) de um mês, pra uma unidade.
+// Valida que os dois inventários existem e que a data resolvida de ambos
+// cai dentro do mês/ano informado — evita salvar uma semana com contagem
+// de outro mês por engano.
+function salvarSemana(senha, dados) {
+  if (!validarSenha(senha)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    if (!dados || !dados.mes || !dados.ano || !dados.semanaNum || !dados.unidade ||
+        !dados.inventarioInicialId || !dados.inventarioFinalId) {
+      return JSON.stringify({ ok: false, erro: 'Informe mês, ano, número da semana, unidade e os dois inventários (inicial e final).' });
+    }
+    if ([1, 2, 3, 4].indexOf(Number(dados.semanaNum)) < 0) {
+      return JSON.stringify({ ok: false, erro: 'Número da semana inválido (use 1, 2, 3 ou 4).' });
+    }
+
+    var inventarios = obterInventariosSalvos_();
+    var invInicial = inventarios.filter(function(i) { return i.id === dados.inventarioInicialId; })[0];
+    var invFinal   = inventarios.filter(function(i) { return i.id === dados.inventarioFinalId; })[0];
+    if (!invInicial || !invFinal) {
+      return JSON.stringify({ ok: false, erro: 'Inventário inicial ou final não encontrado — pode ter sido excluído.' });
+    }
+
+    var dataPorContagemId = lerDataPorContagemId_();
+    var infoInicial = resolverDataInventario_(invInicial, dataPorContagemId);
+    var infoFinal   = resolverDataInventario_(invFinal, dataPorContagemId);
+    if (!infoInicial || !infoFinal) {
+      return JSON.stringify({ ok: false, erro: 'Não foi possível encontrar a data de um dos inventários escolhidos.' });
+    }
+    if (NOMES_MESES[infoInicial.mes] !== dados.mes || infoInicial.ano !== Number(dados.ano) ||
+        NOMES_MESES[infoFinal.mes]   !== dados.mes || infoFinal.ano   !== Number(dados.ano)) {
+      return JSON.stringify({ ok: false, erro: 'A data de um dos inventários escolhidos não é de ' + dados.mes + '/' + dados.ano + '. Escolha inventários desse mês.' });
+    }
+    if (infoFinal.ts < infoInicial.ts) {
+      return JSON.stringify({ ok: false, erro: 'O inventário final é de uma data anterior ao inicial — confira a ordem.' });
+    }
+
+    var props = PropertiesService.getScriptProperties();
+    var lista = obterSemanasSalvas_();
+    var novo = {
+      id: dados.id || ('SEM-' + new Date().getTime()),
+      mes: dados.mes, ano: Number(dados.ano), semanaNum: Number(dados.semanaNum),
+      unidade: String(dados.unidade).trim(),
+      inventarioInicialId: dados.inventarioInicialId,
+      inventarioFinalId: dados.inventarioFinalId
+    };
+
+    var idx = -1;
+    for (var i = 0; i < lista.length; i++) { if (lista[i].id === novo.id) { idx = i; break; } }
+    if (idx >= 0) lista[idx] = novo; else lista.push(novo);
+
+    props.setProperty('SEMANAS_SALVAS_CMV', JSON.stringify(lista));
+    Logger.log('Semana salva: ' + novo.mes + '/' + novo.ano + ' Semana ' + novo.semanaNum + ' (' + novo.unidade + ')');
+    return JSON.stringify({ ok: true, semana: novo, semanas: lista });
+  } catch (err) {
+    Logger.log('salvarSemana ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
+function excluirSemana(senha, id) {
+  if (!validarSenha(senha)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var lista = obterSemanasSalvas_();
+    var nova = lista.filter(function(x) { return x.id !== id; });
+    props.setProperty('SEMANAS_SALVAS_CMV', JSON.stringify(nova));
+    Logger.log('Semana excluida: ' + id);
+    return JSON.stringify({ ok: true, semanas: nova });
+  } catch (err) {
+    Logger.log('excluirSemana ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
+// Calcula CMC/CMV de cada Semana salva (1-4) de um mês/ano, mais as duas
+// quinzenas reais (1ª = Semana 1+2, 2ª = Semana 3+4 — só aparece quando as
+// duas semanas da quinzena estiverem salvas pra mesma unidade). Nunca usa
+// calendário fixo (dia 1-7, 8-14...): o início/fim de cada período é a data
+// de verdade das contagens escolhidas em Ajustes > Inventário > Semanas.
+//
+// Endpoint sob demanda — só roda quando o usuário abre Análise Quinzenal e
+// escolhe um mês, não faz parte do getPayload principal (evita deixar o
+// login mais lento com uma leitura da planilha de contagem que a maioria
+// das cargas de página não precisa).
+function calcularAnaliseSemanal(senha, mes, ano) {
+  if (!validarSenha(senha)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var anoNum = Number(ano);
+    var semanasSalvas = obterSemanasSalvas_().filter(function(s) { return s.mes === mes && s.ano === anoNum; });
+    if (!semanasSalvas.length) {
+      return JSON.stringify({ ok: true, semanas: {}, quinzenas: {}, avisos: [] });
+    }
+
+    var avisos = [];
+    var rowsCompras = lerTodosCSVs('compras');
+    var rowsVendas  = lerTodosCSVs('vendas');
+    var rowsFichas  = lerFichaTecnica();
+    var fichasMap   = processarFichas(rowsFichas);
+    var historicoPorInsumo = preAgregarCustoMedioPorInsumo(rowsCompras);
+    var catalogo    = preAgregarCatalogoProdutos(rowsCompras, rowsVendas);
+    var porDiaCompras = preAgregarComprasPorDia(rowsCompras);
+    var porDiaVendas  = preAgregarVendasPorDia(rowsVendas);
+
+    var inventarios = obterInventariosSalvos_();
+    var invPorId = {};
+    inventarios.forEach(function(i) { invPorId[i.id] = i; });
+    var dataPorContagemId = lerDataPorContagemId_();
+
+    // Resolve cada semana salva num "bloco" com EI/EF já valorizado e o
+    // dia inicial/final reais — usado tanto pra exibir a semana isolada
+    // quanto pra montar as quinzenas (soma de duas semanas consecutivas).
+    var blocos = {}; // 'semanaNum|unidade' -> bloco
+    semanasSalvas.forEach(function(s) {
+      var invInicial = invPorId[s.inventarioInicialId];
+      var invFinal   = invPorId[s.inventarioFinalId];
+      if (!invInicial || !invFinal) {
+        avisos.push('Semana ' + s.semanaNum + ' (' + s.unidade + '): um dos inventários referenciados não existe mais — reconfigure em Ajustes > Inventário.');
+        return;
+      }
+      var infoInicial = resolverDataInventario_(invInicial, dataPorContagemId);
+      var infoFinal   = resolverDataInventario_(invFinal, dataPorContagemId);
+      if (!infoInicial || !infoFinal) {
+        avisos.push('Semana ' + s.semanaNum + ' (' + s.unidade + '): não foi possível resolver a data de um dos inventários.');
+        return;
+      }
+
+      var itensInicial = buscarItensDeContagens_(invInicial.contagemIds);
+      var itensFinal   = buscarItensDeContagens_(invFinal.contagemIds);
+      var rotulo = mes + '/' + ano + ', Semana ' + s.semanaNum + ', ' + s.unidade;
+      var valInicial = valorizarItensInventario_(itensInicial, mes, anoNum, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (inicial)');
+      var valFinal   = valorizarItensInventario_(itensFinal, mes, anoNum, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (final)');
+      avisos = avisos.concat(valInicial.avisos).concat(valFinal.avisos);
+
+      blocos[s.semanaNum + '|' + s.unidade] = {
+        semanaNum: s.semanaNum, unidade: s.unidade,
+        diaInicio: infoInicial.dia, diaFim: infoFinal.dia,
+        dataInicio: pad2(infoInicial.dia) + '/' + pad2(infoInicial.mes) + '/' + infoInicial.ano,
+        dataFim: pad2(infoFinal.dia) + '/' + pad2(infoFinal.mes) + '/' + infoFinal.ano,
+        ei: valInicial.total, ef: valFinal.total,
+        labelInicial: invInicial.label, labelFinal: invFinal.label
+      };
+    });
+
+    // Monta o resultado de UM período (uma semana, ou a junção de duas
+    // semanas no caso das quinzenas): soma compras/vendas REAIS do
+    // intervalo de dias entre EI e EF, pra uma unidade específica.
+    // OBS: o dia da contagem conta inteiro na semana em que ele é EF (ex:
+    // contagem do dia 10 fecha a Semana 1 E abre a Semana 2 — as compras
+    // desse dia aparecem nas DUAS semanas isoladas). Por isso a soma de
+    // "Semana 1 + Semana 2" pode ficar um pouco ACIMA da Quinzena (que soma
+    // o intervalo contínuo uma vez só, sem repetir o dia de fronteira) — a
+    // Quinzena é sempre o número certo pro período combinado, nunca a soma
+    // manual das duas semanas.
+    function montarPeriodo(ei, ef, diaInicio, diaFim, unidade) {
+      var compras = somarPeriodoPreAgregado(porDiaCompras, mes, anoNum, diaInicio, diaFim);
+      var vendas  = somarPeriodoPreAgregado(porDiaVendas, mes, anoNum, diaInicio, diaFim);
+      var compraUni = compras.filiais[unidade] || 0;
+      var vendaUni  = vendas.filiais[unidade]  || 0;
+      var cmv = r2(ei + compraUni - ef);
+      return {
+        ei: r2(ei), ef: r2(ef), compras: r2(compraUni), faturamento: r2(vendaUni), cmv: cmv,
+        cmc_pct: calcularPct(compraUni, vendaUni),
+        cmv_pct: calcularPct(cmv, vendaUni)
+      };
+    }
+
+    // Soma o consolidado "TODAS" a partir das unidades JÁ CALCULADAS de um
+    // período (nunca soma compras/vendas de unidades sem semana salva —
+    // ficaria misturando EI/EF parcial com compras da empresa inteira).
+    function consolidarTodas(mapaPorUnidade) {
+      var unidades = Object.keys(mapaPorUnidade);
+      if (!unidades.length) return null;
+      var ei = 0, ef = 0, compras = 0, faturamento = 0;
+      unidades.forEach(function(u) {
+        ei += mapaPorUnidade[u].ei; ef += mapaPorUnidade[u].ef;
+        compras += mapaPorUnidade[u].compras; faturamento += mapaPorUnidade[u].faturamento;
+      });
+      var cmv = r2(ei + compras - ef);
+      return {
+        ei: r2(ei), ef: r2(ef), compras: r2(compras), faturamento: r2(faturamento), cmv: cmv,
+        cmc_pct: calcularPct(compras, faturamento), cmv_pct: calcularPct(cmv, faturamento),
+        unidadesIncompletas: unidades.length < 3
+      };
+    }
+
+    var semanas = { 1: {}, 2: {}, 3: {}, 4: {} };
+    Object.keys(blocos).forEach(function(chave) {
+      var b = blocos[chave];
+      var periodo = montarPeriodo(b.ei, b.ef, b.diaInicio, b.diaFim, b.unidade);
+      semanas[b.semanaNum][b.unidade] = Object.assign({
+        dataInicio: b.dataInicio, dataFim: b.dataFim,
+        labelInicial: b.labelInicial, labelFinal: b.labelFinal
+      }, periodo);
+    });
+    [1, 2, 3, 4].forEach(function(n) {
+      var consolidado = consolidarTodas(semanas[n]);
+      if (!consolidado) return;
+      if (consolidado.unidadesIncompletas) {
+        avisos.push('Semana ' + n + ' de ' + mes + '/' + ano + ': só ' + Object.keys(semanas[n]).length +
+          ' unidade(s) configurada(s) — o consolidado "Todas" fica incompleto até configurar as demais.');
+      }
+      semanas[n]['TODAS'] = consolidado;
+    });
+
+    // Quinzenas: 1ª = Semana 1 (início) + Semana 2 (fim); 2ª = Semana 3
+    // (início) + Semana 4 (fim). Só monta pra uma unidade se as DUAS
+    // semanas da quinzena tiverem bloco salvo pra essa mesma unidade.
+    var quinzenas = {};
+    function montarQuinzena(nomeQ, nSemInicio, nSemFim) {
+      var porUnidade = {};
+      var unidadesComInicio = Object.keys(blocos)
+        .filter(function(chave) { return blocos[chave].semanaNum === nSemInicio; })
+        .map(function(chave) { return blocos[chave].unidade; });
+
+      unidadesComInicio.forEach(function(u) {
+        var bIni = blocos[nSemInicio + '|' + u];
+        var bFim = blocos[nSemFim + '|' + u];
+        if (!bFim) return; // essa unidade ainda não tem a segunda semana da quinzena salva
+        porUnidade[u] = Object.assign({
+          dataInicio: bIni.dataInicio, dataFim: bFim.dataFim
+        }, montarPeriodo(bIni.ei, bFim.ef, bIni.diaInicio, bFim.diaFim, u));
+      });
+
+      if (!Object.keys(porUnidade).length) return;
+      var consolidado = consolidarTodas(porUnidade);
+      if (consolidado) porUnidade['TODAS'] = consolidado;
+      quinzenas[nomeQ] = porUnidade;
+    }
+    montarQuinzena('primeira', 1, 2);
+    montarQuinzena('segunda', 3, 4);
+
+    return JSON.stringify({ ok: true, semanas: semanas, quinzenas: quinzenas, avisos: avisos });
+  } catch (err) {
+    Logger.log('calcularAnaliseSemanal ERROR: ' + err.message + '\n' + err.stack);
     return JSON.stringify({ ok: false, erro: err.message });
   }
 }
@@ -604,6 +880,72 @@ function paraTextoData_(v) {
 //     CMV Teórico. Item sem nenhum dos dois (nem compra, nem ficha) fica de
 //     fora (sem preço não dá pra somar ao estoque) e entra na lista de avisos.
 //
+// Lê a aba CONTAGENS uma única vez e monta { contagemId: "dd/MM/yyyy ..." }.
+// Reaproveitada por qualquer função que precise resolver a data de
+// inventários salvos (conector mensal, Semanas do Mês).
+function lerDataPorContagemId_() {
+  var ss = SpreadsheetApp.openById(CONTAGEM_SHEET_ID);
+  var abaCont = ss.getSheetByName('CONTAGENS');
+  var dataPorContagemId = {};
+  if (abaCont) {
+    var contRows = abaCont.getDataRange().getValues();
+    for (var c = 1; c < contRows.length; c++) {
+      var rc = contRows[c];
+      if (!rc[0]) continue;
+      // Prioriza a data da contagem (r[1]); só cai pro fechamento (r[7]) se faltar.
+      dataPorContagemId[String(rc[0]).trim()] = paraTextoData_(rc[1]) || paraTextoData_(rc[7]);
+    }
+  }
+  return dataPorContagemId;
+}
+
+// Resolve a data representativa de um inventário salvo: a mais recente
+// entre as contagens escolhidas (contagemIds). Retorna o info de
+// parseDataCompleta (ano/mes/dia/ts), ou null se nenhuma contagem tiver
+// data válida.
+function resolverDataInventario_(inv, dataPorContagemId) {
+  var melhorTs = null, melhorInfo = null;
+  (inv.contagemIds || []).forEach(function(cid) {
+    var txt = dataPorContagemId[String(cid).trim()];
+    if (!txt) return;
+    var info = parseDataCompleta(txt.split(' ')[0]);
+    if (!info) return;
+    if (!melhorTs || info.ts > melhorTs) { melhorTs = info.ts; melhorInfo = info; }
+  });
+  return melhorInfo;
+}
+
+// Precifica uma lista de itens contados (produto, und, qtde — vindo de
+// buscarItensDeContagens_) pelo mesmo custo médio ponderado de compra do
+// mês (com fallback pro mês anterior e, por fim, pra ficha técnica) usado
+// no CMV Teórico. Item sem preço nenhum (nem compra, nem ficha) fica de
+// fora do total e entra nos avisos — "rotuloContexto" só identifica de
+// onde veio o item, pro aviso ficar claro (não afeta o cálculo).
+// Retorna { total, porProduto:[{produto,grupo,und,qtd,custoUnit,custoTotal}], avisos }.
+function valorizarItensInventario_(itens, mesNome, ano, historicoPorInsumo, fichasMap, catalogo, rotuloContexto) {
+  var total = 0;
+  var porProduto = [];
+  var avisos = [];
+  (itens || []).forEach(function(item) {
+    var cat = catalogo[item.produto.toUpperCase()];
+    var nomeCanonico = cat ? cat.nome : item.produto;
+    var grupo = cat ? cat.grupo : '';
+    var custoUnit = buscarCustoInsumoComFallback(historicoPorInsumo, nomeCanonico, mesNome, ano);
+    if ((custoUnit === null || custoUnit === undefined) && fichasMap) {
+      custoUnit = fichasMap[nomeCanonico];
+    }
+    if (custoUnit === null || custoUnit === undefined) {
+      avisos.push('Item "' + item.produto + '"' + (rotuloContexto ? ' (' + rotuloContexto + ')' : '') +
+        ': sem histórico de compra nem ficha técnica — não entrou no valor do inventário.');
+      return;
+    }
+    var custoTotal = r2(custoUnit * item.qtde);
+    total += custoTotal;
+    porProduto.push({ produto: nomeCanonico, grupo: grupo, und: item.und, qtd: item.qtde, custoUnit: custoUnit, custoTotal: custoTotal });
+  });
+  return { total: r2(total), porProduto: porProduto, avisos: avisos };
+}
+
 // Retorna { linhas, avisos } — linhas no MESMO formato de C_ESTOQUE, pra
 // simplesmente concatenar com o rowsEstoque (CSV) antes de chamar
 // processarCMV, sem mudar nada da lógica de cálculo em si.
@@ -629,37 +971,14 @@ function gerarLinhasEstoqueDeInventariosSalvos_(rowsEstoque, rowsCompras, rowsVe
 
   // 2. Data de cada contagem (aba CONTAGENS), pra achar a data representativa
   //    de cada inventário salvo.
-  var ss = SpreadsheetApp.openById(CONTAGEM_SHEET_ID);
-  var abaCont = ss.getSheetByName('CONTAGENS');
-  var dataPorContagemId = {};
-  if (abaCont) {
-    var contRows = abaCont.getDataRange().getValues();
-    for (var c = 1; c < contRows.length; c++) {
-      var rc = contRows[c];
-      if (!rc[0]) continue;
-      // Prioriza a data da contagem (r[1]); só cai pro fechamento (r[7]) se faltar.
-      dataPorContagemId[String(rc[0]).trim()] = paraTextoData_(rc[1]) || paraTextoData_(rc[7]);
-    }
-  }
-
-  function dataRepresentativa(inv) {
-    var melhorTs = null, melhorInfo = null;
-    inv.contagemIds.forEach(function(cid) {
-      var txt = dataPorContagemId[String(cid).trim()];
-      if (!txt) return;
-      var info = parseDataCompleta(txt.split(' ')[0]);
-      if (!info) return;
-      if (!melhorTs || info.ts > melhorTs) { melhorTs = info.ts; melhorInfo = info; }
-    });
-    return melhorInfo;
-  }
+  var dataPorContagemId = lerDataPorContagemId_();
 
   // 3. Agrupa por mês (ano-mes), pula meses que já têm CSV, e dentro de cada
   //    mês mantém só o inventário mais recente POR UNIDADE.
   var porMes = {}; // 'ano-mes' -> { unidade: {inv, info} }
   inventarios.forEach(function(inv) {
     if (!inv.contagemIds || !inv.contagemIds.length) return;
-    var info = dataRepresentativa(inv);
+    var info = resolverDataInventario_(inv, dataPorContagemId);
     if (!info) {
       avisos.push('Inventário "' + inv.label + '" (' + inv.unidade + '): sem data válida encontrada nas contagens escolhidas — ignorado.');
       return;
@@ -710,29 +1029,21 @@ function gerarLinhasEstoqueDeInventariosSalvos_(rowsEstoque, rowsCompras, rowsVe
     unidades.forEach(function(u) {
       var entry = porUnidade[u];
       var itens = buscarItensDeContagens_(entry.inv.contagemIds);
-      itens.forEach(function(item) {
-        var cat = catalogo[item.produto.toUpperCase()];
-        var nomeCanonico = cat ? cat.nome : item.produto;
-        var grupo = cat ? cat.grupo : '';
-        var custoUnit = buscarCustoInsumoComFallback(historicoPorInsumo, nomeCanonico, mesNome, infoData.ano);
-        if ((custoUnit === null || custoUnit === undefined) && fichasMap) {
-          custoUnit = fichasMap[nomeCanonico];
-        }
-        if (custoUnit === null || custoUnit === undefined) {
-          avisos.push('Item "' + item.produto + '" (' + u + ', ' + entry.inv.label + '): sem histórico de compra nem ficha técnica — não entrou no estoque de ' + mesNome + '/' + infoData.ano + '.');
-          return;
-        }
+      var rotulo = mesNome + '/' + infoData.ano + ', ' + u + ', ' + entry.inv.label;
+      var valorizado = valorizarItensInventario_(itens, mesNome, infoData.ano, historicoPorInsumo, fichasMap, catalogo, rotulo);
+      avisos = avisos.concat(valorizado.avisos);
+      valorizado.porProduto.forEach(function(p) {
         var linha = [];
         linha[C_ESTOQUE.filial]      = u;
-        linha[C_ESTOQUE.grupo]       = grupo;
-        linha[C_ESTOQUE.produto]     = nomeCanonico;
-        linha[C_ESTOQUE.unid]        = item.und;
+        linha[C_ESTOQUE.grupo]       = p.grupo;
+        linha[C_ESTOQUE.produto]     = p.produto;
+        linha[C_ESTOQUE.unid]        = p.und;
         linha[C_ESTOQUE.data]        = dataFormatada;
         linha[C_ESTOQUE.centro]      = entry.inv.label;
         linha[C_ESTOQUE.tp_movto]    = ESTOQUE_TIPO_VALIDO;
-        linha[C_ESTOQUE.saldo]       = item.qtde;
-        linha[C_ESTOQUE.custo_unit]  = custoUnit;
-        linha[C_ESTOQUE.custo_total] = r2(custoUnit * item.qtde);
+        linha[C_ESTOQUE.saldo]       = p.qtd;
+        linha[C_ESTOQUE.custo_unit]  = p.custoUnit;
+        linha[C_ESTOQUE.custo_total] = p.custoTotal;
         linhas.push(linha);
       });
     });
