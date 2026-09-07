@@ -97,12 +97,27 @@ function processarCompras(rows) {
   if (!rows || rows.length < 2) {
     throw new Error('CSV de compras vazio ou sem linhas de dados.');
   }
+  return processarComprasPorPeriodo_(rows, function(dataInfo) {
+    return NOMES_MESES[dataInfo.mes];
+  });
+}
 
-  // Agregar por mês + filial + produto + grupo
+// Motor de processarCompras generalizado por PERÍODO em vez de só por mês:
+// "resolverPeriodo(dataInfo)" decide a chave de agrupamento de cada linha
+// (dataInfo = {ano, mes, dia} de parseDataCompleta) — retornando null a
+// linha é ignorada (fora do período de interesse). processarCompras chama
+// isso com "sempre o nome do mês" (comportamento de sempre, sem nenhuma
+// mudança); o cálculo de CMC por semana/quinzena chama com um resolvedor
+// que só aceita linhas de um intervalo de dias específico, agrupando tudo
+// numa única chave — o resto da lógica (grupos, produtos, transferências,
+// percentuais) é EXATAMENTE a mesma nos dois casos, então os dois nunca
+// divergem silenciosamente.
+function processarComprasPorPeriodo_(rows, resolverPeriodo) {
+  // Agregar por período + filial + produto + grupo
   // Custo médio ponderado = sum(Total) / sum(Qtd)
   // Transferências entre unidades são separadas do CMC (não são compra externa).
   var agg = {};
-  var transf = {};  // mes → { total, filiais:{ FIL:{total, origens:{}, produtos:[] } } }
+  var transf = {};  // período → { total, filiais:{ FIL:{total, origens:{}, produtos:[] } } }
 
   for (var i = 1; i < rows.length; i++) {
     var r = rows[i];
@@ -113,9 +128,10 @@ function processarCompras(rows) {
     var qtd       = numVal(r[C_COMPRAS.qtd]);
     if (custoUnit <= 0 || total <= 0 || qtd <= 0) continue;
 
-    var mes = mesNum(r[C_COMPRAS.data]);
-    if (!mes) continue;
-    var mesNome = NOMES_MESES[mes];
+    var dataInfo = parseDataCompleta(r[C_COMPRAS.data]);
+    if (!dataInfo) continue;
+    var mesNome = resolverPeriodo(dataInfo);
+    if (!mesNome) continue;
 
     var prod   = limpaCelula(r[C_COMPRAS.produto]);
     var grupo  = limpaCelula(r[C_COMPRAS.grupo]);
@@ -311,6 +327,23 @@ function processarCompras(rows) {
 
   Logger.log('CMC processado. Meses: ' + Object.keys(cmc).join(', '));
   return cmc;
+}
+
+// Mesmo CMC de processarCompras, mas pra um intervalo de dias dentro de um
+// mês/ano específico (usado pra CMC por Semana/Quinzena) — reaproveita
+// processarComprasPorPeriodo_ com um resolvedor que aceita só as linhas
+// daquele intervalo, todas jogadas numa única chave. Retorna o objeto no
+// MESMO formato de cmc[mes] (cmc_total, grupos, filiais, transferencias) —
+// nunca diverge de processarCompras porque é o mesmo motor por baixo.
+function processarComprasIntervaloDias(rows, mesNome, ano, diaMin, diaMax) {
+  var CHAVE = 'PERIODO';
+  var resultado = processarComprasPorPeriodo_(rows || [], function(dataInfo) {
+    if (dataInfo.ano !== ano) return null;
+    if (NOMES_MESES[dataInfo.mes] !== mesNome) return null;
+    if (dataInfo.dia < diaMin || dataInfo.dia > diaMax) return null;
+    return CHAVE;
+  });
+  return resultado[CHAVE] || { cmc_total: 0, faturamento: 0, cmc_pct_fat: null, grupos: {}, filiais: {} };
 }
 
 // ── PROCESSAR VENDAS → ABC + FATURAMENTO ─────────────────────
