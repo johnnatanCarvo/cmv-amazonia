@@ -659,7 +659,11 @@ td.hi{font-weight:600;}
         <div class="ssub" id="corrigir-contagem-avisos" style="margin:0 0 14px;color:var(--am);"></div>
         <div class="ctrl"><input type="text" id="corrigir-contagem-busca" placeholder="Buscar produto..." oninput="rCorrigirContagemTable()"></div>
         <div class="twrap"><table>
-          <thead><tr><th>Cód.</th><th>Produto</th><th>Und.</th><th class="r">Contado</th><th class="r">Custo Unit.</th><th class="r">Custo Total</th><th style="width:110px;"></th></tr></thead>
+          <thead><tr><th>Cód.</th><th>Produto</th><th>Und.</th>
+            <th class="r sortable" onclick="setCorrigirContagemSort('contado')">Contado</th>
+            <th class="r sortable" onclick="setCorrigirContagemSort('custoUnit')">Custo Unit.</th>
+            <th class="r sortable" onclick="setCorrigirContagemSort('custoTotal')">Custo Total</th>
+            <th style="width:110px;"></th></tr></thead>
           <tbody id="corrigir-contagem-body"><tr><td colspan="7" class="empty">Carregando…</td></tr></tbody>
         </table></div>
         <div class="ctrl" style="margin-top:14px;justify-content:space-between;">
@@ -2702,6 +2706,12 @@ function rInventarioLista(){
 var CORRIGIR_CONTAGEM_ID=null;
 var CORRIGIR_CONTAGEM_ITENS=[];
 var CORRIGIR_CONTAGEM_TOTAL=null;
+var corrigirContagemSortCampo=null; // null = ordem por produto (padrão)
+
+function setCorrigirContagemSort(campo){
+  corrigirContagemSortCampo=(corrigirContagemSortCampo===campo)?null:campo; // clica de novo no mesmo = volta ao padrão
+  rCorrigirContagemTable();
+}
 
 function abrirCorrigirContagem(contagemId, rotulo){
   CORRIGIR_CONTAGEM_ID=contagemId;
@@ -2737,6 +2747,12 @@ function rCorrigirContagemTable(){
     if(!busca)return true;
     return it.produto.toLowerCase().indexOf(busca)>=0;
   });
+  if(corrigirContagemSortCampo){
+    var campo=corrigirContagemSortCampo;
+    data.sort(function(a,b){ return (b[campo]==null?-1:b[campo])-(a[campo]==null?-1:a[campo]); }); // maior primeiro, sem preço vai pro fim
+  } else {
+    data.sort(function(a,b){ return a.produto.localeCompare(b.produto); });
+  }
   document.getElementById('corrigir-contagem-count').textContent=data.length+' de '+CORRIGIR_CONTAGEM_ITENS.length+' itens';
   if(!data.length){
     document.getElementById('corrigir-contagem-body').innerHTML='<tr><td colspan="7" class="empty">Nenhum item encontrado.</td></tr>';
