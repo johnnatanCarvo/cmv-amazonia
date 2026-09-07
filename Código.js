@@ -73,7 +73,7 @@ function getPayload(senha) {
     // meses que ainda não têm contagem via CSV — meses já calculados hoje
     // a partir do CSV continuam exatamente como estavam (ver comentário de
     // gerarLinhasEstoqueDeInventariosSalvos_).
-    var inventarioConectado = gerarLinhasEstoqueDeInventariosSalvos_(rowsEstoque, rowsCompras, rowsVendas, historicoPorInsumo, fichasMap);
+    var inventarioConectado = gerarLinhasEstoqueDeInventariosSalvos_(rowsEstoque, rowsCompras, rowsVendas, historicoPorInsumo, fichasMap, rowsFichas);
     if (inventarioConectado.avisos.length) {
       Logger.log('Inventário salvo -> CMV: ' + inventarioConectado.avisos.join(' | '));
     }
@@ -592,6 +592,7 @@ function calcularAnaliseSemanal(senha, mes, ano) {
     var historicoPorInsumo = preAgregarCustoMedioPorInsumo(rowsCompras);
     var catalogo    = preAgregarCatalogoProdutos(rowsCompras, rowsVendas);
     var catalogoPorCodigo = preAgregarCatalogoPorCodigo(rowsCompras);
+    var fichaPorCodigo = preAgregarFichaPorCodigo(rowsFichas);
     var porDiaCompras = preAgregarComprasPorDia(rowsCompras);
     var porDiaVendas  = preAgregarVendasPorDia(rowsVendas);
 
@@ -621,8 +622,8 @@ function calcularAnaliseSemanal(senha, mes, ano) {
       var itensInicial = buscarItensDeContagens_(invInicial.contagemIds);
       var itensFinal   = buscarItensDeContagens_(invFinal.contagemIds);
       var rotulo = mes + '/' + ano + ', Semana ' + s.semanaNum + ', ' + s.unidade;
-      var valInicial = valorizarItensInventario_(itensInicial, mes, anoNum, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (inicial)', catalogoPorCodigo);
-      var valFinal   = valorizarItensInventario_(itensFinal, mes, anoNum, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (final)', catalogoPorCodigo);
+      var valInicial = valorizarItensInventario_(itensInicial, mes, anoNum, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (inicial)', catalogoPorCodigo, fichaPorCodigo);
+      var valFinal   = valorizarItensInventario_(itensFinal, mes, anoNum, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (final)', catalogoPorCodigo, fichaPorCodigo);
       avisos = avisos.concat(valInicial.avisos).concat(valFinal.avisos);
 
       blocos[s.semanaNum + '|' + s.unidade] = {
@@ -877,7 +878,7 @@ function resolverDataInventario_(inv, dataPorContagemId) {
 // fora do total e entra nos avisos — "rotuloContexto" só identifica de
 // onde veio o item, pro aviso ficar claro (não afeta o cálculo).
 // Retorna { total, porProduto:[{produto,grupo,und,qtd,custoUnit,custoTotal}], avisos }.
-function valorizarItensInventario_(itens, mesNome, ano, historicoPorInsumo, fichasMap, catalogo, rotuloContexto, catalogoPorCodigo) {
+function valorizarItensInventario_(itens, mesNome, ano, historicoPorInsumo, fichasMap, catalogo, rotuloContexto, catalogoPorCodigo, fichaPorCodigo) {
   var total = 0;
   var porProduto = [];
   var avisos = [];
@@ -888,13 +889,22 @@ function valorizarItensInventario_(itens, mesNome, ano, historicoPorInsumo, fich
     // 1ª tentativa (mais confiável): casar pelo COD do sistema de contagem
     // contra o Cód. ref. de Compras — não depende de grafia batendo,
     // confirmado com dados reais (ex: COD 1104 = "MP TOMATE KG" nos dois
-    // sistemas). Só cai pro nome se o item não tiver COD ou o COD não
-    // existir em nenhuma compra.
+    // sistemas).
     if (item.cod && catalogoPorCodigo && catalogoPorCodigo[item.cod]) {
       cat = catalogoPorCodigo[item.cod];
     }
 
-    // O sistema de contagem às vezes chama o item por um nome que não bate
+    // 2ª tentativa: itens preparados internamente (nunca comprados, por
+    // isso não aparecem em Compras) casam pelo MESMO código na Ficha
+    // Técnica — confirmado com dados reais (ex: COD 377 = "PP CROQUETE
+    // DE PIRARUCU UND" na contagem = "PP CROQUETE PIRARUCU UND" na
+    // ficha, mesmo com a grafia levemente diferente).
+    if (!cat && item.cod && fichaPorCodigo && fichaPorCodigo[item.cod]) {
+      cat = { nome: fichaPorCodigo[item.cod], grupo: '' };
+    }
+
+    // Sem COD ou COD não encontrado em nenhum dos dois: o sistema de
+    // contagem às vezes chama o item por um nome que não bate
     // com Compras/Ficha Técnica (ex: prefixo "MP" a mais) — resolve isso
     // usando o mesmo de-para de CMV Teórico.
     var nomeContado = APELIDOS_PRODUTO[item.produto] || item.produto;
@@ -941,7 +951,7 @@ function valorizarItensInventario_(itens, mesNome, ano, historicoPorInsumo, fich
 // Retorna { linhas, avisos } — linhas no MESMO formato de C_ESTOQUE, pra
 // simplesmente concatenar com o rowsEstoque (CSV) antes de chamar
 // processarCMV, sem mudar nada da lógica de cálculo em si.
-function gerarLinhasEstoqueDeInventariosSalvos_(rowsEstoque, rowsCompras, rowsVendas, historicoPorInsumo, fichasMap) {
+function gerarLinhasEstoqueDeInventariosSalvos_(rowsEstoque, rowsCompras, rowsVendas, historicoPorInsumo, fichasMap, rowsFichas) {
   var avisos = [];
   var props = PropertiesService.getScriptProperties();
   var valorProp = props.getProperty('INVENTARIOS_SEMANAIS_SALVOS');
@@ -1000,6 +1010,7 @@ function gerarLinhasEstoqueDeInventariosSalvos_(rowsEstoque, rowsCompras, rowsVe
   // 4. Preço/grupo: mesmo catálogo e histórico usados no CMV Teórico.
   var catalogo = preAgregarCatalogoProdutos(rowsCompras, rowsVendas);
   var catalogoPorCodigo = preAgregarCatalogoPorCodigo(rowsCompras);
+  var fichaPorCodigo = preAgregarFichaPorCodigo(rowsFichas);
   var linhas = [];
 
   chavesMes.forEach(function(chaveMes) {
@@ -1023,7 +1034,7 @@ function gerarLinhasEstoqueDeInventariosSalvos_(rowsEstoque, rowsCompras, rowsVe
       var entry = porUnidade[u];
       var itens = buscarItensDeContagens_(entry.inv.contagemIds);
       var rotulo = mesNome + '/' + infoData.ano + ', ' + u + ', ' + entry.inv.label;
-      var valorizado = valorizarItensInventario_(itens, mesNome, infoData.ano, historicoPorInsumo, fichasMap, catalogo, rotulo, catalogoPorCodigo);
+      var valorizado = valorizarItensInventario_(itens, mesNome, infoData.ano, historicoPorInsumo, fichasMap, catalogo, rotulo, catalogoPorCodigo, fichaPorCodigo);
       avisos = avisos.concat(valorizado.avisos);
       valorizado.porProduto.forEach(function(p) {
         var linha = [];

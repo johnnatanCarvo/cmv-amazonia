@@ -884,6 +884,7 @@ function processarCMV(rowsEstoque, rowsCompras) {
 //
 // ÍNDICES DO CSV DE FICHA TÉCNICA:
 var C_FICHAS = {
+  cod:        0,   // Cód. ref. do PRODUTO da ficha (não confundir com o cod do insumo, índice 12)
   produto:    1,   // Nome do produto (ou insumo/preparo)
   tipo:       3,   // "Venda" (produto final) ou "Matéria prima" (preparo interno)
   rendimento: 5,   // Quantas unidades do produto UMA receita/lote produz
@@ -1175,6 +1176,29 @@ function preAgregarCatalogoPorCodigo(rowsCompras) {
     var grupo = limpaCelula(r[C_COMPRAS.grupo]);
     if (!catalogo[cod]) catalogo[cod] = { nome: nome, grupo: grupo || '' };
     else if (!catalogo[cod].grupo && grupo) catalogo[cod].grupo = grupo;
+  }
+  return catalogo;
+}
+
+// Catálogo COD → nome canônico, construído a partir da Ficha Técnica
+// (coluna "Cód. ref." do PRODUTO, índice 0 — não confundir com o cod do
+// insumo dentro da receita). Confirmado contra dados reais: itens
+// preparados internamente (ex: "PP CROQUETE DE PIRARUCU UND" na contagem)
+// não aparecem em Compras (nunca são comprados — são produzidos), mas têm
+// o MESMO código na Ficha Técnica, só com grafia levemente diferente (ex:
+// "PP CROQUETE PIRARUCU UND", sem o "DE"). Usado em valorizarItensInventario_
+// como segunda tentativa por código, logo depois de Compras.
+function preAgregarFichaPorCodigo(rowsFichas) {
+  var catalogo = {};
+  if (!rowsFichas || rowsFichas.length < 2) return catalogo;
+  for (var i = 1; i < rowsFichas.length; i++) {
+    var r = rowsFichas[i];
+    if (!r || r.length < 7) continue;
+    var cod = limpaCelula(r[C_FICHAS.cod]);
+    if (!cod || catalogo[cod] !== undefined) continue;
+    var nome = limpaCelula(r[C_FICHAS.produto]);
+    if (!nome) continue;
+    catalogo[cod] = nome;
   }
   return catalogo;
 }
