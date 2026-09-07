@@ -914,7 +914,9 @@ var APELIDOS_PRODUTO = {
   'MP CJ TIJUCA': 'CJ TIJUCA',
   'MP RF SPRITE KS 290ML': 'RF SPRITE KS 290ML',
   // Cápsulas de gás: sistema de contagem usa prefixo "MP", Compras usa "UC".
-  'MP CAPSULAS DE GAS': 'UC CAPSULAS DE GAS'
+  'MP CAPSULAS DE GAS': 'UC CAPSULAS DE GAS',
+  // Confirmado pelo usuário — não é "MP TOMATE UVA KG" (variante diferente).
+  'MP TOMATE': 'MP TOMATE KG'
 };
 
 // Aplica APELIDOS_PRODUTO num mapa já construído (fichasMap ou receitas):
