@@ -3244,6 +3244,11 @@ function carregarSemanasMes(){
     .listarSemanasSalvas(SENHA_ATUAL, semanasMesAtual, ANO_OPERACIONAL);
 }
 
+// Semana 1 é a única com Início escolhido manualmente (pode ser do mês
+// anterior -- ver validação em salvarSemana). Semanas 2-4 herdam o Início
+// automaticamente do Fim da semana anterior: a contagem que fecha uma
+// semana é sempre a mesma que abre a próxima, então não faz sentido pedir
+// pra escolher de novo -- só o Fim de cada semana precisa ser escolhido.
 function rSemanasMesTable(){
   if(!semanasMesAtual)return;
   var opcoes=INVENTARIOS_SALVOS.filter(function(i){return i.unidade===inventarioUnidadeAtual;});
@@ -3252,26 +3257,60 @@ function rSemanasMesTable(){
     document.getElementById('semanas-mes-body').innerHTML='<tr><td colspan="4" class="empty">Nenhum inventário salvo ainda pra '+nomeUni(inventarioUnidadeAtual)+' — salve inventários acima primeiro.</td></tr>';
     return;
   }
-  function selectHtml(semanaNum, campo, valorAtual){
+  function labelDe(id){
+    var o=opcoes.filter(function(x){return x.id===id;})[0];
+    return o?o.label:null;
+  }
+  function selectHtml(semanaNum, campo, valorAtual, onchangeAttr){
     var id='sem-'+semanaNum+'-'+campo;
-    return '<select id="'+id+'"><option value="">— escolher —</option>'+
+    return '<select id="'+id+'"'+(onchangeAttr||'')+'><option value="">— escolher —</option>'+
       opcoes.map(function(o){return '<option value="'+o.id+'"'+(o.id===valorAtual?' selected':'')+'>'+o.label+'</option>';}).join('')+
       '</select>';
   }
   document.getElementById('semanas-mes-body').innerHTML=[1,2,3,4].map(function(n){
     var salva=SEMANAS_MES_SALVAS.filter(function(s){return s.semanaNum===n&&s.unidade===inventarioUnidadeAtual;})[0];
+    var iniCol;
+    if(n===1){
+      iniCol='<td>'+selectHtml(n,'ini',salva?salva.inventarioInicialId:'')+'</td>';
+    }else{
+      var salvaAnterior=SEMANAS_MES_SALVAS.filter(function(s){return s.semanaNum===n-1&&s.unidade===inventarioUnidadeAtual;})[0];
+      var idHerdado=salvaAnterior?salvaAnterior.inventarioFinalId:'';
+      var lbl=idHerdado?labelDe(idHerdado):null;
+      iniCol='<td><input type="hidden" id="sem-'+n+'-ini" value="'+(idHerdado||'')+'">'+
+        '<span id="sem-'+n+'-ini-lbl" style="color:var(--fg2)">'+(lbl?lbl+' — <i style="opacity:.7">= Fim da Semana '+(n-1)+'</i>':'— aguardando Fim da Semana '+(n-1)+' —')+'</span></td>';
+    }
+    var onchangeFim=(n<4)?' onchange="atualizarInicioEncadeado('+n+')"':'';
     return '<tr><td class="hi">Semana '+n+'</td>'+
-      '<td>'+selectHtml(n,'ini',salva?salva.inventarioInicialId:'')+'</td>'+
-      '<td>'+selectHtml(n,'fim',salva?salva.inventarioFinalId:'')+'</td>'+
+      iniCol+
+      '<td>'+selectHtml(n,'fim',salva?salva.inventarioFinalId:'',onchangeFim)+'</td>'+
       '<td class="r"><button class="gd-close" onclick="salvarSemanaRow('+n+')">'+(salva?'Atualizar':'Salvar')+'</button></td></tr>';
   }).join('');
 }
 
+// Fim da Semana N mudou (mesmo antes de salvar) -- atualiza ao vivo o
+// "Início herdado" mostrado na Semana N+1, sem precisar salvar e recarregar.
+function atualizarInicioEncadeado(n){
+  var prox=n+1;
+  if(prox>4)return;
+  var fimSel=document.getElementById('sem-'+n+'-fim');
+  var novoId=fimSel?fimSel.value:'';
+  var hid=document.getElementById('sem-'+prox+'-ini');
+  var lblSpan=document.getElementById('sem-'+prox+'-ini-lbl');
+  if(hid)hid.value=novoId;
+  if(lblSpan){
+    var opcoes=INVENTARIOS_SALVOS.filter(function(i){return i.unidade===inventarioUnidadeAtual;});
+    var o=opcoes.filter(function(x){return x.id===novoId;})[0];
+    lblSpan.innerHTML = o ? (o.label+' — <i style="opacity:.7">= Fim da Semana '+n+'</i>') : ('— aguardando Fim da Semana '+n+' —');
+  }
+}
+
 function salvarSemanaRow(n){
   var status=document.getElementById('semanas-mes-status');
-  var ini=document.getElementById('sem-'+n+'-ini').value;
+  var iniEl=document.getElementById('sem-'+n+'-ini');
+  var ini=iniEl?iniEl.value:'';
   var fim=document.getElementById('sem-'+n+'-fim').value;
-  if(!ini||!fim){status.textContent='Escolha os dois inventários (início e fim) da Semana '+n+'.';status.style.color='var(--rd)';return;}
+  if(n>1 && !ini){status.textContent='A Semana '+(n-1)+' ainda não tem um Fim escolhido — escolha-o primeiro (a Semana '+n+' começa onde a Semana '+(n-1)+' termina).';status.style.color='var(--rd)';return;}
+  if(!ini||!fim){status.textContent='Escolha o inventário de início e fim da Semana '+n+'.';status.style.color='var(--rd)';return;}
   var salva=SEMANAS_MES_SALVAS.filter(function(s){return s.semanaNum===n&&s.unidade===inventarioUnidadeAtual;})[0];
   status.textContent='Salvando Semana '+n+'...';status.style.color='var(--fg3)';
   google.script.run

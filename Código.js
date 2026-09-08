@@ -515,9 +515,24 @@ function salvarSemana(senha, dados) {
     if (!infoInicial || !infoFinal) {
       return JSON.stringify({ ok: false, erro: 'Não foi possível encontrar a data de um dos inventários escolhidos.' });
     }
-    if (NOMES_MESES[infoInicial.mes] !== dados.mes || infoInicial.ano !== Number(dados.ano) ||
-        NOMES_MESES[infoFinal.mes]   !== dados.mes || infoFinal.ano   !== Number(dados.ano)) {
-      return JSON.stringify({ ok: false, erro: 'A data de um dos inventários escolhidos não é de ' + dados.mes + '/' + dados.ano + '. Escolha inventários desse mês.' });
+    // O FIM sempre tem que cair no mês/ano da semana (é o que "fecha" essa
+    // semana). Já o INÍCIO pode ser do mês anterior — uma contagem feita no
+    // dia 31 (ou 1º) vira o fim de uma semana e o início da próxima, e essas
+    // duas datas podem estar em meses diferentes (ex: fecha Semana 4 de
+    // Agosto E abre a Semana 1 de Setembro). Por isso só o início aceita o
+    // mês anterior; o fim nunca.
+    var mesNumAlvo = Number(Object.keys(NOMES_MESES).filter(function(k) { return NOMES_MESES[k] === dados.mes; })[0]);
+    var anoAlvo = Number(dados.ano);
+    var mesAnteriorNum = mesNumAlvo === 1 ? 12 : mesNumAlvo - 1;
+    var anoAnteriorNum = mesNumAlvo === 1 ? anoAlvo - 1 : anoAlvo;
+
+    if (NOMES_MESES[infoFinal.mes] !== dados.mes || infoFinal.ano !== anoAlvo) {
+      return JSON.stringify({ ok: false, erro: 'O inventário final precisa ser de ' + dados.mes + '/' + dados.ano + '. Escolha um inventário desse mês.' });
+    }
+    var inicialNoMesAlvo = infoInicial.mes === mesNumAlvo && infoInicial.ano === anoAlvo;
+    var inicialNoMesAnterior = infoInicial.mes === mesAnteriorNum && infoInicial.ano === anoAnteriorNum;
+    if (!inicialNoMesAlvo && !inicialNoMesAnterior) {
+      return JSON.stringify({ ok: false, erro: 'O inventário inicial precisa ser de ' + dados.mes + '/' + dados.ano + ' ou do mês anterior (' + NOMES_MESES[mesAnteriorNum] + '/' + anoAnteriorNum + ').' });
     }
     if (infoFinal.ts < infoInicial.ts) {
       return JSON.stringify({ ok: false, erro: 'O inventário final é de uma data anterior ao inicial — confira a ordem.' });
