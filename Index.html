@@ -1740,12 +1740,23 @@ function renderCMVProdTabela(prods){
           : '<td class="n r" style="color:'+(ent>0?'var(--az)':'var(--fg3)')+'">'+(ent>0?fR2(ent)+' ('+fQ(entQ)+')':'--')+'</td>'+
             '<td class="n r" style="color:'+(sai>0?'var(--am)':'var(--fg3)')+'">'+(sai>0?fR2(sai)+' ('+fQ(saiQ)+')':'--')+'</td>';
       }
+      // Um produto pode ter esse EI/EF somado de MAIS de uma contagem (ex:
+      // cada setor conta seu próprio estoque do mesmo item de limpeza) --
+      // nesse caso mostra um lápis NUMERADO por contagem, em vez de esconder
+      // a correção: cada um abre a contagem certa e avisa (no subtítulo do
+      // card) que aquele valor é só uma parte da soma exibida aqui.
       var btnCorrigir=function(fontes,nomeProd){
-        if(!fontes||fontes.length!==1)return '';
+        if(!fontes||!fontes.length)return '';
         var nomeEsc=nomeProd.replace(/'/g,"\\'");
-        return ' <button class="mini-fix" title="Corrigir a contagem que gerou este valor" '+
-          'onclick="event.stopPropagation();abrirCorrigirItemFonte(\''+fontes[0].contagemId+'\',\''+nomeEsc+'\')" '+
-          'style="border:none;background:none;cursor:pointer;opacity:.55;font-size:11px;padding:0 0 0 4px;">&#9998;</button>';
+        return fontes.map(function(f,idx){
+          var titulo=fontes.length>1
+            ? 'Corrigir a contagem '+(idx+1)+' de '+fontes.length+' que somam este valor'
+            : 'Corrigir a contagem que gerou este valor';
+          var rotuloBtn=fontes.length>1?('&#9998;'+(idx+1)):'&#9998;';
+          return ' <button class="mini-fix" title="'+titulo+'" '+
+            'onclick="event.stopPropagation();abrirCorrigirItemFonte(\''+f.contagemId+'\',\''+nomeEsc+'\','+(idx+1)+','+fontes.length+')" '+
+            'style="border:none;background:none;cursor:pointer;opacity:.55;font-size:11px;padding:0 0 0 3px;">'+rotuloBtn+'</button>';
+        }).join('');
       };
       var eiBtn=btnCorrigir(p.ei_fontes,p.nome), efBtn=btnCorrigir(p.ef_fontes,p.nome);
       if(porQtd){
@@ -3005,11 +3016,14 @@ function preencherCorrigirContagemCard(res, focoProduto){
 }
 
 // Entrada do botão "Corrigir" num produto específico dentro de um grupo do
-// CMV (só aparece quando o EI/EF desse produto vem de UMA única contagem
-// identificável — ver ei_fontes/ef_fontes). Abre o MESMO card de correção
-// de Ajustes > Inventário, já na contagem certa e com a busca filtrada pro
-// produto — sem precisar navegar manualmente pra achar a linha.
-function abrirCorrigirItemFonte(contagemId, produtoNome){
+// CMV (aparece pra cada contagem que soma o EI/EF desse produto — ver
+// ei_fontes/ef_fontes). Abre o MESMO card de correção de Ajustes >
+// Inventário, já na contagem certa e com a busca filtrada pro produto — sem
+// precisar navegar manualmente pra achar a linha. idx/total (opcionais):
+// quando o valor exibido na aba CMV é a SOMA de mais de uma contagem, avisa
+// no subtítulo qual das contagens é essa, pra não passar a impressão de que
+// corrigir uma já corrige o total somado.
+function abrirCorrigirItemFonte(contagemId, produtoNome, idx, total){
   CORRIGIR_CONTAGEM_ID=contagemId;
   document.getElementById('corrigir-contagem-card').style.display='';
   document.getElementById('corrigir-contagem-sub').textContent='Carregando...';
@@ -3023,7 +3037,9 @@ function abrirCorrigirItemFonte(contagemId, produtoNome){
       var res;try{res=JSON.parse(json);}catch(e){document.getElementById('corrigir-contagem-body').innerHTML='<tr><td colspan="7" class="empty">Erro ao carregar.</td></tr>';return;}
       if(res.ok){
         var m=res.meta;
-        document.getElementById('corrigir-contagem-sub').textContent = m ? (m.data+' · '+nomeUni(m.unidade)+' · '+m.setor) : contagemId;
+        var sub = m ? (m.data+' · '+nomeUni(m.unidade)+' · '+m.setor) : contagemId;
+        if(total>1) sub += ' — contagem '+idx+' de '+total+' que SOMAM o valor mostrado na aba CMV (corrigir aqui muda só esta parte)';
+        document.getElementById('corrigir-contagem-sub').textContent = sub;
       }
       preencherCorrigirContagemCard(res, produtoNome);
     })
