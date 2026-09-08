@@ -8,6 +8,19 @@
 // ── CONFIGURAÇÃO ─────────────────────────────────────────────
 var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 
+// Identificador da versão publicada -- bumped a cada deploy (clasp deploy).
+// O front-end grava esse valor no carregamento da página (embutido no HTML
+// pelo template, ver <?= VERSAO_APP ?> em Index.html) e, de tempos em
+// tempos, pergunta pro servidor (obterVersaoApp) qual é o valor ATUAL. Se
+// mudou, é porque alguém (eu) publicou uma atualização enquanto a página
+// já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
+// a pessoa usando uma versão desatualizada sem saber.
+var VERSAO_APP = '2026-09-08.1';
+
+function obterVersaoApp() {
+  return JSON.stringify({ ok: true, versao: VERSAO_APP });
+}
+
 // ── SEGURANÇA ────────────────────────────────────────────────
 // A senha NAO fica no codigo-fonte (este projeto e versionado no GitHub).
 // Ela mora em Project Settings > Script Properties, chave "SENHA_ACESSO".

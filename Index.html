@@ -797,6 +797,10 @@ var AVISOSINVENTARIO=[];
 var abcOrder='valor', custoCache=null, uniABC='TODAS', mesABC='TODOS';
 var custoMesA='', custoMesB='';
 var SENHA_ATUAL='';
+// Versão carregada nesta página (embutida pelo template no doGet -- ver
+// VERSAO_APP em Código.js). Comparada periodicamente com a versão atual do
+// servidor pra avisar quando uma atualização foi publicada nesta sessão.
+var APP_VERSAO_CARREGADA='<?= VERSAO_APP ?>';
 var uploadTipoSelecionado='';
 var UPLOAD_TIPO_LABEL={compras:'Compras',vendas:'Vendas',estoque:'Contagem de Estoque',fichas:'Ficha Técnica'};
 
@@ -884,7 +888,41 @@ function fazerLogin(){
 }
 function mostrarErro(m){document.getElementById('load-msg').style.display='none';var e=document.getElementById('load-err');e.style.display='block';e.textContent=m;}
 
+/* ====== AVISO DE NOVA VERSAO ======
+   O deploy de uma atualizacao (clasp deploy) atualiza a versao servida
+   IMEDIATAMENTE pra quem abrir a pagina depois -- mas quem ja estava com a
+   pagina aberta continua rodando o JS antigo ate recarregar manualmente
+   (comportamento normal de qualquer pagina, nao um bug do Apps Script).
+   Isso verifica de tempos em tempos se a versao mudou e avisa, em vez de
+   forcar um reload sozinho (que perderia o que a pessoa estiver digitando
+   numa hora ruim, ex: no meio de uma correcao de contagem). */
+var VERSAO_CHECK_INTERVALO_MS=90000; // 90s
+function iniciarChecagemDeVersao(){
+  setInterval(function(){
+    google.script.run
+      .withSuccessHandler(function(json){
+        var res;try{res=JSON.parse(json);}catch(e){return;}
+        if(res&&res.ok&&res.versao&&res.versao!==APP_VERSAO_CARREGADA)mostrarAvisoNovaVersao();
+      })
+      .withFailureHandler(function(){/* rede instavel -- tenta de novo no proximo ciclo, sem incomodar */})
+      .obterVersaoApp();
+  },VERSAO_CHECK_INTERVALO_MS);
+}
+function mostrarAvisoNovaVersao(){
+  if(document.getElementById('nova-versao-aviso'))return; // ja mostrando
+  var d=document.createElement('div');
+  d.id='nova-versao-aviso';
+  d.style.cssText='position:fixed;bottom:18px;right:18px;z-index:9999;background:var(--ac2, #3DBA92);'+
+    'color:#08201a;padding:12px 16px;border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.35);'+
+    'font-size:13px;display:flex;align-items:center;gap:12px;max-width:320px;';
+  d.innerHTML='<span>Uma nova versão deste painel foi publicada.</span>'+
+    '<button onclick="location.reload()" style="background:#08201a;color:#fff;border:none;border-radius:6px;'+
+    'padding:6px 12px;cursor:pointer;font-size:13px;white-space:nowrap;">Atualizar agora</button>';
+  document.body.appendChild(d);
+}
+
 function iniciar(){
+  iniciarChecagemDeVersao();
   // Seletor de meses
   var seg=document.getElementById('mes-seg');
   seg.innerHTML=MESES.map(function(m){
