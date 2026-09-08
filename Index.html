@@ -3024,6 +3024,13 @@ function preencherCorrigirContagemCard(res, focoProduto){
 // no subtítulo qual das contagens é essa, pra não passar a impressão de que
 // corrigir uma já corrige o total somado.
 function abrirCorrigirItemFonte(contagemId, produtoNome, idx, total){
+  // O card de correção mora dentro de Ajustes > Inventário -- se o usuário
+  // clicou vindo da aba CMV, essa seção inteira ainda está com display:none
+  // (troca de aba é feita por classe/estilo no <section>, não só no card).
+  // Sem trocar de aba primeiro, o card fica "aberto" mas invisível -- exatamente
+  // o "clico e não acontece nada" reportado.
+  go('ajustes');
+  setAjustesSub('inventario');
   CORRIGIR_CONTAGEM_ID=contagemId;
   document.getElementById('corrigir-contagem-card').style.display='';
   document.getElementById('corrigir-contagem-sub').textContent='Carregando...';
