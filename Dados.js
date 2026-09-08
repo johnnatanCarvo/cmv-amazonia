@@ -809,7 +809,7 @@ function processarCMV(rowsEstoque, rowsCompras) {
       contagensPorData[ts] = {
         ts: ts, mes: dataInfo.mes, ano: dataInfo.ano, dia: dataInfo.dia,
         total: 0, porGrupo: {}, porFilial: {}, porFilialGrupo: {}, porProdGrupo: {}, porProdGrupoFilial: {},
-        porProdGrupoFilialQtd: {}
+        porProdGrupoQtd: {}, porProdGrupoFilialQtd: {}
       };
     }
     var c = contagensPorData[ts];
@@ -824,6 +824,8 @@ function processarCMV(rowsEstoque, rowsCompras) {
     if (grupo && produto) {
       if (!c.porProdGrupo[grupo]) c.porProdGrupo[grupo] = {};
       c.porProdGrupo[grupo][produto] = (c.porProdGrupo[grupo][produto] || 0) + valor;
+      if (!c.porProdGrupoQtd[grupo]) c.porProdGrupoQtd[grupo] = {};
+      c.porProdGrupoQtd[grupo][produto] = (c.porProdGrupoQtd[grupo][produto] || 0) + qtd;
     }
     // Produto dentro do grupo, por filial (para detalhe do CMV por produto de uma unidade)
     if (filial && grupo && produto) {
@@ -885,6 +887,8 @@ function processarCMV(rowsEstoque, rowsCompras) {
       var eiProds = ei.porProdGrupo[g] || {};
       var efProds = ef.porProdGrupo[g] || {};
       var coProds = (cMes && cMes.prodGrupo[g]) ? cMes.prodGrupo[g] : {};
+      var eiProdsQtd = ei.porProdGrupoQtd[g] || {};
+      var efProdsQtd = ef.porProdGrupoQtd[g] || {};
       Object.keys(eiProds).forEach(function(p){ prodSet[p]=1; });
       Object.keys(efProds).forEach(function(p){ prodSet[p]=1; });
       Object.keys(coProds).forEach(function(p){ prodSet[p]=1; });
@@ -899,7 +903,8 @@ function processarCMV(rowsEstoque, rowsCompras) {
           nome: p,
           ei: r2(eiP), compras: r2(coP), ef: r2(efP),
           cmv: r2(eiP + coP - efP),
-          qtd: r2(qtdP)
+          qtd: r2(qtdP),
+          ei_qtd: r2(eiProdsQtd[p] || 0), ef_qtd: r2(efProdsQtd[p] || 0)
         };
       }).sort(function(a,b){ return b.cmv - a.cmv; });
 
