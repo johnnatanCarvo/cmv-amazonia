@@ -79,7 +79,7 @@ function getPayload(senha) {
     }
     var rowsEstoqueCompleto = (rowsEstoque && rowsEstoque.length ? rowsEstoque : [[]]).concat(inventarioConectado.linhas);
 
-    var cmv        = processarCMV(rowsEstoqueCompleto, rowsCompras);
+    var cmv        = processarCMV(rowsEstoqueCompleto, rowsCompras, historicoPorInsumo, fichasMap);
 
     // Meses disponíveis — derivados dos dados de compras
     var mOrdem = ['JANEIRO','FEVEREIRO','MARÇO','ABRIL','MAIO','JUNHO',

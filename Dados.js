@@ -774,16 +774,29 @@ function montarGruposCMV_(eiPorGrupoF, eiProdGrupoF, efPorGrupoF, efProdGrupoF,
   }).sort(function(a,b){ return b.cmv - a.cmv; });
 }
 
-function processarCMV(rowsEstoque, rowsCompras) {
+function processarCMV(rowsEstoque, rowsCompras, historicoPorInsumo, fichasMap) {
   if (!rowsEstoque || rowsEstoque.length < 2) {
     Logger.log('CSV de estoque nao disponivel. CMV nao calculado.');
     return {};
   }
+  historicoPorInsumo = historicoPorInsumo || {};
 
   // ── 1. Ler contagens (apenas linhas de Inventario) ──
   // Para cada data de contagem, somar o valor do estoque por grupo e total.
   // Um produto pode ter varias linhas (centros de estoque diferentes): todas somam.
   // contagensPorData: { "20251231": { total, porGrupo:{}, porFilial:{}, porFilialGrupo:{} } }
+  //
+  // O CUSTO usado é sempre o médio ponderado de compra do mês da própria
+  // contagem (com fallback pro mês anterior com compra e, por fim, pra
+  // ficha técnica) — o MESMO critério já usado pro inventário salvo
+  // (valorizarItensInventario_) e pro CMV Teórico. NÃO usa o "Custo total"
+  // que o Cloudfy calcula internamente na exportação do estoque: esse
+  // valor pode mudar de uma contagem pra outra mesmo sem nenhuma compra
+  // nova (custeio interno do Cloudfy, fora do nosso controle), o que
+  // inflava/distorcia o CMV de itens parados. Quantidade contada sem
+  // histórico de compra nem ficha técnica fica de fora (mesmo critério do
+  // inventário salvo).
+  var itensSemPreco = 0;
   var contagensPorData = {};
 
   for (var i = 1; i < rowsEstoque.length; i++) {
@@ -796,13 +809,27 @@ function processarCMV(rowsEstoque, rowsCompras) {
     var dataInfo = parseDataCompleta(r[C_ESTOQUE.data]);
     if (!dataInfo) continue;
 
-    var valor = numVal(r[C_ESTOQUE.custo_total]);
+    var qtd = numVal(r[C_ESTOQUE.saldo]);
+    if (qtd <= 0) continue;
+
+    var produto = limpaCelula(r[C_ESTOQUE.produto]);
+    if (!produto) continue;
+
+    var mesNomeLinha = NOMES_MESES[dataInfo.mes];
+    var custoUnit = buscarCustoInsumoComFallback(historicoPorInsumo, produto, mesNomeLinha, dataInfo.ano);
+    if (custoUnit === null || custoUnit === undefined) {
+      custoUnit = fichasMap ? fichasMap[produto] : undefined;
+    }
+    if (custoUnit === null || custoUnit === undefined) {
+      itensSemPreco++;
+      continue;  // sem histórico de compra nem ficha técnica — fica de fora, como no inventário salvo
+    }
+
+    var valor = r2(custoUnit * qtd);
     if (valor <= 0) continue;
 
     var grupo   = limpaCelula(r[C_ESTOQUE.grupo]);
     var filial  = limpaCelula(r[C_ESTOQUE.filial]) || 'OUTRA';
-    var produto = limpaCelula(r[C_ESTOQUE.produto]);
-    var qtd     = numVal(r[C_ESTOQUE.saldo]);
     var ts = dataInfo.ts;
 
     if (!contagensPorData[ts]) {
@@ -842,6 +869,9 @@ function processarCMV(rowsEstoque, rowsCompras) {
 
   var datasOrdenadas = Object.keys(contagensPorData).sort();
   Logger.log('Contagens de estoque: ' + datasOrdenadas.join(', '));
+  if (itensSemPreco > 0) {
+    Logger.log(itensSemPreco + ' linha(s) de contagem sem histórico de compra nem ficha técnica — ficaram de fora do CMV.');
+  }
   if (datasOrdenadas.length < 2) {
     Logger.log('Menos de 2 contagens. CMV nao pode ser calculado (precisa de EI e EF).');
     return {};
