@@ -59,9 +59,15 @@ function filialOrigem(fornecedor) {
 
 // ── UTILITÁRIOS ──────────────────────────────────────────────
 
-// Parseia número de string com vírgula ou ponto como decimal
+// Parseia número de string com vírgula ou ponto como decimal (formato dos
+// CSVs, ex: "1.234,56"). Quando o valor já vem como number (linhas
+// sintéticas do conector de inventário salvo, ver
+// gerarLinhasEstoqueDeInventariosSalvos_ em Código.js), devolve direto —
+// tratá-lo como texto removeria o ponto decimal do próprio JS (269.5 vira
+// "2695") e infla o valor.
 function numVal(str) {
   if (str === null || str === undefined) return 0;
+  if (typeof str === 'number') return isNaN(str) ? 0 : str;
   var s = String(str).trim().replace(/"/g, '').replace(/\./g, '').replace(',', '.');
   var v = parseFloat(s);
   return isNaN(v) ? 0 : v;
