@@ -1740,15 +1740,23 @@ function renderCMVProdTabela(prods){
           : '<td class="n r" style="color:'+(ent>0?'var(--az)':'var(--fg3)')+'">'+(ent>0?fR2(ent)+' ('+fQ(entQ)+')':'--')+'</td>'+
             '<td class="n r" style="color:'+(sai>0?'var(--am)':'var(--fg3)')+'">'+(sai>0?fR2(sai)+' ('+fQ(saiQ)+')':'--')+'</td>';
       }
+      var btnCorrigir=function(fontes,nomeProd){
+        if(!fontes||fontes.length!==1)return '';
+        var nomeEsc=nomeProd.replace(/'/g,"\\'");
+        return ' <button class="mini-fix" title="Corrigir a contagem que gerou este valor" '+
+          'onclick="event.stopPropagation();abrirCorrigirItemFonte(\''+fontes[0].contagemId+'\',\''+nomeEsc+'\')" '+
+          'style="border:none;background:none;cursor:pointer;opacity:.55;font-size:11px;padding:0 0 0 4px;">&#9998;</button>';
+      };
+      var eiBtn=btnCorrigir(p.ei_fontes,p.nome), efBtn=btnCorrigir(p.ef_fontes,p.nome);
       if(porQtd){
         return '<tr><td class="hi">'+p.nome+'</td>'+
-          '<td class="n r">'+fQ(p.ei_qtd||0)+'</td><td class="n r">'+fQ(p.qtd||0)+'</td>'+
-          '<td class="n r">'+fQ(p.ef_qtd||0)+'</td>'+tdTransf+'<td class="n r hi">'+fR2(p.cmv)+'</td></tr>';
+          '<td class="n r">'+fQ(p.ei_qtd||0)+eiBtn+'</td><td class="n r">'+fQ(p.qtd||0)+'</td>'+
+          '<td class="n r">'+fQ(p.ef_qtd||0)+efBtn+'</td>'+tdTransf+'<td class="n r hi">'+fR2(p.cmv)+'</td></tr>';
       }
       return '<tr><td class="hi">'+p.nome+'</td>'+
         '<td class="n r" style="color:var(--fg2)">'+fQ(p.qtd||0)+'</td>'+
-        '<td class="n r">'+fR2(p.ei)+'</td><td class="n r">'+fR2(p.compras)+'</td>'+
-        '<td class="n r">'+fR2(p.ef)+'</td>'+tdTransf+'<td class="n r hi">'+fR2(p.cmv)+'</td></tr>';
+        '<td class="n r">'+fR2(p.ei)+eiBtn+'</td><td class="n r">'+fR2(p.compras)+'</td>'+
+        '<td class="n r">'+fR2(p.ef)+efBtn+'</td>'+tdTransf+'<td class="n r hi">'+fR2(p.cmv)+'</td></tr>';
     }).join('')+'</tbody></table>';
 }
 
@@ -2970,20 +2978,59 @@ function abrirCorrigirContagem(contagemId, rotulo){
   google.script.run
     .withSuccessHandler(function(json){
       var res;try{res=JSON.parse(json);}catch(e){document.getElementById('corrigir-contagem-body').innerHTML='<tr><td colspan="7" class="empty">Erro ao carregar.</td></tr>';return;}
-      if(!res.ok){document.getElementById('corrigir-contagem-body').innerHTML='<tr><td colspan="7" class="empty">'+(res.erro||'Erro ao carregar.')+'</td></tr>';return;}
-      CORRIGIR_CONTAGEM_ITENS=res.itens;
-      CORRIGIR_CONTAGEM_TOTAL=res.valorTotal;
-      document.getElementById('corrigir-contagem-total').textContent=res.valorTotal!==null?fR2(res.valorTotal):'--';
-      if(res.avisos&&res.avisos.length){
-        document.getElementById('corrigir-contagem-avisos').innerHTML=res.avisos.length+' item(ns) sem preço encontrado — não entram no valor total. Passe o mouse pra ver quais.';
-        document.getElementById('corrigir-contagem-avisos').title=res.avisos.join('\n');
-      }
-      rCorrigirContagemTable();
+      preencherCorrigirContagemCard(res);
     })
     .withFailureHandler(function(err){
       document.getElementById('corrigir-contagem-body').innerHTML='<tr><td colspan="7" class="empty">Falha: '+(err.message||err)+'</td></tr>';
     })
     .listarItensDeContagem(SENHA_ATUAL, contagemId);
+}
+
+// Preenche o corpo do card de correção já aberto (título/sub já setados por
+// quem chamou) a partir de um resultado {ok,itens,valorTotal,avisos}.
+// focoProduto (opcional): pré-preenche a busca com o nome do produto, pra
+// isolar de cara a linha que motivou a correção (usado por
+// abrirCorrigirItemFonte, vindo do botão "Corrigir" na aba CMV).
+function preencherCorrigirContagemCard(res, focoProduto){
+  if(!res.ok){document.getElementById('corrigir-contagem-body').innerHTML='<tr><td colspan="7" class="empty">'+(res.erro||'Erro ao carregar.')+'</td></tr>';return;}
+  CORRIGIR_CONTAGEM_ITENS=res.itens;
+  CORRIGIR_CONTAGEM_TOTAL=res.valorTotal;
+  document.getElementById('corrigir-contagem-total').textContent=res.valorTotal!==null?fR2(res.valorTotal):'--';
+  if(res.avisos&&res.avisos.length){
+    document.getElementById('corrigir-contagem-avisos').innerHTML=res.avisos.length+' item(ns) sem preço encontrado — não entram no valor total. Passe o mouse pra ver quais.';
+    document.getElementById('corrigir-contagem-avisos').title=res.avisos.join('\n');
+  }
+  if(focoProduto)document.getElementById('corrigir-contagem-busca').value=focoProduto;
+  rCorrigirContagemTable();
+}
+
+// Entrada do botão "Corrigir" num produto específico dentro de um grupo do
+// CMV (só aparece quando o EI/EF desse produto vem de UMA única contagem
+// identificável — ver ei_fontes/ef_fontes). Abre o MESMO card de correção
+// de Ajustes > Inventário, já na contagem certa e com a busca filtrada pro
+// produto — sem precisar navegar manualmente pra achar a linha.
+function abrirCorrigirItemFonte(contagemId, produtoNome){
+  CORRIGIR_CONTAGEM_ID=contagemId;
+  document.getElementById('corrigir-contagem-card').style.display='';
+  document.getElementById('corrigir-contagem-sub').textContent='Carregando...';
+  document.getElementById('corrigir-contagem-avisos').innerHTML='';
+  document.getElementById('corrigir-contagem-total').textContent='--';
+  document.getElementById('corrigir-contagem-busca').value=produtoNome||'';
+  document.getElementById('corrigir-contagem-body').innerHTML='<tr><td colspan="7" class="empty">Carregando…</td></tr>';
+  document.getElementById('corrigir-contagem-card').scrollIntoView({behavior:'smooth',block:'start'});
+  google.script.run
+    .withSuccessHandler(function(json){
+      var res;try{res=JSON.parse(json);}catch(e){document.getElementById('corrigir-contagem-body').innerHTML='<tr><td colspan="7" class="empty">Erro ao carregar.</td></tr>';return;}
+      if(res.ok){
+        var m=res.meta;
+        document.getElementById('corrigir-contagem-sub').textContent = m ? (m.data+' · '+nomeUni(m.unidade)+' · '+m.setor) : contagemId;
+      }
+      preencherCorrigirContagemCard(res, produtoNome);
+    })
+    .withFailureHandler(function(err){
+      document.getElementById('corrigir-contagem-body').innerHTML='<tr><td colspan="7" class="empty">Falha: '+(err.message||err)+'</td></tr>';
+    })
+    .abrirCorrecaoDeItem(SENHA_ATUAL, contagemId);
 }
 
 function rCorrigirContagemTable(){

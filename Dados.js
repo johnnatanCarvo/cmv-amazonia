@@ -690,7 +690,7 @@ function comprasPeriodoCMV_(rowsCompras, mesNome, ano, diaMin, diaMax) {
 // que os dois nunca divergem silenciosamente.
 function montarGruposCMV_(eiPorGrupoF, eiProdGrupoF, efPorGrupoF, efProdGrupoF,
     coPorGrupoF, coProdGrupoFilialF, entradaGrupoF, saidaGrupoF, entradaProdGrupoF, saidaProdGrupoF,
-    eiProdQtdGrupoF, efProdQtdGrupoF) {
+    eiProdQtdGrupoF, efProdQtdGrupoF, eiProdFontesGrupoF, efProdFontesGrupoF) {
   eiPorGrupoF = eiPorGrupoF || {};
   eiProdGrupoF = eiProdGrupoF || {};
   efPorGrupoF = efPorGrupoF || {};
@@ -703,6 +703,11 @@ function montarGruposCMV_(eiPorGrupoF, eiProdGrupoF, efPorGrupoF, efProdGrupoF,
   saidaProdGrupoF = saidaProdGrupoF || {};
   eiProdQtdGrupoF = eiProdQtdGrupoF || {};
   efProdQtdGrupoF = efProdQtdGrupoF || {};
+  // fontes: só vem preenchido no caminho de semana/quinzena (contagens do
+  // sistema próprio) — no CSV mensal do Cloudfy não existe "contagemId" pra
+  // apontar, então fica vazio e nenhum botão de correção aparece.
+  eiProdFontesGrupoF = eiProdFontesGrupoF || {};
+  efProdFontesGrupoF = efProdFontesGrupoF || {};
 
   var gruposSetF = {};
   Object.keys(eiPorGrupoF).forEach(function(g){ gruposSetF[g]=1; });
@@ -732,6 +737,8 @@ function montarGruposCMV_(eiPorGrupoF, eiProdGrupoF, efPorGrupoF, efProdGrupoF,
     var saidaProdG   = (saidaProdGrupoF[g])   || {};
     var eiQtdProdsG = (eiProdQtdGrupoF[g]) || {};
     var efQtdProdsG = (efProdQtdGrupoF[g]) || {};
+    var eiFontesProdsG = (eiProdFontesGrupoF[g]) || {};
+    var efFontesProdsG = (efProdFontesGrupoF[g]) || {};
     Object.keys(eiProdsG).forEach(function(p){ prodSetG[p]=1; });
     Object.keys(efProdsG).forEach(function(p){ prodSetG[p]=1; });
     Object.keys(coProdsG).forEach(function(p){ prodSetG[p]=1; });
@@ -757,6 +764,9 @@ function montarGruposCMV_(eiPorGrupoF, eiProdGrupoF, efPorGrupoF, efProdGrupoF,
         // (unidade homogênea); um grupo pode misturar KG/UN/L, por isso não
         // existe um "ei_qtd"/"ef_qtd" agregado no nível do grupo.
         ei_qtd: r2(eiQtdProdsG[p] || 0), ef_qtd: r2(efQtdProdsG[p] || 0),
+        // Contagem(ns) de origem do EI/EF deste produto (só no caminho de
+        // semana/quinzena) — permite o botão "Corrigir" na aba CMV.
+        ei_fontes: eiFontesProdsG[p] || [], ef_fontes: efFontesProdsG[p] || [],
         transf_entrada: r2(entObjP.valor||0), transf_entrada_qtd: r2(entObjP.qtd||0),
         transf_saida:   r2(saiObjP.valor||0), transf_saida_qtd:   r2(saiObjP.qtd||0)
       };

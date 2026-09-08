@@ -582,7 +582,7 @@ function excluirSemana(senha, id) {
 // (montarGruposCMV_) do CMV mensal -- garante que os dois nunca divergem.
 function montarCMVDetalhadoUnidade_(eiPorProduto, efPorProduto, rowsCompras, mesNome, ano, diaInicio, diaFim, unidade) {
   function agruparPorGrupo(itens) {
-    var porGrupo = {}, porProdGrupo = {}, porProdGrupoQtd = {};
+    var porGrupo = {}, porProdGrupo = {}, porProdGrupoQtd = {}, porProdGrupoFontes = {};
     (itens || []).forEach(function(item) {
       var g = item.grupo || '';
       var p = item.produto || '';
@@ -596,9 +596,13 @@ function montarCMVDetalhadoUnidade_(eiPorProduto, efPorProduto, rowsCompras, mes
         // "Produtos do Grupo" quando exibida "Por quantidade".
         if (!porProdGrupoQtd[g]) porProdGrupoQtd[g] = {};
         porProdGrupoQtd[g][p] = (porProdGrupoQtd[g][p] || 0) + (item.qtd || 0);
+        // Contagem(ns) de origem deste produto — permite corrigir o valor
+        // direto da aba CMV (ver abrirCorrecaoDeItem/abrirCorrigirItemFonte).
+        if (!porProdGrupoFontes[g]) porProdGrupoFontes[g] = {};
+        porProdGrupoFontes[g][p] = (porProdGrupoFontes[g][p] || []).concat(item.fontes || []);
       }
     });
-    return { porGrupo: porGrupo, porProdGrupo: porProdGrupo, porProdGrupoQtd: porProdGrupoQtd };
+    return { porGrupo: porGrupo, porProdGrupo: porProdGrupo, porProdGrupoQtd: porProdGrupoQtd, porProdGrupoFontes: porProdGrupoFontes };
   }
 
   var ei = agruparPorGrupo(eiPorProduto);
@@ -616,7 +620,8 @@ function montarCMVDetalhadoUnidade_(eiPorProduto, efPorProduto, rowsCompras, mes
     (cMes.saidaFilialGrupo   && cMes.saidaFilialGrupo[unidade])   || {},
     (cMes.entradaProdGrupoFilial && cMes.entradaProdGrupoFilial[unidade]) || {},
     (cMes.saidaProdGrupoFilial   && cMes.saidaProdGrupoFilial[unidade])   || {},
-    ei.porProdGrupoQtd, ef.porProdGrupoQtd
+    ei.porProdGrupoQtd, ef.porProdGrupoQtd,
+    ei.porProdGrupoFontes, ef.porProdGrupoFontes
   );
 
   var coF = filC.total || 0;  // ja inclui entrada de transferencia
@@ -880,6 +885,10 @@ function buscarItensDoInventarioSalvo(senha, inventarioId) {
 // Agrupa pelo COD quando existe (identificador mais confiável — o nome do
 // produto pode vir com grafia levemente diferente entre contagens do
 // mesmo item), caindo pro nome do produto só se o COD vier vazio.
+// Cada item carrega também "fontes" (contagemId + linha de cada lançamento
+// que contribuiu pra soma) — usado pra permitir corrigir a contagem exata
+// direto da aba CMV, sem precisar procurar manualmente em Ajustes >
+// Inventário (ver abrirCorrecaoDeItem).
 function buscarItensDeContagens_(contagemIds) {
   var ss  = SpreadsheetApp.openById(CONTAGEM_SHEET_ID);
   var aba = ss.getSheetByName('ITENS_CONTAGEM');
@@ -900,8 +909,9 @@ function buscarItensDeContagens_(contagemIds) {
     var contado = Number(r[C_ITENS_CONTAGEM.contado]) || 0;
     var und = String(r[C_ITENS_CONTAGEM.und] || '').trim();
     var chave = cod || produto;
-    if (!mapa[chave]) mapa[chave] = { produto: produto, cod: cod, und: und, qtde: 0 };
+    if (!mapa[chave]) mapa[chave] = { produto: produto, cod: cod, und: und, qtde: 0, fontes: [] };
     mapa[chave].qtde += contado;
+    mapa[chave].fontes.push({ contagemId: cid, linha: j + 1 });
   }
   return Object.values(mapa);
 }
@@ -992,6 +1002,44 @@ function listarItensDeContagem(senha, contagemId) {
     return JSON.stringify({ ok: true, itens: itens, valorTotal: valorTotal, avisos: avisos });
   } catch (err) {
     Logger.log('listarItensDeContagem ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
+// Lê data/unidade/setor de UMA contagem na aba CONTAGENS — só pra montar um
+// rótulo legível (ex: "08/09/2026 · Umarizal · Bar") na tela de correção.
+// Retorna null se a contagem não existir mais.
+function resolverContagemMeta_(contagemId) {
+  var ss  = SpreadsheetApp.openById(CONTAGEM_SHEET_ID);
+  var aba = ss.getSheetByName('CONTAGENS');
+  if (!aba) return null;
+  var rows = aba.getDataRange().getValues();
+  for (var i = 1; i < rows.length; i++) {
+    var r = rows[i];
+    if (String(r[0]).trim() === String(contagemId).trim()) {
+      return { data: String(r[1]).trim(), unidade: String(r[2]).trim(), setor: String(r[3]).trim() };
+    }
+  }
+  return null;
+}
+
+// Ponto de entrada do botão "Corrigir" que aparece direto num produto da
+// aba CMV (quando o EI/EF desse produto vem de UMA única contagem
+// identificável — ver ei_fontes/ef_fontes em montarGruposCMV_). Devolve, num
+// só round-trip, os mesmos itens de listarItensDeContagem MAIS o rótulo
+// (data/unidade/setor) da contagem, pra abrir a tela de correção já
+// contextualizada sem precisar navegar por Ajustes > Inventário.
+function abrirCorrecaoDeItem(senha, contagemId) {
+  if (!validarSenha(senha)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var meta = resolverContagemMeta_(contagemId);
+    var base = JSON.parse(listarItensDeContagem(senha, contagemId));
+    base.meta = meta;
+    return JSON.stringify(base);
+  } catch (err) {
+    Logger.log('abrirCorrecaoDeItem ERROR: ' + err.message + '\n' + err.stack);
     return JSON.stringify({ ok: false, erro: err.message });
   }
 }
@@ -1234,7 +1282,12 @@ function valorizarItensInventario_(itens, mesNome, ano, historicoPorInsumo, fich
     }
     var custoTotal = r2(custoUnit * item.qtde);
     total += custoTotal;
-    porProduto.push({ produto: nomeCanonico, grupo: grupo, und: item.und, qtd: item.qtde, custoUnit: custoUnit, custoTotal: custoTotal, linha: item.linha });
+    // linha: preenchido quando item vem de UMA contagem só (listarItensDeContagem/
+    // listarValoresContagens, leitura direta da aba) -- usado ali pra casar
+    // custo de volta pela linha. fontes: preenchido quando item vem de
+    // VÁRIAS contagens combinadas (buscarItensDeContagens_, semana/quinzena)
+    // -- usado pro botão "Corrigir" na aba CMV. Nunca os dois ao mesmo tempo.
+    porProduto.push({ produto: nomeCanonico, grupo: grupo, und: item.und, qtd: item.qtde, custoUnit: custoUnit, custoTotal: custoTotal, linha: item.linha, fontes: item.fontes || [] });
   });
   return { total: r2(total), porProduto: porProduto, avisos: avisos };
 }
