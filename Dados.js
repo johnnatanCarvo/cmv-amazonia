@@ -689,7 +689,8 @@ function comprasPeriodoCMV_(rowsCompras, mesNome, ano, diaMin, diaMax) {
 // valorizarItensInventario_ + comprasPeriodoCMV_) — o mesmo motor garante
 // que os dois nunca divergem silenciosamente.
 function montarGruposCMV_(eiPorGrupoF, eiProdGrupoF, efPorGrupoF, efProdGrupoF,
-    coPorGrupoF, coProdGrupoFilialF, entradaGrupoF, saidaGrupoF, entradaProdGrupoF, saidaProdGrupoF) {
+    coPorGrupoF, coProdGrupoFilialF, entradaGrupoF, saidaGrupoF, entradaProdGrupoF, saidaProdGrupoF,
+    eiProdQtdGrupoF, efProdQtdGrupoF) {
   eiPorGrupoF = eiPorGrupoF || {};
   eiProdGrupoF = eiProdGrupoF || {};
   efPorGrupoF = efPorGrupoF || {};
@@ -700,6 +701,8 @@ function montarGruposCMV_(eiPorGrupoF, eiProdGrupoF, efPorGrupoF, efProdGrupoF,
   saidaGrupoF = saidaGrupoF || {};
   entradaProdGrupoF = entradaProdGrupoF || {};
   saidaProdGrupoF = saidaProdGrupoF || {};
+  eiProdQtdGrupoF = eiProdQtdGrupoF || {};
+  efProdQtdGrupoF = efProdQtdGrupoF || {};
 
   var gruposSetF = {};
   Object.keys(eiPorGrupoF).forEach(function(g){ gruposSetF[g]=1; });
@@ -727,6 +730,8 @@ function montarGruposCMV_(eiPorGrupoF, eiProdGrupoF, efPorGrupoF, efProdGrupoF,
     var coProdsG = (coProdGrupoFilialF[g]) || {};
     var entradaProdG = (entradaProdGrupoF[g]) || {};
     var saidaProdG   = (saidaProdGrupoF[g])   || {};
+    var eiQtdProdsG = (eiProdQtdGrupoF[g]) || {};
+    var efQtdProdsG = (efProdQtdGrupoF[g]) || {};
     Object.keys(eiProdsG).forEach(function(p){ prodSetG[p]=1; });
     Object.keys(efProdsG).forEach(function(p){ prodSetG[p]=1; });
     Object.keys(coProdsG).forEach(function(p){ prodSetG[p]=1; });
@@ -748,6 +753,10 @@ function montarGruposCMV_(eiPorGrupoF, eiProdGrupoF, efPorGrupoF, efProdGrupoF,
         ei: r2(eiP), compras: r2(coPLiquido), ef: r2(efP),
         cmv: r2(eiP + coPLiquido - efP),
         qtd: r2(qtdP),
+        // Quantidade em estoque (não valor) — só faz sentido por PRODUTO
+        // (unidade homogênea); um grupo pode misturar KG/UN/L, por isso não
+        // existe um "ei_qtd"/"ef_qtd" agregado no nível do grupo.
+        ei_qtd: r2(eiQtdProdsG[p] || 0), ef_qtd: r2(efQtdProdsG[p] || 0),
         transf_entrada: r2(entObjP.valor||0), transf_entrada_qtd: r2(entObjP.qtd||0),
         transf_saida:   r2(saiObjP.valor||0), transf_saida_qtd:   r2(saiObjP.qtd||0)
       };
@@ -793,12 +802,14 @@ function processarCMV(rowsEstoque, rowsCompras) {
     var grupo   = limpaCelula(r[C_ESTOQUE.grupo]);
     var filial  = limpaCelula(r[C_ESTOQUE.filial]) || 'OUTRA';
     var produto = limpaCelula(r[C_ESTOQUE.produto]);
+    var qtd     = numVal(r[C_ESTOQUE.saldo]);
     var ts = dataInfo.ts;
 
     if (!contagensPorData[ts]) {
       contagensPorData[ts] = {
         ts: ts, mes: dataInfo.mes, ano: dataInfo.ano, dia: dataInfo.dia,
-        total: 0, porGrupo: {}, porFilial: {}, porFilialGrupo: {}, porProdGrupo: {}, porProdGrupoFilial: {}
+        total: 0, porGrupo: {}, porFilial: {}, porFilialGrupo: {}, porProdGrupo: {}, porProdGrupoFilial: {},
+        porProdGrupoFilialQtd: {}
       };
     }
     var c = contagensPorData[ts];
@@ -819,6 +830,11 @@ function processarCMV(rowsEstoque, rowsCompras) {
       if (!c.porProdGrupoFilial[filial]) c.porProdGrupoFilial[filial] = {};
       if (!c.porProdGrupoFilial[filial][grupo]) c.porProdGrupoFilial[filial][grupo] = {};
       c.porProdGrupoFilial[filial][grupo][produto] = (c.porProdGrupoFilial[filial][grupo][produto] || 0) + valor;
+      // Quantidade em estoque do produto (saldo contado) — usada na tabela
+      // "Produtos do Grupo" quando ordenada/exibida "Por quantidade".
+      if (!c.porProdGrupoFilialQtd[filial]) c.porProdGrupoFilialQtd[filial] = {};
+      if (!c.porProdGrupoFilialQtd[filial][grupo]) c.porProdGrupoFilialQtd[filial][grupo] = {};
+      c.porProdGrupoFilialQtd[filial][grupo][produto] = (c.porProdGrupoFilialQtd[filial][grupo][produto] || 0) + qtd;
     }
   }
 
@@ -941,8 +957,11 @@ function processarCMV(rowsEstoque, rowsCompras) {
 
       var entradaProdGrupoF = (cMes && cMes.entradaProdGrupoFilial && cMes.entradaProdGrupoFilial[f]) ? cMes.entradaProdGrupoFilial[f] : {};
       var saidaProdGrupoF   = (cMes && cMes.saidaProdGrupoFilial   && cMes.saidaProdGrupoFilial[f])   ? cMes.saidaProdGrupoFilial[f]   : {};
+      var eiProdQtdGrupoF = (ei.porProdGrupoFilialQtd && ei.porProdGrupoFilialQtd[f]) ? ei.porProdGrupoFilialQtd[f] : {};
+      var efProdQtdGrupoF = (ef.porProdGrupoFilialQtd && ef.porProdGrupoFilialQtd[f]) ? ef.porProdGrupoFilialQtd[f] : {};
       var gruposF = montarGruposCMV_(eiPorGrupoF, eiProdGrupoF, efPorGrupoF, efProdGrupoF,
-        coPorGrupoF, prodGrupoFilialF, entradaGrupoF, saidaGrupoF, entradaProdGrupoF, saidaProdGrupoF);
+        coPorGrupoF, prodGrupoFilialF, entradaGrupoF, saidaGrupoF, entradaProdGrupoF, saidaProdGrupoF,
+        eiProdQtdGrupoF, efProdQtdGrupoF);
 
       filiais[f] = {
         ei: r2(eiF), compras: r2(comprasAjust), ef: r2(efF),

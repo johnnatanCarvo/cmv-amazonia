@@ -1712,20 +1712,38 @@ function renderCMVProdTabela(prods){
   var cont=document.getElementById('cmvg-prod-tbl');
   if(!cont)return;
   var arr=prods.slice();
-  if(cmvProdOrder==='qtd')arr.sort(function(a,b){return (b.qtd||0)-(a.qtd||0);});
+  var porQtd=cmvProdOrder==='qtd';
+  if(porQtd)arr.sort(function(a,b){return (b.qtd||0)-(a.qtd||0);});
   else arr.sort(function(a,b){return b.cmv-a.cmv;});
 
   var comTransf = uniCMV!=='TODAS';
-  var thTransf = comTransf ? '<th class="r">Transf. Receb.</th><th class="r">Transf. Enviada</th>' : '';
-  cont.innerHTML='<table><thead><tr><th>Produto</th><th class="r">Qtd. Comprada</th>'+
-    '<th class="r">Est. Inicial</th><th class="r">Compras</th><th class="r">Est. Final</th>'+thTransf+'<th class="r">CMV</th></tr></thead><tbody>'+
+  // "Por quantidade": Est. Inicial/Compras/Est. Final em UNIDADES contadas/
+  // compradas (nao em R$) -- so faz sentido por produto, ja que cada linha
+  // tem uma unidade homogenea (KG, UN, L...), diferente do grupo que pode
+  // misturar unidades.
+  var thTransf = comTransf
+    ? (porQtd ? '<th class="r">Transf. Receb. (qtd)</th><th class="r">Transf. Enviada (qtd)</th>'
+              : '<th class="r">Transf. Receb.</th><th class="r">Transf. Enviada</th>')
+    : '';
+  var head = porQtd
+    ? '<tr><th>Produto</th><th class="r">Est. Inicial</th><th class="r">Compras</th><th class="r">Est. Final</th>'+thTransf+'<th class="r">CMV</th></tr>'
+    : '<tr><th>Produto</th><th class="r">Qtd. Comprada</th><th class="r">Est. Inicial</th><th class="r">Compras</th><th class="r">Est. Final</th>'+thTransf+'<th class="r">CMV</th></tr>';
+  cont.innerHTML='<table><thead>'+head+'</thead><tbody>'+
     arr.map(function(p){
       var tdTransf='';
       if(comTransf){
         var ent=p.transf_entrada||0, entQ=p.transf_entrada_qtd||0;
         var sai=p.transf_saida||0, saiQ=p.transf_saida_qtd||0;
-        tdTransf='<td class="n r" style="color:'+(ent>0?'var(--az)':'var(--fg3)')+'">'+(ent>0?fR2(ent)+' ('+fQ(entQ)+')':'--')+'</td>'+
-                 '<td class="n r" style="color:'+(sai>0?'var(--am)':'var(--fg3)')+'">'+(sai>0?fR2(sai)+' ('+fQ(saiQ)+')':'--')+'</td>';
+        tdTransf = porQtd
+          ? '<td class="n r" style="color:'+(entQ>0?'var(--az)':'var(--fg3)')+'">'+(entQ>0?fQ(entQ):'--')+'</td>'+
+            '<td class="n r" style="color:'+(saiQ>0?'var(--am)':'var(--fg3)')+'">'+(saiQ>0?fQ(saiQ):'--')+'</td>'
+          : '<td class="n r" style="color:'+(ent>0?'var(--az)':'var(--fg3)')+'">'+(ent>0?fR2(ent)+' ('+fQ(entQ)+')':'--')+'</td>'+
+            '<td class="n r" style="color:'+(sai>0?'var(--am)':'var(--fg3)')+'">'+(sai>0?fR2(sai)+' ('+fQ(saiQ)+')':'--')+'</td>';
+      }
+      if(porQtd){
+        return '<tr><td class="hi">'+p.nome+'</td>'+
+          '<td class="n r">'+fQ(p.ei_qtd||0)+'</td><td class="n r">'+fQ(p.qtd||0)+'</td>'+
+          '<td class="n r">'+fQ(p.ef_qtd||0)+'</td>'+tdTransf+'<td class="n r hi">'+fR2(p.cmv)+'</td></tr>';
       }
       return '<tr><td class="hi">'+p.nome+'</td>'+
         '<td class="n r" style="color:var(--fg2)">'+fQ(p.qtd||0)+'</td>'+

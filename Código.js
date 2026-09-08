@@ -582,7 +582,7 @@ function excluirSemana(senha, id) {
 // (montarGruposCMV_) do CMV mensal -- garante que os dois nunca divergem.
 function montarCMVDetalhadoUnidade_(eiPorProduto, efPorProduto, rowsCompras, mesNome, ano, diaInicio, diaFim, unidade) {
   function agruparPorGrupo(itens) {
-    var porGrupo = {}, porProdGrupo = {};
+    var porGrupo = {}, porProdGrupo = {}, porProdGrupoQtd = {};
     (itens || []).forEach(function(item) {
       var g = item.grupo || '';
       var p = item.produto || '';
@@ -592,9 +592,13 @@ function montarCMVDetalhadoUnidade_(eiPorProduto, efPorProduto, rowsCompras, mes
       if (p) {
         if (!porProdGrupo[g]) porProdGrupo[g] = {};
         porProdGrupo[g][p] = (porProdGrupo[g][p] || 0) + v;
+        // Quantidade em estoque do produto (qtd contada) — usada na tabela
+        // "Produtos do Grupo" quando exibida "Por quantidade".
+        if (!porProdGrupoQtd[g]) porProdGrupoQtd[g] = {};
+        porProdGrupoQtd[g][p] = (porProdGrupoQtd[g][p] || 0) + (item.qtd || 0);
       }
     });
-    return { porGrupo: porGrupo, porProdGrupo: porProdGrupo };
+    return { porGrupo: porGrupo, porProdGrupo: porProdGrupo, porProdGrupoQtd: porProdGrupoQtd };
   }
 
   var ei = agruparPorGrupo(eiPorProduto);
@@ -611,7 +615,8 @@ function montarCMVDetalhadoUnidade_(eiPorProduto, efPorProduto, rowsCompras, mes
     (cMes.entradaFilialGrupo && cMes.entradaFilialGrupo[unidade]) || {},
     (cMes.saidaFilialGrupo   && cMes.saidaFilialGrupo[unidade])   || {},
     (cMes.entradaProdGrupoFilial && cMes.entradaProdGrupoFilial[unidade]) || {},
-    (cMes.saidaProdGrupoFilial   && cMes.saidaProdGrupoFilial[unidade])   || {}
+    (cMes.saidaProdGrupoFilial   && cMes.saidaProdGrupoFilial[unidade])   || {},
+    ei.porProdGrupoQtd, ef.porProdGrupoQtd
   );
 
   var coF = filC.total || 0;  // ja inclui entrada de transferencia
