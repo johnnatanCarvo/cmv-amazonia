@@ -352,6 +352,23 @@ function processarComprasIntervaloDias(rows, mesNome, ano, diaMin, diaMax) {
   return resultado[CHAVE] || { cmc_total: 0, faturamento: 0, cmc_pct_fat: null, grupos: {}, filiais: {} };
 }
 
+// Mesma coisa, mas pro caso (Semanas do Mês/CMV semanal) em que o INÍCIO do
+// intervalo pode cair no mês anterior ao do FIM -- uma contagem feita no
+// dia 31 (ou 1º) fecha uma semana E abre a próxima, e essas datas podem
+// estar em meses diferentes. Compara direto pelo "ts" (string YYYYMMDD) de
+// cada linha em vez de exigir mês/ano únicos -- funciona pra qualquer
+// intervalo, cruzando mês ou não.
+function processarComprasIntervaloDiasCross_(rows, mesIniNum, anoIni, diaIni, mesFimNum, anoFim, diaFim) {
+  var CHAVE = 'PERIODO';
+  var tsMin = anoIni + pad2(mesIniNum) + pad2(diaIni);
+  var tsMax = anoFim + pad2(mesFimNum) + pad2(diaFim);
+  var resultado = processarComprasPorPeriodo_(rows || [], function(dataInfo) {
+    if (dataInfo.ts < tsMin || dataInfo.ts > tsMax) return null;
+    return CHAVE;
+  });
+  return resultado[CHAVE] || { cmc_total: 0, faturamento: 0, cmc_pct_fat: null, grupos: {}, filiais: {} };
+}
+
 // ── PROCESSAR VENDAS → ABC + FATURAMENTO ─────────────────────
 
 function processarVendas(rows) {
@@ -672,6 +689,23 @@ function comprasPeriodoCMV_(rowsCompras, mesNome, ano, diaMin, diaMax) {
     if (dataInfo.ano !== ano) return null;
     if (NOMES_MESES[dataInfo.mes] !== mesNome) return null;
     if (dataInfo.dia < diaMin || dataInfo.dia > diaMax) return null;
+    return CHAVE;
+  });
+  return resultado[CHAVE] || {
+    total:0, grupos:{}, filiais:{}, prodGrupo:{}, saidaFilial:{}, entradaFilial:{},
+    entradaFilialGrupo:{}, saidaFilialGrupo:{}, entradaProdGrupoFilial:{}, saidaProdGrupoFilial:{}
+  };
+}
+
+// Mesma coisa que comprasPeriodoCMV_, mas aceitando início/fim em meses
+// diferentes (ver processarComprasIntervaloDiasCross_ acima) -- usada pelo
+// CMV por Semana/Quinzena quando a semana cruza a virada do mês.
+function comprasPeriodoCMVCross_(rowsCompras, mesIniNum, anoIni, diaIni, mesFimNum, anoFim, diaFim) {
+  var CHAVE = 'PERIODO';
+  var tsMin = anoIni + pad2(mesIniNum) + pad2(diaIni);
+  var tsMax = anoFim + pad2(mesFimNum) + pad2(diaFim);
+  var resultado = agregarComprasPeriodoCMV_(rowsCompras || [], function(dataInfo) {
+    if (dataInfo.ts < tsMin || dataInfo.ts > tsMax) return null;
     return CHAVE;
   });
   return resultado[CHAVE] || {
@@ -1773,6 +1807,26 @@ function somarPeriodoPreAgregado(porDia, mesNome, ano, diaMin, diaMax) {
   }
   Object.keys(filiais).forEach(function(f) { filiais[f] = r2(filiais[f]); });
   return { total: r2(total), filiais: filiais };
+}
+
+// Mesma coisa que somarPeriodoPreAgregado, mas aceitando início/fim em
+// meses diferentes -- soma o restante do mês de início (dia até o fim
+// desse mês) mais o começo do mês de fim (dia 1 até o dia informado) e
+// junta os dois. Só existem duas partes porque salvarSemana só aceita
+// início no mesmo mês do fim OU no mês imediatamente anterior (nunca mais
+// que isso) -- ver validação lá.
+function somarPeriodoPreAgregadoCross_(porDia, mesIniNum, anoIni, diaIni, mesFimNum, anoFim, diaFim) {
+  var mesIniNome = NOMES_MESES[mesIniNum], mesFimNome = NOMES_MESES[mesFimNum];
+  if (mesIniNum === mesFimNum && anoIni === anoFim) {
+    return somarPeriodoPreAgregado(porDia, mesFimNome, anoFim, diaIni, diaFim);
+  }
+  var parte1 = somarPeriodoPreAgregado(porDia, mesIniNome, anoIni, diaIni, diasNoMes(mesIniNome, anoIni));
+  var parte2 = somarPeriodoPreAgregado(porDia, mesFimNome, anoFim, 1, diaFim);
+  var filiais = {};
+  Object.keys(parte1.filiais).forEach(function(f) { filiais[f] = (filiais[f] || 0) + parte1.filiais[f]; });
+  Object.keys(parte2.filiais).forEach(function(f) { filiais[f] = (filiais[f] || 0) + parte2.filiais[f]; });
+  Object.keys(filiais).forEach(function(f) { filiais[f] = r2(filiais[f]); });
+  return { total: r2((parte1.total || 0) + (parte2.total || 0)), filiais: filiais };
 }
 
 function buscarComprasQuinzenais(porDiaCompras, mesNome, ano, diaCorte) {

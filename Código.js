@@ -595,7 +595,7 @@ function excluirSemana(senha, id) {
 // contagens de estoque do CSV. Reaproveita o mesmo motor de compras/
 // transferencia (comprasPeriodoCMV_) e a mesma montagem de grupos
 // (montarGruposCMV_) do CMV mensal -- garante que os dois nunca divergem.
-function montarCMVDetalhadoUnidade_(eiPorProduto, efPorProduto, rowsCompras, mesNome, ano, diaInicio, diaFim, unidade) {
+function montarCMVDetalhadoUnidade_(eiPorProduto, efPorProduto, rowsCompras, mesIniNum, anoIni, diaInicio, mesFimNum, anoFim, diaFim, unidade) {
   function agruparPorGrupo(itens) {
     var porGrupo = {}, porProdGrupo = {}, porProdGrupoQtd = {}, porProdGrupoFontes = {};
     (itens || []).forEach(function(item) {
@@ -625,7 +625,7 @@ function montarCMVDetalhadoUnidade_(eiPorProduto, efPorProduto, rowsCompras, mes
   var eiF = (eiPorProduto || []).reduce(function(s, i) { return s + (i.custoTotal || 0); }, 0);
   var efF = (efPorProduto || []).reduce(function(s, i) { return s + (i.custoTotal || 0); }, 0);
 
-  var cMes = comprasPeriodoCMV_(rowsCompras, mesNome, ano, diaInicio, diaFim);
+  var cMes = comprasPeriodoCMVCross_(rowsCompras, mesIniNum, anoIni, diaInicio, mesFimNum, anoFim, diaFim);
   var filC = (cMes.filiais && cMes.filiais[unidade]) || { total: 0, grupos: {}, prodGrupo: {} };
 
   var grupos = montarGruposCMV_(
@@ -664,8 +664,8 @@ function montarCMVDetalhadoUnidade_(eiPorProduto, efPorProduto, rowsCompras, mes
 // formato de cmc[mes], vindo de processarComprasIntervaloDias) -- espelha a
 // injecao que getPayload ja faz pro mes inteiro (linha ~108), so que usando
 // as vendas do intervalo de dias em vez do mes inteiro.
-function injetarFaturamentoCmcPeriodo_(cmcPeriodo, porDiaVendas, mesNome, ano, diaInicio, diaFim) {
-  var vendasPeriodo = somarPeriodoPreAgregado(porDiaVendas, mesNome, ano, diaInicio, diaFim);
+function injetarFaturamentoCmcPeriodo_(cmcPeriodo, porDiaVendas, mesIniNum, anoIni, diaInicio, mesFimNum, anoFim, diaFim) {
+  var vendasPeriodo = somarPeriodoPreAgregadoCross_(porDiaVendas, mesIniNum, anoIni, diaInicio, mesFimNum, anoFim, diaFim);
   var fat = vendasPeriodo.total || 0;
   if (fat > 0) {
     cmcPeriodo.faturamento = r2(fat);
@@ -697,6 +697,11 @@ function calcularAnaliseSemanal(senha, mes, ano) {
   }
   try {
     var anoNum = Number(ano);
+    // Número (1-12) do mês alvo -- o FIM de toda semana/quinzena salva aqui
+    // é sempre desse mês (validado em salvarSemana); o início é que pode
+    // ser do mês anterior, por isso as somas de período usam as versões
+    // "Cross" abaixo, que aceitam início/fim em meses diferentes.
+    var mesFimNum = Number(Object.keys(NOMES_MESES).filter(function(k) { return NOMES_MESES[k] === mes; })[0]);
     var semanasSalvas = obterSemanasSalvas_().filter(function(s) { return s.mes === mes && s.ano === anoNum; });
     if (!semanasSalvas.length) {
       return JSON.stringify({ ok: true, semanas: {}, quinzenas: {}, avisos: [] });
@@ -740,13 +745,20 @@ function calcularAnaliseSemanal(senha, mes, ano) {
       var itensInicial = buscarItensDeContagens_(invInicial.contagemIds);
       var itensFinal   = buscarItensDeContagens_(invFinal.contagemIds);
       var rotulo = mes + '/' + ano + ', Semana ' + s.semanaNum + ', ' + s.unidade;
-      var valInicial = valorizarItensInventario_(itensInicial, mes, anoNum, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (inicial)', catalogoPorCodigo, fichaPorCodigo);
+      // O início pode ser de um mês diferente do fim (ver validação em
+      // salvarSemana) -- por isso valoriza cada lado pelo CUSTO MÉDIO
+      // PONDERADO DO SEU PRÓPRIO MÊS, nunca pelo mês do fim: um item
+      // contado em 31/08 tem que usar o preço médio de Agosto, não o de
+      // Setembro, senão o EI fica com o custo errado.
+      var mesNomeInicial = NOMES_MESES[infoInicial.mes];
+      var valInicial = valorizarItensInventario_(itensInicial, mesNomeInicial, infoInicial.ano, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (inicial)', catalogoPorCodigo, fichaPorCodigo);
       var valFinal   = valorizarItensInventario_(itensFinal, mes, anoNum, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (final)', catalogoPorCodigo, fichaPorCodigo);
       avisos = avisos.concat(valInicial.avisos).concat(valFinal.avisos);
 
       blocos[s.semanaNum + '|' + s.unidade] = {
         semanaNum: s.semanaNum, unidade: s.unidade,
         diaInicio: infoInicial.dia, diaFim: infoFinal.dia,
+        mesInicioNum: infoInicial.mes, anoInicio: infoInicial.ano,
         dataInicio: pad2(infoInicial.dia) + '/' + pad2(infoInicial.mes) + '/' + infoInicial.ano,
         dataFim: pad2(infoFinal.dia) + '/' + pad2(infoFinal.mes) + '/' + infoFinal.ano,
         ei: valInicial.total, ef: valFinal.total,
@@ -770,9 +782,9 @@ function calcularAnaliseSemanal(senha, mes, ano) {
     // formato de cmc[mes] e cmv[mes].filiais[unidade], pra alimentar as
     // mesmas telas ricas de "Análise Mês a Mês" e "CMV" (rMes/rCMV) sem
     // precisar reescrevê-las.
-    function montarPeriodo(ei, ef, diaInicio, diaFim, unidade, eiPorProduto, efPorProduto) {
-      var compras = somarPeriodoPreAgregado(porDiaCompras, mes, anoNum, diaInicio, diaFim);
-      var vendas  = somarPeriodoPreAgregado(porDiaVendas, mes, anoNum, diaInicio, diaFim);
+    function montarPeriodo(ei, ef, mesIniNum, anoIni, diaInicio, diaFim, unidade, eiPorProduto, efPorProduto) {
+      var compras = somarPeriodoPreAgregadoCross_(porDiaCompras, mesIniNum, anoIni, diaInicio, mesFimNum, anoNum, diaFim);
+      var vendas  = somarPeriodoPreAgregadoCross_(porDiaVendas, mesIniNum, anoIni, diaInicio, mesFimNum, anoNum, diaFim);
       var compraUni = compras.filiais[unidade] || 0;
       var vendaUni  = vendas.filiais[unidade]  || 0;
       var cmv = r2(ei + compraUni - ef);
@@ -782,10 +794,10 @@ function calcularAnaliseSemanal(senha, mes, ano) {
         cmv_pct: calcularPct(cmv, vendaUni)
       };
       if (eiPorProduto && efPorProduto) {
-        var cmcDetalhado = processarComprasIntervaloDias(rowsCompras, mes, anoNum, diaInicio, diaFim);
-        injetarFaturamentoCmcPeriodo_(cmcDetalhado, porDiaVendas, mes, anoNum, diaInicio, diaFim);
+        var cmcDetalhado = processarComprasIntervaloDiasCross_(rowsCompras, mesIniNum, anoIni, diaInicio, mesFimNum, anoNum, diaFim);
+        injetarFaturamentoCmcPeriodo_(cmcDetalhado, porDiaVendas, mesIniNum, anoIni, diaInicio, mesFimNum, anoNum, diaFim);
         resultado.cmcDetalhado = cmcDetalhado;
-        resultado.cmvDetalhado = montarCMVDetalhadoUnidade_(eiPorProduto, efPorProduto, rowsCompras, mes, anoNum, diaInicio, diaFim, unidade);
+        resultado.cmvDetalhado = montarCMVDetalhadoUnidade_(eiPorProduto, efPorProduto, rowsCompras, mesIniNum, anoIni, diaInicio, mesFimNum, anoNum, diaFim, unidade);
       }
       return resultado;
     }
@@ -812,7 +824,7 @@ function calcularAnaliseSemanal(senha, mes, ano) {
     var semanas = { 1: {}, 2: {}, 3: {}, 4: {} };
     Object.keys(blocos).forEach(function(chave) {
       var b = blocos[chave];
-      var periodo = montarPeriodo(b.ei, b.ef, b.diaInicio, b.diaFim, b.unidade, b.eiPorProduto, b.efPorProduto);
+      var periodo = montarPeriodo(b.ei, b.ef, b.mesInicioNum, b.anoInicio, b.diaInicio, b.diaFim, b.unidade, b.eiPorProduto, b.efPorProduto);
       semanas[b.semanaNum][b.unidade] = Object.assign({
         dataInicio: b.dataInicio, dataFim: b.dataFim,
         labelInicial: b.labelInicial, labelFinal: b.labelFinal
@@ -844,7 +856,7 @@ function calcularAnaliseSemanal(senha, mes, ano) {
         if (!bFim) return; // essa unidade ainda não tem a segunda semana da quinzena salva
         porUnidade[u] = Object.assign({
           dataInicio: bIni.dataInicio, dataFim: bFim.dataFim
-        }, montarPeriodo(bIni.ei, bFim.ef, bIni.diaInicio, bFim.diaFim, u, bIni.eiPorProduto, bFim.efPorProduto));
+        }, montarPeriodo(bIni.ei, bFim.ef, bIni.mesInicioNum, bIni.anoInicio, bIni.diaInicio, bFim.diaFim, u, bIni.eiPorProduto, bFim.efPorProduto));
       });
 
       if (!Object.keys(porUnidade).length) return;
