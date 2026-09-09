@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-09-09.7';
+var VERSAO_APP = '2026-09-09.8';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -249,6 +249,93 @@ function getPayload(senha) {
 
   } catch (err) {
     Logger.log('getPayload ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
+// Gera uma planilha nova do Google com a lista de itens (produtos) que NÃO
+// entraram no CMV por falta de preço -- sem histórico de compra E sem
+// ficha técnica, mesmo critério de exclusão usado em processarCMV
+// (Dados.js). Agrupa por produto: quantas contagens ele apareceu, em quais
+// meses/filiais e a quantidade total contada -- pra decidir quais precisam
+// de ficha técnica ou registro de compra. Usa a MESMA leitura de dados que
+// getPayload, então reflete exatamente o que está sendo excluído do CMV
+// agora, não uma amostra.
+function gerarPlanilhaItensSemPreco(senha) {
+  if (!validarSenha(senha)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var rowsCompras = lerTodosCSVs('compras');
+    var rowsVendas  = lerTodosCSVs('vendas');
+    var rowsEstoque = lerTodosCSVs('estoque');
+    var rowsFichas  = lerFichaTecnica();
+    var fichasMap   = processarFichas(rowsFichas);
+    var historicoPorInsumo = preAgregarCustoMedioPorInsumo(rowsCompras);
+
+    var inventarioConectado = gerarLinhasEstoqueDeInventariosSalvos_(rowsEstoque, rowsCompras, rowsVendas, historicoPorInsumo, fichasMap, rowsFichas);
+    var rowsEstoqueCompleto = (rowsEstoque && rowsEstoque.length ? rowsEstoque : [[]]).concat(inventarioConectado.linhas);
+
+    var porProduto = {};
+    for (var i = 1; i < rowsEstoqueCompleto.length; i++) {
+      var r = rowsEstoqueCompleto[i];
+      if (!r || r.length < 16) continue;
+      if (limpaCelula(r[C_ESTOQUE.tp_movto]) !== ESTOQUE_TIPO_VALIDO) continue;
+      var dataInfo = parseDataCompleta(r[C_ESTOQUE.data]);
+      if (!dataInfo) continue;
+      var qtd = numVal(r[C_ESTOQUE.saldo]);
+      if (qtd <= 0) continue;
+      var produto = limpaCelula(r[C_ESTOQUE.produto]);
+      if (!produto) continue;
+
+      var mesNomeLinha = NOMES_MESES[dataInfo.mes];
+      var custoUnit = buscarCustoInsumoComFallback(historicoPorInsumo, produto, mesNomeLinha, dataInfo.ano);
+      if (custoUnit === null || custoUnit === undefined) {
+        custoUnit = fichasMap ? fichasMap[produto] : undefined;
+      }
+      if (custoUnit !== null && custoUnit !== undefined) continue; // tem preço -- entrou no cálculo normalmente
+
+      var grupo  = limpaCelula(r[C_ESTOQUE.grupo]);
+      var unid   = limpaCelula(r[C_ESTOQUE.unid]);
+      var filial = limpaCelula(r[C_ESTOQUE.filial]) || 'OUTRA';
+
+      if (!porProduto[produto]) {
+        porProduto[produto] = { produto: produto, grupo: grupo, unid: unid, nContagens: 0, qtdTotal: 0, meses: {}, filiais: {} };
+      }
+      var p = porProduto[produto];
+      p.nContagens++;
+      p.qtdTotal += qtd;
+      p.meses[mesNomeLinha + '/' + dataInfo.ano] = true;
+      p.filiais[filial] = true;
+      if (!p.grupo && grupo) p.grupo = grupo;
+      if (!p.unid && unid) p.unid = unid;
+    }
+
+    var lista = Object.keys(porProduto).map(function(k) {
+      var p = porProduto[k];
+      return [
+        p.produto, p.grupo, p.unid, p.nContagens, r2(p.qtdTotal),
+        Object.keys(p.meses).sort().join(', '),
+        Object.keys(p.filiais).sort().join(', ')
+      ];
+    }).sort(function(a, b) { return b[3] - a[3]; }); // mais contagens primeiro
+
+    var nomePlanilha = 'Itens sem preço - CMV - ' + Utilities.formatDate(new Date(), 'America/Fortaleza', 'dd-MM-yyyy HH:mm');
+    var ss = SpreadsheetApp.create(nomePlanilha);
+    var aba = ss.getSheets()[0];
+    aba.setName('Itens sem preço');
+    var header = ['Produto', 'Grupo', 'Unidade', 'Nº de Contagens', 'Qtd. Total Contada', 'Meses', 'Filiais'];
+    aba.getRange(1, 1, 1, header.length).setValues([header]).setFontWeight('bold');
+    if (lista.length) {
+      aba.getRange(2, 1, lista.length, header.length).setValues(lista);
+    }
+    aba.autoResizeColumns(1, header.length);
+    aba.setFrozenRows(1);
+
+    Logger.log('Planilha de itens sem preco criada: ' + ss.getUrl() + ' (' + lista.length + ' produtos)');
+    return JSON.stringify({ ok: true, url: ss.getUrl(), total: lista.length });
+  } catch (err) {
+    Logger.log('gerarPlanilhaItensSemPreco ERROR: ' + err.message + '\n' + err.stack);
     return JSON.stringify({ ok: false, erro: err.message });
   }
 }

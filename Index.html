@@ -622,6 +622,15 @@ td.hi{font-weight:600;}
           <span id="config-menu-status" class="ssub" style="margin:0;"></span>
         </div>
       </div>
+
+      <div class="card">
+        <div class="card-h"><div class="card-t">Itens sem preço no CMV</div></div>
+        <div class="ssub" style="margin:0 0 14px;">Produtos contados no estoque que ficaram de fora do CMV por falta de preço (sem histórico de compra e sem ficha técnica). Gera uma planilha nova do Google, agrupada por produto, com quantas contagens ele apareceu, meses e filiais — útil pra decidir quais precisam de ficha técnica ou registro de compra.</div>
+        <div class="ctrl">
+          <button class="gd-close" onclick="gerarPlanilhaSemPreco()">Gerar planilha</button>
+          <span id="sempreco-status" class="ssub" style="margin:0;"></span>
+        </div>
+      </div>
     </div>
 
     <div class="ajustes-sub" id="sub-inventario" style="display:none">
@@ -2627,6 +2636,22 @@ function salvarConfigGrupos(){
       status.textContent='Falha: '+(err.message||err);status.style.color='var(--rd)';
     })
     .salvarProdutosMenuEscolha(SENHA_ATUAL, marcados);
+}
+
+function gerarPlanilhaSemPreco(){
+  var status=document.getElementById('sempreco-status');
+  status.textContent='Gerando planilha (pode levar alguns segundos)...';status.style.color='var(--fg3)';
+  google.script.run
+    .withSuccessHandler(function(json){
+      var res;try{res=JSON.parse(json);}catch(e){status.textContent='Erro ao gerar.';status.style.color='var(--rd)';return;}
+      if(!res.ok){status.textContent=res.erro||'Erro ao gerar.';status.style.color='var(--rd)';return;}
+      status.innerHTML=res.total+' produto(s) sem preço — <a href="'+res.url+'" target="_blank" style="color:var(--ac2);text-decoration:underline;">abrir planilha</a>';
+      status.style.color='var(--ac2)';
+    })
+    .withFailureHandler(function(err){
+      status.textContent='Falha: '+(err.message||err);status.style.color='var(--rd)';
+    })
+    .gerarPlanilhaItensSemPreco(SENHA_ATUAL);
 }
 
 /* ============================================================
