@@ -838,6 +838,18 @@ function go(id){
 window.addEventListener('load',function(){
   var saved=localStorage.getItem('carvo-theme')||'dark';
   document.documentElement.setAttribute('data-theme',saved);
+  // Lembra a senha (localStorage, só neste navegador) pra não pedir de novo
+  // a cada reload -- inclusive o do botão "Atualizar agora" de nova versão,
+  // que só funciona navegando a página inteira de novo. Tenta entrar
+  // sozinho; se a senha salva não for mais válida, cai no login normal.
+  var senhaSalva=null;
+  try{senhaSalva=localStorage.getItem('carvo-senha');}catch(e){}
+  if(senhaSalva){
+    var inpAuto=document.getElementById('login-senha');
+    if(inpAuto)inpAuto.value=senhaSalva;
+    fazerLogin();
+    return;
+  }
   // Aguarda o login. Os dados so sao buscados apos a senha ser validada no servidor.
   setTimeout(function(){
     var inp=document.getElementById('login-senha');
@@ -862,13 +874,16 @@ function fazerLogin(){
       if(!res.ok){
         // Senha invalida ou erro de dados
         btn.disabled=false;btn.textContent='Entrar';
-        if(res.auth===false){err.textContent='Senha incorreta.';inp.value='';inp.focus();}
-        else{err.textContent=res.erro||'Erro ao carregar dados.';}
+        if(res.auth===false){
+          err.textContent='Senha incorreta.';inp.value='';inp.focus();
+          try{localStorage.removeItem('carvo-senha');}catch(e){} // senha salva não vale mais (trocada) -- não insiste sozinho de novo
+        }else{err.textContent=res.erro||'Erro ao carregar dados.';}
         return;
       }
 
       // Sucesso: carregar dados e abrir painel
       SENHA_ATUAL=senha;
+      try{localStorage.setItem('carvo-senha',senha);}catch(e){}
       DADOS=res; CMC=res.cmc; VENDAS=res.vendas; CMV=res.cmv||{}; MESES=res.meses||[];
       CMVTEORICO=res.cmvTeorico||{}; FICHAS_DISPONIVEL=!!res.fichasDisponivel;
       DEMANDAINSUMOS=res.demandaInsumos||{}; RECONCILIACAOINSUMOS=res.reconciliacaoInsumos||{};
