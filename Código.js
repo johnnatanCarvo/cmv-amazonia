@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-09-09.9';
+var VERSAO_APP = '2026-09-09.10';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -52,7 +52,16 @@ var PADROES = {
 
 // ── SERVIDOR ─────────────────────────────────────────────────
 
-function doGet() {
+function doGet(e) {
+  // ?app=fichas abre o editor de fichas técnicas (mobile, senha própria) --
+  // mesmo projeto/deployment, view totalmente separada do dashboard.
+  if (e && e.parameter && e.parameter.app === 'fichas') {
+    return HtmlService.createTemplateFromFile('Fichas')
+      .evaluate()
+      .setTitle('Fichas Técnicas | Amazônia na Cuia | CARVO')
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1.0')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  }
   return HtmlService.createTemplateFromFile('Index')
     .evaluate()
     .setTitle('CMC + CMV | Amazônia na Cuia | CARVO')
@@ -423,7 +432,10 @@ function lerTodosCSVs(tipo) {
 // Diferente de compras/vendas/estoque, ficha técnica NÃO acumula por mês —
 // é uma foto do momento do envio, então só lemos o arquivo mais recente,
 // sem concatenar. Retorna [] se ainda não houver nenhuma (recurso opcional).
-function lerFichaTecnica() {
+// Lê só o arquivo exportado do Cloudfy (mais recente cujo nome bate
+// PADROES.fichas) -- NUNCA chamar direto fora de lerFichaTecnica() (abaixo),
+// que já aplica as fichas cadastradas/editadas manualmente por cima.
+function lerFichaTecnicaCloudfy_() {
   var pasta = DriveApp.getFolderById(PASTA_ID);
   var files = pasta.getFiles();
   var maisRecente = null;
@@ -452,6 +464,262 @@ function lerFichaTecnica() {
   var linhas = Utilities.parseCsv(conteudo, '\t');
   Logger.log('Ficha técnica lida: ' + maisRecente.getName() + ' (' + (linhas.length - 1) + ' linhas)');
   return linhas;
+}
+
+// Ponto único de leitura de ficha técnica pro resto do sistema: linhas do
+// Cloudfy (lerFichaTecnicaCloudfy_) com as fichas cadastradas/editadas
+// manualmente (Fichas.html, planilha FICHAS_MANUAIS_SHEET_ID) sobrepostas
+// por cima -- ver montarRowsFichasCompleto_ pra regra de sobrescrita.
+// Trocar lerFichaTecnicaCloudfy_() aqui por esta função em todo o resto do
+// código faz TODOS os cálculos (CMV Teórico, Demanda de Insumos, conector
+// de inventário) já refletirem as fichas manuais automaticamente.
+function lerFichaTecnica() {
+  return montarRowsFichasCompleto_(lerFichaTecnicaCloudfy_());
+}
+
+// ── FICHAS TÉCNICAS MANUAIS (cadastro/edição mobile, Fichas.html) ──
+//
+// Planilha separada (mesmo padrão de CONTAGEM_SHEET_ID) com uma aba
+// "FICHAS": PRODUTO | TIPO | RENDIMENTO | INSUMO_NOME | INSUMO_QTDE |
+// INSUMO_UND — uma linha por insumo, igual ao TSV do Cloudfy, mas SEM
+// coluna de custo (o sistema nunca usa o custo digitado numa ficha como
+// fonte principal — ver buscarCustoInsumoComFallback/calcularCustoExplodido
+// em Dados.js; preço sempre vem do histórico real de compra). O ID da
+// planilha é provisionado sozinho no primeiro uso (Script Properties),
+// sem precisar de nenhuma configuração manual.
+var C_FICHAS_MANUAIS = { produto: 0, tipo: 1, rendimento: 2, insumo_nome: 3, insumo_qtde: 4, insumo_und: 5 };
+
+function obterFichasManuaisSheet_() {
+  var props = PropertiesService.getScriptProperties();
+  var id = props.getProperty('FICHAS_MANUAIS_SHEET_ID');
+  var ss = null;
+  if (id) {
+    try { ss = SpreadsheetApp.openById(id); } catch (e) { ss = null; }
+  }
+  if (!ss) {
+    ss = SpreadsheetApp.create('Fichas Técnicas Manuais - Amazônia na Cuia');
+    var aba = ss.getSheets()[0];
+    aba.setName('FICHAS');
+    aba.getRange(1, 1, 1, 6).setValues([['PRODUTO', 'TIPO', 'RENDIMENTO', 'INSUMO_NOME', 'INSUMO_QTDE', 'INSUMO_UND']]);
+    aba.setFrozenRows(1);
+    props.setProperty('FICHAS_MANUAIS_SHEET_ID', ss.getId());
+    Logger.log('Planilha de fichas manuais criada: ' + ss.getUrl());
+  }
+  return ss;
+}
+
+// Lê a planilha de fichas manuais e devolve { linhas, produtosComOverride }
+// -- linhas já no formato array-de-C_FICHAS (Dados.js), prontas pra
+// concatenar com as linhas do Cloudfy; produtosComOverride é um mapa
+// {NOME_UPPER: true} usado pra filtrar as linhas do Cloudfy desse produto.
+function lerFichasManuais_() {
+  var ss = obterFichasManuaisSheet_();
+  var aba = ss.getSheetByName('FICHAS');
+  var dados = aba.getDataRange().getValues();
+  var linhas = [];
+  var produtosComOverride = {};
+  for (var i = 1; i < dados.length; i++) {
+    var r = dados[i];
+    var produto = String(r[C_FICHAS_MANUAIS.produto] || '').trim();
+    if (!produto) continue;
+    produtosComOverride[produto.toUpperCase()] = true;
+
+    var linha = new Array(16).fill('');
+    linha[C_FICHAS.produto]     = produto;
+    linha[C_FICHAS.tipo]        = String(r[C_FICHAS_MANUAIS.tipo] || '').trim();
+    linha[C_FICHAS.rendimento]  = r[C_FICHAS_MANUAIS.rendimento];
+    linha[C_FICHAS.insumo_nome] = String(r[C_FICHAS_MANUAIS.insumo_nome] || '').trim();
+    linha[C_FICHAS.insumo_qtde] = r[C_FICHAS_MANUAIS.insumo_qtde];
+    linha[C_FICHAS.insumo_und]  = String(r[C_FICHAS_MANUAIS.insumo_und] || '').trim();
+    linhas.push(linha);
+  }
+  return { linhas: linhas, produtosComOverride: produtosComOverride };
+}
+
+// Junta as linhas do Cloudfy com as fichas manuais, aplicando a regra de
+// sobrescrita: se um produto tem ficha manual, TODAS as linhas dele vindas
+// do Cloudfy são descartadas antes de concatenar -- senão
+// processarReceitas (Dados.js) acumularia os insumos antigos do Cloudfy
+// junto com os novos da edição manual, misturando as duas receitas.
+// Preserva uma linha 0 (cabeçalho, nunca lida) pra manter o formato que
+// processarFichas/processarReceitas esperam (loop começa em i=1).
+function montarRowsFichasCompleto_(rowsFichasCloudfy) {
+  var manual = lerFichasManuais_();
+  var overrideSet = manual.produtosComOverride;
+  var cloudfyFiltrado = (rowsFichasCloudfy || []).slice(1).filter(function(r) {
+    if (!r) return false;
+    var produto = limpaCelula(r[C_FICHAS.produto]);
+    return !overrideSet[produto.toUpperCase()];
+  });
+  return [[]].concat(manual.linhas).concat(cloudfyFiltrado);
+}
+
+// Senha separada da senha do painel CMV (SENHA_ACESSO) -- ficha técnica é
+// operacional, pode ser usada por qualquer pessoa da equipe, não só quem
+// vê dado financeiro. Configurar em Project Settings > Script Properties,
+// chave "SENHA_FICHAS".
+function validarSenhaFichas(senha) {
+  var senhaConfigurada = PropertiesService.getScriptProperties().getProperty('SENHA_FICHAS');
+  if (!senhaConfigurada) {
+    Logger.log('SENHA_FICHAS nao configurada em Script Properties.');
+    return false;
+  }
+  return String(senha) === senhaConfigurada;
+}
+
+// Lista de nomes conhecidos pro autocomplete de insumo/produto: união do
+// catálogo de Compras+Vendas com os produtos que já têm ficha manual
+// (permite apontar um insumo pra outro preparo manual, criando receita
+// aninhada -- ver explodirInsumos/calcularCustoExplodido em Dados.js, que
+// casam por nome exato contra o mapa "receitas" final, sem distinguir origem).
+function listarCatalogoInsumos(senhaFichas) {
+  if (!validarSenhaFichas(senhaFichas)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var rowsCompras = lerTodosCSVs('compras');
+    var rowsVendas  = lerTodosCSVs('vendas');
+    var catalogo = preAgregarCatalogoProdutos(rowsCompras, rowsVendas);
+    var manual = lerFichasManuais_();
+    var nomes = {};
+    Object.keys(catalogo).forEach(function(k) { nomes[catalogo[k].nome] = true; });
+    Object.keys(manual.produtosComOverride).forEach(function(p) { nomes[p] = true; });
+    var lista = Object.keys(nomes).sort();
+    return JSON.stringify({ ok: true, produtos: lista });
+  } catch (err) {
+    Logger.log('listarCatalogoInsumos ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
+// Devolve a ficha EFETIVA de um produto (manual se existir, senão a do
+// Cloudfy) pronta pra abrir na tela de edição -- mesma fonte de verdade
+// (montarRowsFichasCompleto_) usada pelo resto do sistema, então o que
+// aparece pra editar é exatamente o que está valendo no cálculo agora.
+function buscarFicha(senhaFichas, produto) {
+  if (!validarSenhaFichas(senhaFichas)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var produtoUpper = String(produto || '').trim().toUpperCase();
+    if (!produtoUpper) return JSON.stringify({ ok: true, existe: false });
+
+    var rowsCompleto = montarRowsFichasCompleto_(lerFichaTecnicaCloudfy_());
+    var receitas = processarReceitas(rowsCompleto);
+    var chave = Object.keys(receitas).filter(function(k) { return k.trim().toUpperCase() === produtoUpper; })[0];
+    if (!chave) return JSON.stringify({ ok: true, existe: false });
+
+    var r = receitas[chave];
+    var manual = lerFichasManuais_();
+    return JSON.stringify({
+      ok: true, existe: true, produto: chave, tipo: r.tipo, rendimento: r.rendimento,
+      insumos: r.insumos.map(function(i) { return { nome: i.nome, qtd: i.qtde, und: i.und }; }),
+      origem: manual.produtosComOverride[produtoUpper] ? 'manual' : 'cloudfy'
+    });
+  } catch (err) {
+    Logger.log('buscarFicha ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
+// Lista/busca fichas cadastradas (Cloudfy + manuais), pra tela de busca do
+// app de fichas.
+function listarFichasCadastradas(senhaFichas, busca) {
+  if (!validarSenhaFichas(senhaFichas)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var rowsCompleto = montarRowsFichasCompleto_(lerFichaTecnicaCloudfy_());
+    var receitas = processarReceitas(rowsCompleto);
+    var manual = lerFichasManuais_();
+    var termo = String(busca || '').trim().toUpperCase();
+    var lista = Object.keys(receitas).filter(function(p) {
+      return !termo || p.toUpperCase().indexOf(termo) >= 0;
+    }).map(function(p) {
+      return {
+        produto: p, tipo: receitas[p].tipo, rendimento: receitas[p].rendimento,
+        nInsumos: receitas[p].insumos.length,
+        origem: manual.produtosComOverride[p.toUpperCase()] ? 'manual' : 'cloudfy'
+      };
+    }).sort(function(a, b) { return a.produto.localeCompare(b.produto); });
+    return JSON.stringify({ ok: true, fichas: lista });
+  } catch (err) {
+    Logger.log('listarFichasCadastradas ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
+// Salva (cria ou substitui por completo) a ficha manual de um produto --
+// nunca faz diff parcial de linha: apaga tudo que já existia desse
+// produto na planilha e escreve o conjunto novo inteiro, o que evita
+// linha órfã de insumo removido no formulário.
+// dados: { produto, tipo, rendimento, insumos:[{nome, qtd, und}] }
+function salvarFicha(senhaFichas, dados) {
+  if (!validarSenhaFichas(senhaFichas)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    if (!dados || !String(dados.produto || '').trim()) {
+      return JSON.stringify({ ok: false, erro: 'Informe o nome do produto.' });
+    }
+    if (!dados.tipo) {
+      return JSON.stringify({ ok: false, erro: 'Informe o tipo (Venda ou Matéria prima).' });
+    }
+    var rendimento = numVal(dados.rendimento);
+    if (!rendimento || rendimento <= 0) {
+      return JSON.stringify({ ok: false, erro: 'Informe o rendimento (quantas unidades uma receita/lote produz).' });
+    }
+    var insumos = (dados.insumos || []).filter(function(i) { return i && String(i.nome || '').trim() && numVal(i.qtd) > 0; });
+    if (!insumos.length) {
+      return JSON.stringify({ ok: false, erro: 'Adicione pelo menos um insumo com quantidade.' });
+    }
+
+    var produto = String(dados.produto).trim().toUpperCase();
+    var ss = obterFichasManuaisSheet_();
+    var aba = ss.getSheetByName('FICHAS');
+    var valores = aba.getDataRange().getValues();
+    for (var i = valores.length - 1; i >= 1; i--) {
+      if (String(valores[i][C_FICHAS_MANUAIS.produto] || '').trim().toUpperCase() === produto) {
+        aba.deleteRow(i + 1);
+      }
+    }
+
+    var novasLinhas = insumos.map(function(ins) {
+      return [produto, dados.tipo, rendimento, String(ins.nome).trim().toUpperCase(), numVal(ins.qtd), String(ins.und || '').trim()];
+    });
+    aba.getRange(aba.getLastRow() + 1, 1, novasLinhas.length, 6).setValues(novasLinhas);
+
+    Logger.log('Ficha manual salva: ' + produto + ' (' + novasLinhas.length + ' insumo(s)).');
+    return JSON.stringify({ ok: true });
+  } catch (err) {
+    Logger.log('salvarFicha ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
+// Remove o override manual de um produto -- volta a valer a versão do
+// Cloudfy pra esse produto, se existir uma.
+function excluirFichaManual(senhaFichas, produto) {
+  if (!validarSenhaFichas(senhaFichas)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var produtoUpper = String(produto || '').trim().toUpperCase();
+    var ss = obterFichasManuaisSheet_();
+    var aba = ss.getSheetByName('FICHAS');
+    var valores = aba.getDataRange().getValues();
+    var removidas = 0;
+    for (var i = valores.length - 1; i >= 1; i--) {
+      if (String(valores[i][C_FICHAS_MANUAIS.produto] || '').trim().toUpperCase() === produtoUpper) {
+        aba.deleteRow(i + 1);
+        removidas++;
+      }
+    }
+    return JSON.stringify({ ok: true, removidas: removidas });
+  } catch (err) {
+    Logger.log('excluirFichaManual ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
 }
 
 // ── INTEGRAÇÃO COM O SISTEMA DE CONTAGEM/ESTOQUE (projeto Apps Script separado) ──

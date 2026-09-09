@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0">
+<title>Fichas Técnicas | Amazônia na Cuia | CARVO</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#0F1110;--bg2:#161918;--bg3:#1E2220;--bg4:#272C2A;
+  --fg:#EDEAE3;--fg2:#A8A49E;--fg3:#6E6B66;
+  --ac:#1D9E75;--ac2:#3DBA92;--acd:rgba(29,158,117,.14);--acb:rgba(29,158,117,.32);
+  --rd:#C25B54;--rdd:rgba(194,91,84,.15);
+  --am:#D6A849;--amd:rgba(214,168,73,.15);
+  --ln:rgba(255,255,255,.08);--ln2:rgba(255,255,255,.14);
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
+body{background:var(--bg);color:var(--fg);font-family:'Manrope',sans-serif;font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased;min-height:100vh;padding-bottom:24px;}
+input,select,button,textarea{font-family:inherit;font-size:16px;color:var(--fg);}
+button{cursor:pointer;}
+.hide{display:none!important;}
+
+/* ===== LOGIN ===== */
+#login{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;}
+.login-card{width:100%;max-width:360px;background:var(--bg2);border:1px solid var(--ln);border-radius:16px;padding:32px 24px;text-align:center;}
+.login-title{font-size:20px;font-weight:700;margin-bottom:4px;}
+.login-sub{font-size:13px;color:var(--fg3);margin-bottom:24px;}
+.field{width:100%;background:var(--bg3);border:1px solid var(--ln2);border-radius:10px;padding:14px 16px;color:var(--fg);margin-bottom:12px;}
+.field:focus{outline:none;border-color:var(--ac);}
+.btn{width:100%;background:var(--ac);color:#08201a;border:none;border-radius:10px;padding:15px 16px;font-weight:700;font-size:16px;}
+.btn:active{background:var(--ac2);}
+.btn-ghost{background:none;border:1px solid var(--ln2);color:var(--fg2);}
+.btn-danger{background:var(--rd);color:#2a0f0d;}
+.err{color:var(--rd);font-size:13px;margin-top:10px;min-height:16px;}
+
+/* ===== APP SHELL ===== */
+#app{max-width:520px;margin:0 auto;padding:16px;}
+.topbar{display:flex;align-items:center;justify-content:space-between;padding:6px 2px 18px;}
+.topbar-title{font-size:18px;font-weight:700;}
+.topbar-sub{font-size:12px;color:var(--fg3);}
+.iconbtn{background:var(--bg3);border:1px solid var(--ln2);border-radius:10px;width:40px;height:40px;display:flex;align-items:center;justify-content:center;color:var(--fg2);font-size:18px;}
+
+/* ===== LISTA ===== */
+.searchbox{width:100%;background:var(--bg2);border:1px solid var(--ln2);border-radius:12px;padding:14px 16px;margin-bottom:14px;}
+.searchbox:focus{outline:none;border-color:var(--ac);}
+.lista{display:flex;flex-direction:column;gap:8px;}
+.card-ficha{background:var(--bg2);border:1px solid var(--ln);border-radius:12px;padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.card-ficha .nome{font-weight:600;font-size:14.5px;}
+.card-ficha .meta{font-size:12px;color:var(--fg3);margin-top:2px;}
+.badge{font-size:10.5px;font-weight:700;padding:3px 8px;border-radius:20px;white-space:nowrap;}
+.badge-manual{background:var(--acd);color:var(--ac2);}
+.badge-cloudfy{background:var(--bg3);color:var(--fg3);}
+.empty{text-align:center;color:var(--fg3);padding:50px 20px;font-size:13.5px;line-height:1.7;}
+.fab{position:fixed;right:20px;bottom:24px;width:58px;height:58px;border-radius:50%;background:var(--ac);color:#08201a;font-size:28px;font-weight:400;border:none;box-shadow:0 6px 20px rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:50;}
+.fab:active{background:var(--ac2);}
+
+/* ===== EDITOR ===== */
+.label{font-size:12px;color:var(--fg3);text-transform:uppercase;letter-spacing:.04em;margin:16px 0 6px;font-weight:600;}
+.label:first-child{margin-top:0;}
+.toggle2{display:flex;background:var(--bg3);border:1px solid var(--ln2);border-radius:10px;padding:3px;gap:3px;}
+.toggle2 button{flex:1;background:none;border:none;color:var(--fg3);padding:11px 8px;border-radius:8px;font-weight:600;font-size:14px;}
+.toggle2 button.on{background:var(--ac);color:#08201a;}
+.insumo-row{background:var(--bg2);border:1px solid var(--ln);border-radius:12px;padding:12px;margin-bottom:8px;}
+.insumo-row .linha1{display:flex;gap:8px;margin-bottom:8px;}
+.insumo-row input{background:var(--bg3);border:1px solid var(--ln2);border-radius:8px;padding:10px 12px;color:var(--fg);}
+.insumo-row .nome-ins{flex:1;min-width:0;}
+.insumo-row .linha2{display:flex;gap:8px;align-items:center;}
+.insumo-row .qtd-ins{width:90px;}
+.insumo-row .und-ins{width:70px;}
+.rm-ins{margin-left:auto;background:none;border:none;color:var(--rd);font-size:13px;font-weight:600;padding:6px 8px;}
+.add-ins{width:100%;background:none;border:1.5px dashed var(--ln2);color:var(--fg2);border-radius:10px;padding:13px;font-weight:600;font-size:14px;margin-top:4px;}
+.actions{display:flex;flex-direction:column;gap:10px;margin-top:22px;}
+.status{font-size:13px;text-align:center;margin-top:10px;min-height:16px;}
+.status.ok{color:var(--ac2);}
+.status.rd{color:var(--rd);}
+.origem-note{font-size:12px;color:var(--fg3);background:var(--bg3);border-radius:8px;padding:10px 12px;margin-top:10px;line-height:1.6;}
+</style>
+</head>
+<body>
+
+<div id="login">
+  <div class="login-card">
+    <div class="login-title">Fichas Técnicas</div>
+    <div class="login-sub">Amazônia na Cuia</div>
+    <input class="field" type="password" id="login-senha" placeholder="Senha de acesso" autocomplete="off">
+    <button class="btn" id="login-btn" onclick="fazerLoginFichas()">Entrar</button>
+    <div class="err" id="login-err"></div>
+  </div>
+</div>
+
+<div id="app" class="hide">
+
+  <div id="tela-lista">
+    <div class="topbar">
+      <div>
+        <div class="topbar-title">Fichas Técnicas</div>
+        <div class="topbar-sub">Amazônia na Cuia</div>
+      </div>
+    </div>
+    <input class="searchbox" id="busca-input" placeholder="Buscar produto..." oninput="buscarFichasNaLista()">
+    <div class="lista" id="lista-fichas"><div class="empty">Carregando…</div></div>
+    <button class="fab" onclick="novaFicha()" title="Nova ficha">+</button>
+  </div>
+
+  <div id="tela-editor" class="hide">
+    <div class="topbar">
+      <button class="iconbtn" onclick="voltarParaLista()">&larr;</button>
+      <div style="text-align:right;">
+        <div class="topbar-title" id="editor-titulo">Nova ficha</div>
+      </div>
+    </div>
+
+    <div class="label">Produto</div>
+    <input class="field" id="ed-produto" placeholder="Nome do produto" list="dl-catalogo">
+    <datalist id="dl-catalogo"></datalist>
+
+    <div class="label">Tipo</div>
+    <div class="toggle2">
+      <button id="tipo-venda" onclick="setTipoFicha('Venda')">Venda</button>
+      <button id="tipo-mp" onclick="setTipoFicha('Matéria prima')">Matéria prima</button>
+    </div>
+
+    <div class="label">Rendimento — quantas unidades essa receita produz</div>
+    <input class="field" id="ed-rendimento" type="number" inputmode="decimal" placeholder="Ex: 10">
+
+    <div class="label">Insumos</div>
+    <div id="lista-insumos"></div>
+    <button class="add-ins" onclick="adicionarInsumo()">+ Adicionar insumo</button>
+
+    <div class="actions">
+      <button class="btn" onclick="salvarFichaAtual()">Salvar ficha</button>
+      <button class="btn btn-danger hide" id="btn-excluir-override" onclick="excluirOverrideAtual()">Remover edição (voltar pro Cloudfy)</button>
+    </div>
+    <div class="status" id="editor-status"></div>
+    <div class="origem-note hide" id="origem-note"></div>
+  </div>
+
+</div>
+
+<script>
+var SENHA_FICHAS='';
+var CATALOGO_INSUMOS=[];
+var PRODUTO_EDITANDO=null; // nome do produto sendo editado, null = ficha nova
+var TIPO_ATUAL='Venda';
+
+window.addEventListener('load',function(){
+  var senhaSalva=null;
+  try{senhaSalva=localStorage.getItem('carvo-senha-fichas');}catch(e){}
+  if(senhaSalva){
+    document.getElementById('login-senha').value=senhaSalva;
+    fazerLoginFichas();
+  }else{
+    setTimeout(function(){document.getElementById('login-senha').focus();},200);
+  }
+});
+
+function fazerLoginFichas(){
+  var inp=document.getElementById('login-senha');
+  var btn=document.getElementById('login-btn');
+  var err=document.getElementById('login-err');
+  var senha=inp.value.trim();
+  if(!senha){err.textContent='Digite a senha.';return;}
+  btn.disabled=true;btn.textContent='Verificando...';err.textContent='';
+  google.script.run
+    .withSuccessHandler(function(json){
+      var res;try{res=JSON.parse(json);}catch(e){err.textContent='Erro ao ler resposta.';btn.disabled=false;btn.textContent='Entrar';return;}
+      if(!res.ok){
+        btn.disabled=false;btn.textContent='Entrar';
+        if(res.auth===false){err.textContent='Senha incorreta.';inp.value='';try{localStorage.removeItem('carvo-senha-fichas');}catch(e){}}
+        else{err.textContent=res.erro||'Erro ao carregar.';}
+        return;
+      }
+      SENHA_FICHAS=senha;
+      try{localStorage.setItem('carvo-senha-fichas',senha);}catch(e){}
+      CATALOGO_INSUMOS=res.produtos||[];
+      document.getElementById('dl-catalogo').innerHTML=CATALOGO_INSUMOS.map(function(p){return '<option value="'+p.replace(/"/g,'')+'">';}).join('');
+      document.getElementById('login').classList.add('hide');
+      document.getElementById('app').classList.remove('hide');
+      carregarListaFichas();
+    })
+    .withFailureHandler(function(e){
+      btn.disabled=false;btn.textContent='Entrar';
+      err.textContent='Falha na comunicação: '+(e.message||e);
+    })
+    .listarCatalogoInsumos(senha);
+}
+
+var buscaTimeout=null;
+function buscarFichasNaLista(){
+  clearTimeout(buscaTimeout);
+  buscaTimeout=setTimeout(carregarListaFichas,250);
+}
+
+function carregarListaFichas(){
+  var termo=document.getElementById('busca-input').value;
+  var cont=document.getElementById('lista-fichas');
+  google.script.run
+    .withSuccessHandler(function(json){
+      var res;try{res=JSON.parse(json);}catch(e){cont.innerHTML='<div class="empty">Erro ao carregar.</div>';return;}
+      if(!res.ok){cont.innerHTML='<div class="empty">'+(res.erro||'Erro ao carregar.')+'</div>';return;}
+      if(!res.fichas.length){cont.innerHTML='<div class="empty">Nenhuma ficha encontrada'+(termo?' pra "'+termo+'"':' ainda')+'.</div>';return;}
+      cont.innerHTML=res.fichas.map(function(f){
+        var badge=f.origem==='manual'
+          ? '<span class="badge badge-manual">Editada</span>'
+          : '<span class="badge badge-cloudfy">Cloudfy</span>';
+        return '<div class="card-ficha" onclick="abrirEditorFicha(\''+f.produto.replace(/'/g,"\\'")+'\')">'+
+          '<div><div class="nome">'+f.produto+'</div>'+
+          '<div class="meta">'+f.tipo+' · rendimento '+f.rendimento+' · '+f.nInsumos+' insumo(s)</div></div>'+
+          badge+'</div>';
+      }).join('');
+    })
+    .withFailureHandler(function(e){cont.innerHTML='<div class="empty">Falha: '+(e.message||e)+'</div>';})
+    .listarFichasCadastradas(SENHA_FICHAS, termo);
+}
+
+function novaFicha(){
+  PRODUTO_EDITANDO=null;
+  document.getElementById('editor-titulo').textContent='Nova ficha';
+  document.getElementById('ed-produto').value='';
+  document.getElementById('ed-produto').disabled=false;
+  document.getElementById('ed-rendimento').value='';
+  setTipoFicha('Venda');
+  document.getElementById('lista-insumos').innerHTML='';
+  document.getElementById('btn-excluir-override').classList.add('hide');
+  document.getElementById('origem-note').classList.add('hide');
+  document.getElementById('editor-status').textContent='';
+  adicionarInsumo();
+  mostrarTela('editor');
+}
+
+function abrirEditorFicha(produto){
+  document.getElementById('editor-status').textContent='';
+  google.script.run
+    .withSuccessHandler(function(json){
+      var res;try{res=JSON.parse(json);}catch(e){alert('Erro ao carregar ficha.');return;}
+      if(!res.ok||!res.existe){alert('Ficha não encontrada.');return;}
+      PRODUTO_EDITANDO=res.produto;
+      document.getElementById('editor-titulo').textContent=res.produto;
+      document.getElementById('ed-produto').value=res.produto;
+      document.getElementById('ed-produto').disabled=true;
+      document.getElementById('ed-rendimento').value=res.rendimento;
+      setTipoFicha(res.tipo==='Matéria prima'?'Matéria prima':'Venda');
+      document.getElementById('lista-insumos').innerHTML='';
+      (res.insumos||[]).forEach(function(i){adicionarInsumo(i.nome,i.qtd,i.und);});
+      if(!res.insumos||!res.insumos.length)adicionarInsumo();
+      var btnEx=document.getElementById('btn-excluir-override');
+      var nota=document.getElementById('origem-note');
+      if(res.origem==='manual'){
+        btnEx.classList.remove('hide');
+        nota.classList.remove('hide');
+        nota.textContent='Esta ficha foi editada por aqui — está sobrepondo a versão do Cloudfy (se houver).';
+      }else{
+        btnEx.classList.add('hide');
+        nota.classList.remove('hide');
+        nota.textContent='Esta ficha ainda vem do Cloudfy — salvar aqui cria uma versão própria, sem alterar o arquivo original.';
+      }
+      mostrarTela('editor');
+    })
+    .withFailureHandler(function(e){alert('Falha: '+(e.message||e));})
+    .buscarFicha(SENHA_FICHAS, produto);
+}
+
+function setTipoFicha(t){
+  TIPO_ATUAL=t;
+  document.getElementById('tipo-venda').classList.toggle('on',t==='Venda');
+  document.getElementById('tipo-mp').classList.toggle('on',t==='Matéria prima');
+}
+
+function adicionarInsumo(nome,qtd,und){
+  var wrap=document.getElementById('lista-insumos');
+  var div=document.createElement('div');
+  div.className='insumo-row';
+  div.innerHTML=
+    '<div class="linha1"><input class="nome-ins" placeholder="Nome do insumo" list="dl-catalogo" value="'+(nome?nome.replace(/"/g,''):'')+'"></div>'+
+    '<div class="linha2">'+
+      '<input class="qtd-ins" type="number" inputmode="decimal" placeholder="Qtd/lote" value="'+(qtd!=null?qtd:'')+'">'+
+      '<input class="und-ins" placeholder="Und." value="'+(und?und.replace(/"/g,''):'')+'">'+
+      '<button class="rm-ins" onclick="this.closest(\'.insumo-row\').remove()">Remover</button>'+
+    '</div>';
+  wrap.appendChild(div);
+}
+
+function salvarFichaAtual(){
+  var status=document.getElementById('editor-status');
+  var produto=document.getElementById('ed-produto').value.trim();
+  var rendimento=document.getElementById('ed-rendimento').value;
+  if(!produto){status.textContent='Informe o nome do produto.';status.className='status rd';return;}
+  if(!rendimento||Number(rendimento)<=0){status.textContent='Informe o rendimento.';status.className='status rd';return;}
+  var insumos=Array.from(document.querySelectorAll('#lista-insumos .insumo-row')).map(function(row){
+    return {
+      nome: row.querySelector('.nome-ins').value.trim(),
+      qtd: row.querySelector('.qtd-ins').value,
+      und: row.querySelector('.und-ins').value.trim()
+    };
+  }).filter(function(i){return i.nome && i.qtd;});
+  if(!insumos.length){status.textContent='Adicione pelo menos um insumo com quantidade.';status.className='status rd';return;}
+
+  status.textContent='Salvando...';status.className='status';
+  google.script.run
+    .withSuccessHandler(function(json){
+      var res;try{res=JSON.parse(json);}catch(e){status.textContent='Erro ao salvar.';status.className='status rd';return;}
+      if(!res.ok){status.textContent=res.erro||'Erro ao salvar.';status.className='status rd';return;}
+      status.textContent='Ficha salva!';status.className='status ok';
+      CATALOGO_INSUMOS.indexOf(produto.toUpperCase())<0 && atualizarCatalogoLocal(produto);
+      setTimeout(function(){voltarParaLista();},700);
+    })
+    .withFailureHandler(function(e){status.textContent='Falha: '+(e.message||e);status.className='status rd';})
+    .salvarFicha(SENHA_FICHAS, {produto:produto, tipo:TIPO_ATUAL, rendimento:rendimento, insumos:insumos});
+}
+
+function atualizarCatalogoLocal(produto){
+  var up=produto.toUpperCase();
+  if(CATALOGO_INSUMOS.indexOf(up)<0){
+    CATALOGO_INSUMOS.push(up);
+    document.getElementById('dl-catalogo').innerHTML+='<option value="'+up.replace(/"/g,'')+'">';
+  }
+}
+
+function excluirOverrideAtual(){
+  if(!PRODUTO_EDITANDO)return;
+  if(!confirm('Remover a edição de "'+PRODUTO_EDITANDO+'"? Volta a valer a versão do Cloudfy, se existir.'))return;
+  var status=document.getElementById('editor-status');
+  status.textContent='Removendo...';status.className='status';
+  google.script.run
+    .withSuccessHandler(function(json){
+      var res;try{res=JSON.parse(json);}catch(e){status.textContent='Erro.';status.className='status rd';return;}
+      if(!res.ok){status.textContent=res.erro||'Erro ao remover.';status.className='status rd';return;}
+      status.textContent='Removido.';status.className='status ok';
+      setTimeout(function(){voltarParaLista();},600);
+    })
+    .withFailureHandler(function(e){status.textContent='Falha: '+(e.message||e);status.className='status rd';})
+    .excluirFichaManual(SENHA_FICHAS, PRODUTO_EDITANDO);
+}
+
+function voltarParaLista(){
+  mostrarTela('lista');
+  carregarListaFichas();
+}
+
+function mostrarTela(nome){
+  document.getElementById('tela-lista').classList.toggle('hide',nome!=='lista');
+  document.getElementById('tela-editor').classList.toggle('hide',nome!=='editor');
+}
+</script>
+
+</body>
+</html>
