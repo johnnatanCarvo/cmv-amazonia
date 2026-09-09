@@ -909,19 +909,22 @@ function iniciarChecagemDeVersao(){
   },VERSAO_CHECK_INTERVALO_MS);
 }
 // URL canônica do web app (deploymentId fixo) -- usada pra recarregar pela
-// JANELA DE CIMA (top), não pela própria página. A página roda dentro de um
-// iframe que o Google Apps Script serve (script.googleusercontent.com,
-// origem diferente de script.google.com); um location.reload() comum
-// recarrega só ESSE iframe usando a URL específica de sessão que ele tem
-// no momento, que pode não ser válida sozinha -- resultado: tela branca.
-// Navegar a janela de cima pra URL canônica força o Google a montar tudo
-// de novo do zero, do jeito certo.
+// JANELA DE CIMA (top), não pela própria página (ela roda num iframe que o
+// Apps Script serve, origem diferente de script.google.com). Um
+// location.reload() comum (ou até um F5 normal) NÃO resolveu sozinho --
+// confirmado ao vivo que só Ctrl+Shift+R (ignora cache) recarregava de
+// verdade -- ou seja, o problema é o NAVEGADOR reaproveitar uma resposta
+// antiga em cache pra essa URL. Por isso, além de navegar pela janela de
+// cima, junta um parâmetro que muda a cada clique (?v=timestamp) só pra
+// forçar o navegador a tratar como uma URL nova e nunca servir do cache --
+// doGet() não lê query params, então isso não muda nada no conteúdo.
 var APP_URL_CANONICA='https://script.google.com/macros/s/AKfycbzwf1mhkYAKpBCJcli2Ou_-9dQ-k1_w76qKIuBobH8mUqOAN1KQD6k7Yhu_axa4uaMtyQ/exec';
 function recarregarApp(){
+  var urlSemCache=APP_URL_CANONICA+'?v='+Date.now();
   try{
-    if(window.top&&window.top!==window){window.top.location.href=APP_URL_CANONICA;return;}
-  }catch(e){/* sem acesso ao top por algum motivo -- cai pro reload comum abaixo */}
-  location.reload();
+    if(window.top&&window.top!==window){window.top.location.href=urlSemCache;return;}
+  }catch(e){/* sem acesso ao top por algum motivo -- cai pro reload abaixo */}
+  location.href=urlSemCache;
 }
 function mostrarAvisoNovaVersao(){
   if(document.getElementById('nova-versao-aviso'))return; // ja mostrando
