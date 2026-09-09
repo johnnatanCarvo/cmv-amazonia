@@ -1596,6 +1596,11 @@ function rCMV(){
   '</div>';
 
   // ===== TABELA POR GRUPO =====
+  // "Todas" numa Semana/Quinzena vem sem grupos de propósito (mesmo motivo
+  // de dadosPeriodoCMC: não dá pra somar grupo a grupo entre unidades com
+  // datas de contagem diferentes) -- antes isso fazia o card inteiro sumir
+  // sem explicação; agora avisa e diz o que fazer, igual ao "Composição por
+  // Grupo" da aba Análise Mês a Mês.
   if(d.grupos&&d.grupos.length){
     html+='<div class="card"><div class="card-h"><div class="card-t">CMV por Grupo</div>'+
       '<div class="ord-toggle">'+
@@ -1603,6 +1608,9 @@ function rCMV(){
         '<button id="gord-qtd" onclick="setCMVGrupoOrder(\'qtd\')" class="'+(cmvGrupoOrder==='qtd'?'on':'')+'">Por quantidade</button>'+
       '</div></div>'+
       '<div class="twrap" id="cmv-grupo-tbl"></div><div id="cmv-grupo-detail"></div></div>';
+  }else if(uniCMV==='TODAS'&&periodoAtualCMV.tipo!=='mes'){
+    html+='<div class="card"><div class="card-h"><div class="card-t">CMV por Grupo</div></div>'+
+      '<div class="empty">"Todas" nesta Semana/Quinzena mostra só o total consolidado — escolha uma unidade específica pra ver o detalhe por grupo.</div></div>';
   }
 
   cont.innerHTML=html;
