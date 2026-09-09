@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-09-09.10';
+var VERSAO_APP = '2026-09-09.11';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -585,7 +585,29 @@ function listarCatalogoInsumos(senhaFichas) {
     Object.keys(catalogo).forEach(function(k) { nomes[catalogo[k].nome] = true; });
     Object.keys(manual.produtosComOverride).forEach(function(p) { nomes[p] = true; });
     var lista = Object.keys(nomes).sort();
-    return JSON.stringify({ ok: true, produtos: lista });
+
+    // Unidade de medida padrão de cada insumo (a que já vem cadastrada em
+    // Compras) -- pro app preencher sozinho o campo "Und." ao escolher um
+    // insumo já conhecido, sem o usuário ter que digitar de novo.
+    var unidades = {};
+    if (rowsCompras && rowsCompras.length > 1) {
+      for (var i = 1; i < rowsCompras.length; i++) {
+        var r = rowsCompras[i];
+        if (!r || r.length < 18) continue;
+        var produto = limpaCelula(r[C_COMPRAS.produto]);
+        var unid = limpaCelula(r[C_COMPRAS.unid]);
+        if (produto && unid && !unidades[produto.toUpperCase()]) unidades[produto.toUpperCase()] = unid;
+      }
+    }
+    // Insumos já cadastrados manualmente também carregam sua própria
+    // unidade (a que foi digitada da última vez que essa ficha foi salva).
+    manual.linhas.forEach(function(l) {
+      var nomeIns = String(l[C_FICHAS.insumo_nome] || '').trim();
+      var undIns = String(l[C_FICHAS.insumo_und] || '').trim();
+      if (nomeIns && undIns && !unidades[nomeIns.toUpperCase()]) unidades[nomeIns.toUpperCase()] = undIns;
+    });
+
+    return JSON.stringify({ ok: true, produtos: lista, unidades: unidades });
   } catch (err) {
     Logger.log('listarCatalogoInsumos ERROR: ' + err.message + '\n' + err.stack);
     return JSON.stringify({ ok: false, erro: err.message });

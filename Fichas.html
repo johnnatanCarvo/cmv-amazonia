@@ -142,6 +142,7 @@ button{cursor:pointer;}
 <script>
 var SENHA_FICHAS='';
 var CATALOGO_INSUMOS=[];
+var UNIDADES_CATALOGO={}; // {NOME_UPPER: unidade} -- preenche sozinho o campo Und. de um insumo já conhecido
 var PRODUTO_EDITANDO=null; // nome do produto sendo editado, null = ficha nova
 var TIPO_ATUAL='Venda';
 
@@ -175,6 +176,7 @@ function fazerLoginFichas(){
       SENHA_FICHAS=senha;
       try{localStorage.setItem('carvo-senha-fichas',senha);}catch(e){}
       CATALOGO_INSUMOS=res.produtos||[];
+      UNIDADES_CATALOGO=res.unidades||{};
       document.getElementById('dl-catalogo').innerHTML=CATALOGO_INSUMOS.map(function(p){return '<option value="'+p.replace(/"/g,'')+'">';}).join('');
       document.getElementById('login').classList.add('hide');
       document.getElementById('app').classList.remove('hide');
@@ -280,6 +282,17 @@ function adicionarInsumo(nome,qtd,und){
       '<button class="rm-ins" onclick="this.closest(\'.insumo-row\').remove()">Remover</button>'+
     '</div>';
   wrap.appendChild(div);
+  // Preenche a unidade sozinho quando o nome digitado/escolhido bate com
+  // um insumo já conhecido (Compras ou outra ficha manual) -- só se o
+  // campo Und. ainda estiver vazio, pra não sobrescrever o que a pessoa
+  // já tiver digitado.
+  var nomeInput=div.querySelector('.nome-ins');
+  var undInput=div.querySelector('.und-ins');
+  nomeInput.addEventListener('input',function(){
+    if(undInput.value)return;
+    var conhecida=UNIDADES_CATALOGO[nomeInput.value.trim().toUpperCase()];
+    if(conhecida)undInput.value=conhecida;
+  });
 }
 
 function salvarFichaAtual(){
