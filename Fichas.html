@@ -129,7 +129,7 @@ button{cursor:pointer;}
     </div>
 
     <div class="label">Rendimento — quantas unidades essa receita produz</div>
-    <input class="field" id="ed-rendimento" type="number" inputmode="decimal" placeholder="Ex: 10">
+    <input class="field" id="ed-rendimento" type="text" inputmode="decimal" placeholder="Ex: 10 ou 0,8">
 
     <div class="label">Insumos</div>
     <div id="lista-insumos"></div>
@@ -300,7 +300,7 @@ function adicionarInsumo(nome,qtd,und){
   div.innerHTML=
     '<div class="linha1"><input class="nome-ins" placeholder="Nome do insumo" list="dl-catalogo" value="'+(nome?nome.replace(/"/g,''):'')+'"></div>'+
     '<div class="linha2">'+
-      '<input class="qtd-ins" type="number" inputmode="decimal" placeholder="Qtd/lote" value="'+(qtd!=null?qtd:'')+'">'+
+      '<input class="qtd-ins" type="text" inputmode="decimal" placeholder="Qtd/lote" value="'+(qtd!=null?qtd:'')+'">'+
       '<input class="und-ins" placeholder="Und." value="'+(und?und.replace(/"/g,''):'')+'">'+
       '<button class="rm-ins" onclick="this.closest(\'.insumo-row\').remove()">Remover</button>'+
     '</div>';
@@ -323,7 +323,7 @@ function salvarFichaAtual(){
   var produto=document.getElementById('ed-produto').value.trim();
   var rendimento=document.getElementById('ed-rendimento').value;
   if(!produto){status.textContent='Informe o nome do produto.';status.className='status rd';return;}
-  if(!rendimento||Number(rendimento)<=0){status.textContent='Informe o rendimento.';status.className='status rd';return;}
+  if(!rendimento||parseFloat(rendimento.replace(',','.'))<=0){status.textContent='Informe o rendimento.';status.className='status rd';return;}
   var insumos=Array.from(document.querySelectorAll('#lista-insumos .insumo-row')).map(function(row){
     return {
       nome: row.querySelector('.nome-ins').value.trim(),
