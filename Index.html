@@ -1092,9 +1092,19 @@ function nomeUni(f){var map={'MARCO':'Marco','PORTO FUTURO':'Porto Futuro','UMAR
 
 function atualizarGranularidadeCMC(){
   var mesNoMomento=mesAtual;
+  // rMes() já rodou (síncrono) usando o que estava disponível ATÉ AGORA --
+  // se o cache de semanas/quinzenas deste mês ainda não tinha chegado, o
+  // gráfico/métricas podem ter renderizado incompletos ou com o período
+  // errado (ex: rótulo "Semana 1" mas dado do mês inteiro, gráfico vazio).
+  // Se essa é a primeira vez que o cache chega pra este mês E a
+  // granularidade selecionada não é "mês inteiro", tem que renderizar de
+  // novo agora que o dado certo existe -- só atualizar os botões não corrige
+  // o que já foi desenhado errado.
+  var jaTinhaCache=!!ANALISE_SEMANAL_CACHE[mesNoMomento];
   obterAnaliseSemanalCache_(mesNoMomento, function(){
     if(mesAtual!==mesNoMomento)return; // usuário já trocou de mês antes da resposta voltar
     montarGranSeg_('mes-granseg', mesNoMomento, periodoAtualCMC, 'setPeriodoCMC');
+    if(!jaTinhaCache&&periodoAtualCMC.tipo!=='mes')rMes();
   });
 }
 function setPeriodoCMC(key){
@@ -1465,9 +1475,12 @@ function setUniCMV(u){uniCMV=u;document.querySelectorAll('#cmv-useg button').for
 
 function atualizarGranularidadeCMV(){
   var mesNoMomento=mesCMV;
+  // Mesmo race condition de atualizarGranularidadeCMC() -- ver comentário lá.
+  var jaTinhaCache=!!ANALISE_SEMANAL_CACHE[mesNoMomento];
   obterAnaliseSemanalCache_(mesNoMomento, function(){
     if(mesCMV!==mesNoMomento)return;
     montarGranSeg_('cmv-granseg', mesNoMomento, periodoAtualCMV, 'setPeriodoCMV');
+    if(!jaTinhaCache&&periodoAtualCMV.tipo!=='mes')rCMV();
   });
 }
 function setPeriodoCMV(key){
