@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-09-09.11';
+var VERSAO_APP = '2026-09-09.12';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -505,7 +505,21 @@ function obterFichasManuaisSheet_() {
     props.setProperty('FICHAS_MANUAIS_SHEET_ID', ss.getId());
     Logger.log('Planilha de fichas manuais criada: ' + ss.getUrl());
   }
+  if (!ss.getSheetByName('HISTORICO')) {
+    var abaHist = ss.insertSheet('HISTORICO');
+    abaHist.getRange(1, 1, 1, 5).setValues([['DATA/HORA', 'PRODUTO', 'AÇÃO', 'RESPONSÁVEL', 'DETALHE']]);
+    abaHist.setFrozenRows(1);
+  }
   return ss;
+}
+
+// Registra uma linha no histórico (mais recente sempre no TOPO, logo
+// abaixo do cabeçalho, pra facilitar leitura sem precisar ordenar).
+function registrarHistoricoFicha_(ss, produto, acao, responsavel, detalhe) {
+  var abaHist = ss.getSheetByName('HISTORICO');
+  var agora = Utilities.formatDate(new Date(), 'America/Fortaleza', 'dd/MM/yyyy HH:mm');
+  abaHist.insertRowAfter(1);
+  abaHist.getRange(2, 1, 1, 5).setValues([[agora, produto, acao, String(responsavel || '').trim() || '(não informado)', detalhe || '']]);
 }
 
 // Lê a planilha de fichas manuais e devolve { linhas, produtosComOverride }
@@ -674,8 +688,9 @@ function listarFichasCadastradas(senhaFichas, busca) {
 // Salva (cria ou substitui por completo) a ficha manual de um produto --
 // nunca faz diff parcial de linha: apaga tudo que já existia desse
 // produto na planilha e escreve o conjunto novo inteiro, o que evita
-// linha órfã de insumo removido no formulário.
-// dados: { produto, tipo, rendimento, insumos:[{nome, qtd, und}] }
+// linha órfã de insumo removido no formulário. Registra no histórico se
+// foi cadastro novo ou edição de uma já existente.
+// dados: { produto, tipo, rendimento, insumos:[{nome, qtd, und}], responsavel }
 function salvarFicha(senhaFichas, dados) {
   if (!validarSenhaFichas(senhaFichas)) {
     return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
@@ -700,8 +715,10 @@ function salvarFicha(senhaFichas, dados) {
     var ss = obterFichasManuaisSheet_();
     var aba = ss.getSheetByName('FICHAS');
     var valores = aba.getDataRange().getValues();
+    var jaExistia = false;
     for (var i = valores.length - 1; i >= 1; i--) {
       if (String(valores[i][C_FICHAS_MANUAIS.produto] || '').trim().toUpperCase() === produto) {
+        jaExistia = true;
         aba.deleteRow(i + 1);
       }
     }
@@ -710,6 +727,9 @@ function salvarFicha(senhaFichas, dados) {
       return [produto, dados.tipo, rendimento, String(ins.nome).trim().toUpperCase(), numVal(ins.qtd), String(ins.und || '').trim()];
     });
     aba.getRange(aba.getLastRow() + 1, 1, novasLinhas.length, 6).setValues(novasLinhas);
+
+    registrarHistoricoFicha_(ss, produto, jaExistia ? 'Editada' : 'Cadastrada', dados.responsavel,
+      dados.tipo + ' · rendimento ' + rendimento + ' · ' + novasLinhas.length + ' insumo(s)');
 
     Logger.log('Ficha manual salva: ' + produto + ' (' + novasLinhas.length + ' insumo(s)).');
     return JSON.stringify({ ok: true });
@@ -721,7 +741,7 @@ function salvarFicha(senhaFichas, dados) {
 
 // Remove o override manual de um produto -- volta a valer a versão do
 // Cloudfy pra esse produto, se existir uma.
-function excluirFichaManual(senhaFichas, produto) {
+function excluirFichaManual(senhaFichas, produto, responsavel) {
   if (!validarSenhaFichas(senhaFichas)) {
     return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
   }
@@ -737,9 +757,39 @@ function excluirFichaManual(senhaFichas, produto) {
         removidas++;
       }
     }
+    if (removidas > 0) {
+      registrarHistoricoFicha_(ss, produtoUpper, 'Edição removida (voltou pro Cloudfy)', responsavel, '');
+    }
     return JSON.stringify({ ok: true, removidas: removidas });
   } catch (err) {
     Logger.log('excluirFichaManual ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
+// Lista o histórico de cadastro/edição de fichas manuais, mais recente
+// primeiro (a aba HISTORICO já é escrita nessa ordem -- ver
+// registrarHistoricoFicha_). "limite" opcional corta a lista (padrão 300,
+// suficiente pra uso normal sem carregar a planilha inteira sempre).
+function listarHistoricoFichas(senhaFichas, limite) {
+  if (!validarSenhaFichas(senhaFichas)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var ss = obterFichasManuaisSheet_();
+    var aba = ss.getSheetByName('HISTORICO');
+    var max = Number(limite) > 0 ? Number(limite) : 300;
+    var ultimaLinha = aba.getLastRow();
+    if (ultimaLinha < 2) return JSON.stringify({ ok: true, historico: [] });
+
+    var nLinhas = Math.min(max, ultimaLinha - 1);
+    var valores = aba.getRange(2, 1, nLinhas, 5).getValues();
+    var historico = valores.map(function(r) {
+      return { data: r[0], produto: r[1], acao: r[2], responsavel: r[3], detalhe: r[4] };
+    });
+    return JSON.stringify({ ok: true, historico: historico });
+  } catch (err) {
+    Logger.log('listarHistoricoFichas ERROR: ' + err.message + '\n' + err.stack);
     return JSON.stringify({ ok: false, erro: err.message });
   }
 }

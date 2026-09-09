@@ -49,6 +49,10 @@ button{cursor:pointer;}
 .card-ficha{background:var(--bg2);border:1px solid var(--ln);border-radius:12px;padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:10px;}
 .card-ficha .nome{font-weight:600;font-size:14.5px;}
 .card-ficha .meta{font-size:12px;color:var(--fg3);margin-top:2px;}
+.hist-item{background:var(--bg2);border:1px solid var(--ln);border-radius:12px;padding:12px 16px;}
+.hist-item .top{display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--fg3);margin-bottom:4px;}
+.hist-item .prod{font-weight:600;font-size:14.5px;}
+.hist-item .detalhe{font-size:12.5px;color:var(--fg2);margin-top:2px;}
 .badge{font-size:10.5px;font-weight:700;padding:3px 8px;border-radius:20px;white-space:nowrap;}
 .badge-manual{background:var(--acd);color:var(--ac2);}
 .badge-cloudfy{background:var(--bg3);color:var(--fg3);}
@@ -84,6 +88,7 @@ button{cursor:pointer;}
   <div class="login-card">
     <div class="login-title">Fichas Técnicas</div>
     <div class="login-sub">Amazônia na Cuia</div>
+    <input class="field" id="login-nome" placeholder="Seu nome" autocomplete="off">
     <input class="field" type="password" id="login-senha" placeholder="Senha de acesso" autocomplete="off">
     <button class="btn" id="login-btn" onclick="fazerLoginFichas()">Entrar</button>
     <div class="err" id="login-err"></div>
@@ -98,6 +103,7 @@ button{cursor:pointer;}
         <div class="topbar-title">Fichas Técnicas</div>
         <div class="topbar-sub">Amazônia na Cuia</div>
       </div>
+      <button class="iconbtn" onclick="abrirHistorico()" title="Histórico">&#8635;</button>
     </div>
     <input class="searchbox" id="busca-input" placeholder="Buscar produto..." oninput="buscarFichasNaLista()">
     <div class="lista" id="lista-fichas"><div class="empty">Carregando…</div></div>
@@ -137,31 +143,47 @@ button{cursor:pointer;}
     <div class="origem-note hide" id="origem-note"></div>
   </div>
 
+  <div id="tela-historico" class="hide">
+    <div class="topbar">
+      <button class="iconbtn" onclick="voltarParaLista()">&larr;</button>
+      <div style="text-align:right;">
+        <div class="topbar-title">Histórico</div>
+        <div class="topbar-sub">Cadastros e edições de fichas</div>
+      </div>
+    </div>
+    <div class="lista" id="lista-historico"><div class="empty">Carregando…</div></div>
+  </div>
+
 </div>
 
 <script>
 var SENHA_FICHAS='';
+var NOME_FICHAS=''; // quem está usando o app agora -- vai junto com cada salvar/excluir pro histórico
 var CATALOGO_INSUMOS=[];
 var UNIDADES_CATALOGO={}; // {NOME_UPPER: unidade} -- preenche sozinho o campo Und. de um insumo já conhecido
 var PRODUTO_EDITANDO=null; // nome do produto sendo editado, null = ficha nova
 var TIPO_ATUAL='Venda';
 
 window.addEventListener('load',function(){
-  var senhaSalva=null;
-  try{senhaSalva=localStorage.getItem('carvo-senha-fichas');}catch(e){}
+  var senhaSalva=null,nomeSalvo=null;
+  try{senhaSalva=localStorage.getItem('carvo-senha-fichas');nomeSalvo=localStorage.getItem('carvo-nome-fichas');}catch(e){}
+  if(nomeSalvo)document.getElementById('login-nome').value=nomeSalvo;
   if(senhaSalva){
     document.getElementById('login-senha').value=senhaSalva;
     fazerLoginFichas();
   }else{
-    setTimeout(function(){document.getElementById('login-senha').focus();},200);
+    setTimeout(function(){document.getElementById(nomeSalvo?'login-senha':'login-nome').focus();},200);
   }
 });
 
 function fazerLoginFichas(){
   var inp=document.getElementById('login-senha');
+  var inpNome=document.getElementById('login-nome');
   var btn=document.getElementById('login-btn');
   var err=document.getElementById('login-err');
   var senha=inp.value.trim();
+  var nome=inpNome.value.trim();
+  if(!nome){err.textContent='Digite seu nome.';return;}
   if(!senha){err.textContent='Digite a senha.';return;}
   btn.disabled=true;btn.textContent='Verificando...';err.textContent='';
   google.script.run
@@ -174,7 +196,8 @@ function fazerLoginFichas(){
         return;
       }
       SENHA_FICHAS=senha;
-      try{localStorage.setItem('carvo-senha-fichas',senha);}catch(e){}
+      NOME_FICHAS=nome;
+      try{localStorage.setItem('carvo-senha-fichas',senha);localStorage.setItem('carvo-nome-fichas',nome);}catch(e){}
       CATALOGO_INSUMOS=res.produtos||[];
       UNIDADES_CATALOGO=res.unidades||{};
       document.getElementById('dl-catalogo').innerHTML=CATALOGO_INSUMOS.map(function(p){return '<option value="'+p.replace(/"/g,'')+'">';}).join('');
@@ -320,7 +343,7 @@ function salvarFichaAtual(){
       setTimeout(function(){voltarParaLista();},700);
     })
     .withFailureHandler(function(e){status.textContent='Falha: '+(e.message||e);status.className='status rd';})
-    .salvarFicha(SENHA_FICHAS, {produto:produto, tipo:TIPO_ATUAL, rendimento:rendimento, insumos:insumos});
+    .salvarFicha(SENHA_FICHAS, {produto:produto, tipo:TIPO_ATUAL, rendimento:rendimento, insumos:insumos, responsavel:NOME_FICHAS});
 }
 
 function atualizarCatalogoLocal(produto){
@@ -344,7 +367,7 @@ function excluirOverrideAtual(){
       setTimeout(function(){voltarParaLista();},600);
     })
     .withFailureHandler(function(e){status.textContent='Falha: '+(e.message||e);status.className='status rd';})
-    .excluirFichaManual(SENHA_FICHAS, PRODUTO_EDITANDO);
+    .excluirFichaManual(SENHA_FICHAS, PRODUTO_EDITANDO, NOME_FICHAS);
 }
 
 function voltarParaLista(){
@@ -352,9 +375,29 @@ function voltarParaLista(){
   carregarListaFichas();
 }
 
+function abrirHistorico(){
+  mostrarTela('historico');
+  var cont=document.getElementById('lista-historico');
+  cont.innerHTML='<div class="empty">Carregando…</div>';
+  google.script.run
+    .withSuccessHandler(function(json){
+      var res;try{res=JSON.parse(json);}catch(e){cont.innerHTML='<div class="empty">Erro ao carregar.</div>';return;}
+      if(!res.ok){cont.innerHTML='<div class="empty">'+(res.erro||'Erro ao carregar.')+'</div>';return;}
+      if(!res.historico.length){cont.innerHTML='<div class="empty">Nenhum cadastro ou edição registrado ainda.</div>';return;}
+      cont.innerHTML=res.historico.map(function(h){
+        return '<div class="hist-item"><div class="top"><span>'+h.data+'</span><span>'+h.responsavel+'</span></div>'+
+          '<div class="prod">'+h.produto+' — '+h.acao+'</div>'+
+          (h.detalhe?'<div class="detalhe">'+h.detalhe+'</div>':'')+'</div>';
+      }).join('');
+    })
+    .withFailureHandler(function(e){cont.innerHTML='<div class="empty">Falha: '+(e.message||e)+'</div>';})
+    .listarHistoricoFichas(SENHA_FICHAS);
+}
+
 function mostrarTela(nome){
   document.getElementById('tela-lista').classList.toggle('hide',nome!=='lista');
   document.getElementById('tela-editor').classList.toggle('hide',nome!=='editor');
+  document.getElementById('tela-historico').classList.toggle('hide',nome!=='historico');
 }
 </script>
 
