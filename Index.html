@@ -1142,7 +1142,14 @@ function dadosMes(mes){
 function rMes(){
   atualizarGranularidadeCMC();
   var d=dadosMes(mesAtual);
-  if(!d||!d.grupos||Object.keys(d.grupos).length===0){
+  // "Todas" numa Semana/Quinzena vem de propósito com grupos:{} (dadosPeriodoCMC
+  // não soma grupo a grupo entre unidades com datas de contagem diferentes --
+  // ver comentário lá) -- isso NÃO significa "sem dados": o cmc_total é real.
+  // Só trata como "sem dados de verdade" quando falta o total em si.
+  var semGrupos = (uniAtual!=='TODAS' || periodoAtualCMC.tipo==='mes')
+    ? (!d||!d.grupos||Object.keys(d.grupos).length===0)
+    : (!d||d.cmc_total===undefined||d.cmc_total===null);
+  if(semGrupos){
     document.getElementById('mes-metrics').innerHTML='';
     document.getElementById('mes-rank').innerHTML='<div class="empty">Sem dados para '+(uniAtual==='TODAS'?'este mês':nomeUni(uniAtual))+(periodoAtualCMC.tipo!=='mes'?' neste período':'')+'.</div>';
     document.getElementById('mes-mov').innerHTML='';killChart('ch-evo');return;
@@ -1221,14 +1228,18 @@ function rMes(){
   // ===== RANKING =====
   document.getElementById('rank-mes').textContent=labelAtual+' · '+grupos.length+' grupos';
   var maxV=grupos[0]?grupos[0].total:1;
-  document.getElementById('mes-rank').innerHTML=grupos.slice(0,12).map(function(g){
-    var w=(g.total/maxV*100).toFixed(1);
-    var sel=g.nome===grupoAberto?' sel':'';
-    return '<div class="rankrow'+sel+'" data-g="'+g.nome+'" onclick="abrirGrupo(\''+g.nome.replace(/'/g,"\\'")+'\')"><div class="rank-top">'+
-      '<span class="gdot"><span style="background:'+gc(g.nome)+'"></span>'+g.nome+'</span>'+
-      '<span class="rank-v">'+fR(g.total)+'<em>'+fP(g.pct)+'</em></span></div>'+
-      '<div class="bar"><i style="width:'+w+'%;background:'+gc(g.nome)+'"></i></div></div>';
-  }).join('');
+  if(!grupos.length&&uniAtual==='TODAS'&&periodoAtualCMC.tipo!=='mes'){
+    document.getElementById('mes-rank').innerHTML='<div class="empty">"Todas" nesta Semana/Quinzena mostra só o total consolidado — escolha uma unidade específica pra ver o detalhe por grupo.</div>';
+  }else{
+    document.getElementById('mes-rank').innerHTML=grupos.slice(0,12).map(function(g){
+      var w=(g.total/maxV*100).toFixed(1);
+      var sel=g.nome===grupoAberto?' sel':'';
+      return '<div class="rankrow'+sel+'" data-g="'+g.nome+'" onclick="abrirGrupo(\''+g.nome.replace(/'/g,"\\'")+'\')"><div class="rank-top">'+
+        '<span class="gdot"><span style="background:'+gc(g.nome)+'"></span>'+g.nome+'</span>'+
+        '<span class="rank-v">'+fR(g.total)+'<em>'+fP(g.pct)+'</em></span></div>'+
+        '<div class="bar"><i style="width:'+w+'%;background:'+gc(g.nome)+'"></i></div></div>';
+    }).join('');
+  }
   // Se há grupo aberto, re-renderizar o detalhe com o novo mês/unidade
   if(grupoAberto&&d.grupos[grupoAberto])abrirGrupo(grupoAberto,true);
   else if(grupoAberto){fecharGrupo();}
