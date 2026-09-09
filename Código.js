@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-09-09.8';
+var VERSAO_APP = '2026-09-09.9';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -310,6 +310,22 @@ function gerarPlanilhaItensSemPreco(senha) {
       if (!p.grupo && grupo) p.grupo = grupo;
       if (!p.unid && unid) p.unid = unid;
     }
+
+    // Itens excluídos no caminho do conector (Ajustes > Inventário, meses
+    // sem CSV) NUNCA viram linha em rowsEstoqueCompleto -- o scan acima não
+    // os alcança. Junta aqui pelo mesmo produto, pra não duplicar quem
+    // também aparece no CSV real.
+    (inventarioConectado.semPreco || []).forEach(function(sp) {
+      if (!porProduto[sp.produto]) {
+        porProduto[sp.produto] = { produto: sp.produto, grupo: '', unid: sp.und || '', nContagens: 0, qtdTotal: 0, meses: {}, filiais: {} };
+      }
+      var p = porProduto[sp.produto];
+      p.nContagens++;
+      p.qtdTotal += (sp.qtd || 0);
+      if (sp.mes && sp.ano) p.meses[sp.mes + '/' + sp.ano] = true;
+      if (sp.unidade) p.filiais[sp.unidade] = true;
+      if (!p.unid && sp.und) p.unid = sp.und;
+    });
 
     var lista = Object.keys(porProduto).map(function(k) {
       var p = porProduto[k];
@@ -1346,6 +1362,12 @@ function valorizarItensInventario_(itens, mesNome, ano, historicoPorInsumo, fich
   var total = 0;
   var porProduto = [];
   var avisos = [];
+  // semPreco: mesma exclusao dos avisos abaixo, mas estruturada (nao só
+  // texto) -- usada pela planilha de "itens sem preço no CMV" (Ajustes >
+  // Configurações), que precisa desses dados alem dos que ja vem prontos
+  // em rowsEstoqueCompleto (itens excluidos aqui NUNCA viram linha
+  // sintetica, entao um scan de rowsEstoqueCompleto sozinho nao os acha).
+  var semPreco = [];
   (itens || []).forEach(function(item) {
     var cat = null;
     var casadoPorAproximacao = null;
@@ -1399,6 +1421,7 @@ function valorizarItensInventario_(itens, mesNome, ano, historicoPorInsumo, fich
     if (custoUnit === null || custoUnit === undefined) {
       avisos.push('Item "' + item.produto + '"' + (rotuloContexto ? ' (' + rotuloContexto + ')' : '') +
         ': sem histórico de compra nem ficha técnica — não entrou no valor do inventário.');
+      semPreco.push({ produto: item.produto, mes: mesNome, ano: ano, contexto: rotuloContexto || '', qtd: item.qtde, und: item.und });
       return;
     }
     if (casadoPorAproximacao) {
@@ -1414,18 +1437,21 @@ function valorizarItensInventario_(itens, mesNome, ano, historicoPorInsumo, fich
     // -- usado pro botão "Corrigir" na aba CMV. Nunca os dois ao mesmo tempo.
     porProduto.push({ produto: nomeCanonico, grupo: grupo, und: item.und, qtd: item.qtde, custoUnit: custoUnit, custoTotal: custoTotal, linha: item.linha, fontes: item.fontes || [] });
   });
-  return { total: r2(total), porProduto: porProduto, avisos: avisos };
+  return { total: r2(total), porProduto: porProduto, avisos: avisos, semPreco: semPreco };
 }
 
-// Retorna { linhas, avisos } — linhas no MESMO formato de C_ESTOQUE, pra
-// simplesmente concatenar com o rowsEstoque (CSV) antes de chamar
-// processarCMV, sem mudar nada da lógica de cálculo em si.
+// Retorna { linhas, avisos, semPreco } — linhas no MESMO formato de
+// C_ESTOQUE, pra simplesmente concatenar com o rowsEstoque (CSV) antes de
+// chamar processarCMV, sem mudar nada da lógica de cálculo em si. semPreco:
+// itens excluídos por falta de preço (ver valorizarItensInventario_) --
+// esses NUNCA viram linha, então só aparecem aqui, não num scan de rowsEstoque.
 function gerarLinhasEstoqueDeInventariosSalvos_(rowsEstoque, rowsCompras, rowsVendas, historicoPorInsumo, fichasMap, rowsFichas) {
   var avisos = [];
+  var semPrecoTotal = [];
   var props = PropertiesService.getScriptProperties();
   var valorProp = props.getProperty('INVENTARIOS_SEMANAIS_SALVOS');
   var inventarios = valorProp ? JSON.parse(valorProp) : [];
-  if (!inventarios.length) return { linhas: [], avisos: avisos };
+  if (!inventarios.length) return { linhas: [], avisos: avisos, semPreco: semPrecoTotal };
 
   // 1. Meses que já têm contagem via CSV — esses meses NÃO usam inventário salvo.
   var mesesComCSV = {};
@@ -1474,7 +1500,7 @@ function gerarLinhasEstoqueDeInventariosSalvos_(rowsEstoque, rowsCompras, rowsVe
   });
 
   var chavesMes = Object.keys(porMes);
-  if (!chavesMes.length) return { linhas: [], avisos: avisos };
+  if (!chavesMes.length) return { linhas: [], avisos: avisos, semPreco: semPrecoTotal };
 
   // 4. Preço/grupo: mesmo catálogo e histórico usados no CMV Teórico.
   var catalogo = preAgregarCatalogoProdutos(rowsCompras, rowsVendas);
@@ -1505,6 +1531,9 @@ function gerarLinhasEstoqueDeInventariosSalvos_(rowsEstoque, rowsCompras, rowsVe
       var rotulo = mesNome + '/' + infoData.ano + ', ' + u + ', ' + entry.inv.label;
       var valorizado = valorizarItensInventario_(itens, mesNome, infoData.ano, historicoPorInsumo, fichasMap, catalogo, rotulo, catalogoPorCodigo, fichaPorCodigo);
       avisos = avisos.concat(valorizado.avisos);
+      semPrecoTotal = semPrecoTotal.concat((valorizado.semPreco || []).map(function(sp) {
+        return { produto: sp.produto, mes: sp.mes, ano: sp.ano, contexto: sp.contexto, qtd: sp.qtd, und: sp.und, unidade: u };
+      }));
       valorizado.porProduto.forEach(function(p) {
         var linha = [];
         linha[C_ESTOQUE.filial]      = u;
@@ -1522,7 +1551,7 @@ function gerarLinhasEstoqueDeInventariosSalvos_(rowsEstoque, rowsCompras, rowsVe
     });
   });
 
-  return { linhas: linhas, avisos: avisos };
+  return { linhas: linhas, avisos: avisos, semPreco: semPrecoTotal };
 }
 
 // ── UPLOAD DE RELATÓRIOS ──────────────────────────────────────
