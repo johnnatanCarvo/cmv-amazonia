@@ -908,6 +908,21 @@ function iniciarChecagemDeVersao(){
       .obterVersaoApp();
   },VERSAO_CHECK_INTERVALO_MS);
 }
+// URL canônica do web app (deploymentId fixo) -- usada pra recarregar pela
+// JANELA DE CIMA (top), não pela própria página. A página roda dentro de um
+// iframe que o Google Apps Script serve (script.googleusercontent.com,
+// origem diferente de script.google.com); um location.reload() comum
+// recarrega só ESSE iframe usando a URL específica de sessão que ele tem
+// no momento, que pode não ser válida sozinha -- resultado: tela branca.
+// Navegar a janela de cima pra URL canônica força o Google a montar tudo
+// de novo do zero, do jeito certo.
+var APP_URL_CANONICA='https://script.google.com/macros/s/AKfycbzwf1mhkYAKpBCJcli2Ou_-9dQ-k1_w76qKIuBobH8mUqOAN1KQD6k7Yhu_axa4uaMtyQ/exec';
+function recarregarApp(){
+  try{
+    if(window.top&&window.top!==window){window.top.location.href=APP_URL_CANONICA;return;}
+  }catch(e){/* sem acesso ao top por algum motivo -- cai pro reload comum abaixo */}
+  location.reload();
+}
 function mostrarAvisoNovaVersao(){
   if(document.getElementById('nova-versao-aviso'))return; // ja mostrando
   var d=document.createElement('div');
@@ -916,7 +931,7 @@ function mostrarAvisoNovaVersao(){
     'color:#08201a;padding:12px 16px;border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.35);'+
     'font-size:13px;display:flex;align-items:center;gap:12px;max-width:320px;';
   d.innerHTML='<span>Uma nova versão deste painel foi publicada.</span>'+
-    '<button onclick="location.reload()" style="background:#08201a;color:#fff;border:none;border-radius:6px;'+
+    '<button onclick="recarregarApp()" style="background:#08201a;color:#fff;border:none;border-radius:6px;'+
     'padding:6px 12px;cursor:pointer;font-size:13px;white-space:nowrap;">Atualizar agora</button>';
   document.body.appendChild(d);
 }
