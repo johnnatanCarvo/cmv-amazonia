@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-09-09.6';
+var VERSAO_APP = '2026-09-09.7';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -104,8 +104,6 @@ function getPayload(senha) {
     var cmvTeorico = calcularCMVTeorico(vendas, fichasMap, produtosMenuEscolha, receitas, historicoPorInsumo, anoPorMes);
     var demandaInsumos = calcularDemandaInsumos(vendas, receitas);
     var reconciliacaoInsumos = reconciliarInsumos(demandaInsumos, receitas);
-
-    var analiseQuinzenal = calcularAnaliseQuinzenal(cmv, rowsCompras, rowsVendas, rowsEstoqueCompleto, meses);
 
     // Faturamento por mês a partir das vendas (by_mes)
     var fatPorMes = {};
@@ -245,7 +243,6 @@ function getPayload(senha) {
       cmvTeorico:      cmvTeorico,
       demandaInsumos:  demandaInsumos,
       reconciliacaoInsumos: reconciliacaoInsumos,
-      analiseQuinzenal: analiseQuinzenal,
       fichasDisponivel: Object.keys(fichasMap).length > 0,
       avisosInventario: inventarioConectado.avisos
     });
@@ -597,8 +594,9 @@ function excluirSemana(senha, id) {
 // calendário fixo (dia 1-7, 8-14...): o início/fim de cada período é a data
 // de verdade das contagens escolhidas em Ajustes > Inventário > Semanas.
 //
-// Endpoint sob demanda — só roda quando o usuário abre Análise Quinzenal e
-// escolhe um mês, não faz parte do getPayload principal (evita deixar o
+// Endpoint sob demanda — só roda quando o usuário escolhe uma Semana/
+// Quinzena em Análise Mês a Mês ou CMV, não faz parte do getPayload
+// principal (evita deixar o
 // login mais lento com uma leitura da planilha de contagem que a maioria
 // das cargas de página não precisa).
 // Monta o CMV detalhado (por grupo/produto) de UMA unidade, pra um periodo
@@ -1940,19 +1938,6 @@ function reconciliarInsumos(demandaInsumos, receitas) {
   return resultado;
 }
 
-// ── ANÁLISE QUINZENAL (CMC + CMV) — orquestração ────────────────────────
-// Só usa dados já lidos em getPayload (rowsCompras, rowsVendas, rowsEstoque,
-// cmv já calculado) — nenhuma leitura adicional de Drive. Os cálculos em si
-// (Dados.js) são puros; aqui só monta o pacote por mês e resolve a meta.
-
-// Lê a meta de Script Properties (META_CMV_PCT / META_CMC_PCT). Se não
-// estiver configurada, cai no fallback de 40% sem gerar erro.
-function obterMetaPct(chave) {
-  var valor = PropertiesService.getScriptProperties().getProperty(chave);
-  var num = numVal(valor);
-  return (valor !== null && valor !== '' && num > 0) ? num : META_PADRAO_PCT;
-}
-
 function pad2(n) { return String(n).padStart(2, '0'); }
 
 // Lê quais PRODUTOS são tratados como "menu de escolha livre" no CMV
@@ -2019,185 +2004,4 @@ function inferirAnoPorMes(rowsCompras, meses) {
     }
   }
   return anoPorMes;
-}
-
-// Monta o pacote quinzenal (compras, vendas, CMC%, CMV) de UM período —
-// reaproveitado tanto pro período de referência quanto pros anteriores.
-function analisarPeriodoQuinzenal(mesNome, ano, porDiaCompras, porDiaVendas, porTsContagens, cmv, diaCorte) {
-  var comprasQ = buscarComprasQuinzenais(porDiaCompras, mesNome, ano, diaCorte);
-  var vendasQ  = buscarVendasQuinzenais(porDiaVendas, mesNome, ano, diaCorte);
-  var cmc = calcularCMCQuinzenal(comprasQ, vendasQ);
-  var cmvQ = calcularCMVQuinzenal(cmv[mesNome], porTsContagens, porDiaCompras, mesNome, ano, diaCorte);
-  return {
-    mes: mesNome, ano: ano,
-    temDados: comprasQ.total > 0 || vendasQ.total > 0,
-    compras: comprasQ.total, vendas: vendasQ.total,
-    comprasFiliais: comprasQ.filiais, vendasFiliais: vendasQ.filiais,
-    cmc_pct: cmc.cmc_pct, cmcFiliais: cmc.filiais,
-    cmv: cmvQ
-  };
-}
-
-// Monta a análise quinzenal completa pra cada mês que tem dado disponível:
-// comparação com os 3 períodos equivalentes anteriores, tendência, projeção
-// de fechamento, pressão de compras, alertas, diagnóstico e análise textual.
-function calcularAnaliseQuinzenal(cmv, rowsCompras, rowsVendas, rowsEstoque, meses) {
-  var resultado = {};
-  if (!meses || !meses.length) return resultado;
-
-  var metaCMV = obterMetaPct('META_CMV_PCT');
-  var metaCMC = obterMetaPct('META_CMC_PCT');
-  var diaCorte = QUINZENAL_DIA_CORTE;
-
-  var hoje = new Date();
-  var mesHojeNome = NOMES_MESES[hoje.getMonth() + 1];
-  var anoHoje = hoje.getFullYear();
-  var diaHoje = hoje.getDate();
-
-  // Pré-agrega compras/vendas/contagens UMA VEZ (performance — ver
-  // comentário em preAgregarComprasPorDia no Dados.js). Sem isso, os
-  // milhares de linhas eram reescaneadas dezenas de vezes por mês analisado.
-  var porDiaCompras   = preAgregarComprasPorDia(rowsCompras);
-  var porDiaVendas    = preAgregarVendasPorDia(rowsVendas);
-  var porTsContagens  = preAgregarContagensPorTs(rowsEstoque);
-
-  var anoPorMes = inferirAnoPorMes(rowsCompras, meses);
-
-  meses.forEach(function(mesNome) {
-    var ano = anoPorMes[mesNome];
-    if (!ano) return; // sem como saber o ano com confiança -> nao arrisca analise quinzenal
-
-    var ehMesAtualReal = (mesNome === mesHojeNome && ano === anoHoje);
-    if (ehMesAtualReal && diaHoje < diaCorte) {
-      resultado[mesNome] = {
-        mes: mesNome, ano: ano, disponivel: false, aindaNaoChegouDia15: true,
-        motivo: 'A análise quinzenal ainda não está disponível. Hoje é dia ' + diaHoje +
-          ' — ela será consolidada com os dados de 1 a ' + diaCorte + '.'
-      };
-      return;
-    }
-
-    var atual = analisarPeriodoQuinzenal(mesNome, ano, porDiaCompras, porDiaVendas, porTsContagens, cmv, diaCorte);
-    if (!atual.temDados) {
-      resultado[mesNome] = {
-        mes: mesNome, ano: ano, disponivel: false,
-        motivo: 'Não há compras nem vendas registradas entre os dias 1 e ' + diaCorte + ' de ' + mesNome.toLowerCase() + '/' + ano + '.'
-      };
-      return;
-    }
-
-    // 3 períodos anteriores equivalentes (mesmo corte 1..diaCorte)
-    var anteriores = [];
-    for (var n = 1; n <= 3; n++) {
-      var ma = mesAnoAnterior(mesNome, ano, n);
-      var p = ma ? analisarPeriodoQuinzenal(ma.mes, ma.ano, porDiaCompras, porDiaVendas, porTsContagens, cmv, diaCorte) : null;
-      anteriores.push((p && p.temDados) ? p : null);
-    }
-    var anterior1 = anteriores[0];
-
-    // Histórico (até 6 meses fechados pra trás) da proporção quinzena/mês —
-    // usado pra projeção. "Fechado" = qualquer mês que não seja o mês atual
-    // real ainda em andamento.
-    var proporcoesVendas = [], proporcoesCompras = [];
-    for (var k = 1; k <= 6; k++) {
-      var mh = mesAnoAnterior(mesNome, ano, k);
-      if (!mh) continue;
-      var ehFechado = !(mh.mes === mesHojeNome && mh.ano === anoHoje && diaHoje < diasNoMes(mh.mes, mh.ano));
-      if (!ehFechado) continue;
-      var vQ = somarPeriodoPreAgregado(porDiaVendas, mh.mes, mh.ano, 1, diaCorte).total;
-      var vM = somarVendasMesCompleto(porDiaVendas, mh.mes, mh.ano).total;
-      if (vQ > 0 && vM > 0) proporcoesVendas.push(vQ / vM);
-      var cQ = somarPeriodoPreAgregado(porDiaCompras, mh.mes, mh.ano, 1, diaCorte).total;
-      var cM = somarComprasMesCompleto(porDiaCompras, mh.mes, mh.ano).total;
-      if (cQ > 0 && cM > 0) proporcoesCompras.push(cQ / cM);
-    }
-
-    var projVendas  = calcularProjecaoMensal(atual.vendas, mesNome, ano, diaCorte, proporcoesVendas);
-    var projCompras = calcularProjecaoMensal(atual.compras, mesNome, ano, diaCorte, proporcoesCompras);
-    var projCmcPct  = calcularPct(projCompras.valor, projVendas.valor);
-
-    // CMV projetado: não há como projetar um Estoque Final futuro sem
-    // inventar dado, então a projeção mantém o % quinzenal atual como
-    // estimativa de fechamento — método simples e sempre documentado como tal.
-    var cmvPctAtualNum = atual.cmv.disponivel ? calcularPct(atual.cmv.cmv, atual.vendas) : null;
-    var projCmvPct = cmvPctAtualNum;
-    var projCmvMetodologia = 'Mantém o % de CMV Quinzenal como estimativa de fechamento — não há Estoque Final futuro real disponível pra projetar variação sem inventar dado.';
-
-    var varComprasPct = anterior1 ? calcularVariacaoPct(atual.compras, anterior1.compras) : null;
-    var varVendasPct  = anterior1 ? calcularVariacaoPct(atual.vendas, anterior1.vendas) : null;
-    var pressao = calcularPressaoCompras(varComprasPct, varVendasPct);
-
-    var serieCmc = anteriores.slice().reverse().map(function(p) { return p ? p.cmc_pct : null; });
-    serieCmc.push(atual.cmc_pct);
-    var tendenciaCmc = calcularTendencia(serieCmc);
-
-    var serieCmv = anteriores.slice().reverse().map(function(p) {
-      return (p && p.cmv.disponivel) ? calcularPct(p.cmv.cmv, p.vendas) : null;
-    });
-    serieCmv.push(cmvPctAtualNum);
-    var tendenciaCmv = calcularTendencia(serieCmv);
-
-    var desvioCmcPP = calcularDesvioPP(atual.cmc_pct, metaCMC);
-    var desvioCmvPP = calcularDesvioPP(cmvPctAtualNum, metaCMV);
-    var statusCmc = classificarStatusCusto(desvioCmcPP, tendenciaCmc);
-    var statusCmv = classificarStatusCusto(desvioCmvPP, tendenciaCmv);
-    var statusPressao = classificarStatusPressao(pressao.nivel);
-    var statusVendas = (varVendasPct !== null) ? (varVendasPct >= 0 ? 'POSITIVO' : 'ATENCAO') : null;
-    var desvioProjCmvPP = calcularDesvioPP(projCmvPct, metaCMV);
-    var desvioProjCmcPP = calcularDesvioPP(projCmcPct, metaCMC);
-    var statusProjecao = classificarStatusCusto(desvioProjCmvPP !== null ? desvioProjCmvPP : desvioProjCmcPP, null);
-
-    var statusGeral = diagnosticoGeral([statusCmc, statusCmv, statusPressao, statusProjecao]);
-
-    var dTextoCMV = {
-      pct: cmvPctAtualNum, metaPct: metaCMV, desvioPP: desvioCmvPP, status: statusCmv, tendencia: tendenciaCmv,
-      mesAnteriorNome: anterior1 ? anterior1.mes : null,
-      varAnteriorPP: (anterior1 && anterior1.cmv.disponivel && cmvPctAtualNum !== null)
-        ? calcularDesvioPP(cmvPctAtualNum, calcularPct(anterior1.cmv.cmv, anterior1.vendas)) : null,
-      varComprasPct: varComprasPct, varVendasPct: varVendasPct, pressao: pressao,
-      projecaoPct: projCmvPct, cmvQuinzenal: atual.cmv
-    };
-    var dTextoCMC = {
-      pct: atual.cmc_pct, metaPct: metaCMC, desvioPP: desvioCmcPP, status: statusCmc, tendencia: tendenciaCmc,
-      mesAnteriorNome: anterior1 ? anterior1.mes : null,
-      varAnteriorPP: anterior1 ? calcularDesvioPP(atual.cmc_pct, anterior1.cmc_pct) : null,
-      varComprasPct: varComprasPct, varVendasPct: varVendasPct, pressao: pressao,
-      projecaoPct: projCmcPct
-    };
-
-    var mesIdx = ORDEM_MESES.indexOf(mesNome) + 1;
-
-    resultado[mesNome] = {
-      mes: mesNome, ano: ano, disponivel: true,
-      periodo: { inicio: '01/' + pad2(mesIdx) + '/' + ano, fim: pad2(diaCorte) + '/' + pad2(mesIdx) + '/' + ano },
-
-      compras: atual.compras, vendas: atual.vendas,
-      comprasFiliais: atual.comprasFiliais, vendasFiliais: atual.vendasFiliais,
-
-      cmc_pct: atual.cmc_pct, metaCMC: metaCMC, desvioCmcPP: desvioCmcPP, tendenciaCmc: tendenciaCmc, statusCmc: statusCmc,
-      cmv: atual.cmv, cmvPct: cmvPctAtualNum, metaCMV: metaCMV, desvioCmvPP: desvioCmvPP, tendenciaCmv: tendenciaCmv, statusCmv: statusCmv,
-
-      varComprasPct: varComprasPct, varVendasPct: varVendasPct,
-      pressaoCompras: pressao, statusPressao: statusPressao, statusVendas: statusVendas,
-
-      projecaoVendas: projVendas, projecaoCompras: projCompras,
-      projecaoCmcPct: projCmcPct, projecaoCmvPct: projCmvPct, projecaoCmvMetodologia: projCmvMetodologia,
-      statusProjecao: statusProjecao,
-
-      statusGeral: statusGeral,
-
-      historico: anteriores.map(function(p) {
-        if (!p) return null;
-        return {
-          mes: p.mes, ano: p.ano, compras: p.compras, vendas: p.vendas, cmc_pct: p.cmc_pct,
-          cmv_pct: p.cmv.disponivel ? calcularPct(p.cmv.cmv, p.vendas) : null
-        };
-      }),
-
-      analiseCMV: gerarAnaliseGerencialCMV(mesNome, ano, dTextoCMV),
-      analiseCMC: gerarAnaliseGerencialCMC(mesNome, ano, dTextoCMC)
-    };
-  });
-
-  return resultado;
 }
