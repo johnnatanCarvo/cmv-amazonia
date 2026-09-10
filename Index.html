@@ -236,6 +236,9 @@ td.hi{font-weight:600;}
 
 /* ===== DETALHE CMV POR GRUPO ===== */
 .cmv-grow.open{background:var(--acd);}
+.rec-grow{cursor:pointer;}
+.rec-grow:hover{background:var(--bg3);}
+.rec-grow.open{background:var(--acd);}
 .cmvg-detail{margin-top:16px;padding:18px;border:1px solid var(--acb);border-radius:10px;box-shadow:0 0 0 1px var(--acb);animation:fade .3s ease;}
 .cmvg-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;}
 .cmvg-title{font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:600;}
@@ -2394,14 +2397,23 @@ function rTeoricoTable(){
 /* ============================================================
    ABA DEMANDA DE INSUMOS
    ============================================================ */
+// Junta, em cada item reconciliado, as "origens" (produtos vendidos que,
+// via explosão de receita, geraram aquele consumo teórico) que vêm de
+// DEMANDAINSUMOS[mes].materias_primas.itens mas não são copiadas pra
+// dentro de RECONCILIACAOINSUMOS no backend.
+function anexarOrigens_(mpItens, recItens){
+  var mapa={};(mpItens||[]).forEach(function(it){mapa[it.nome]=it.origens||[];});
+  (recItens||[]).forEach(function(it){it.origens=mapa[it.produto]||[];});
+  return recItens||[];
+}
 function demandaDados(mes){
   var d=DEMANDAINSUMOS[mes];if(!d)return null;
   var r=RECONCILIACAOINSUMOS[mes];
-  if(uniDemanda==='TODAS')return {preparos:d.preparos, reconciliacao:r?r.itens:[]};
+  if(uniDemanda==='TODAS')return {preparos:d.preparos, reconciliacao:anexarOrigens_(d.materias_primas.itens, r?r.itens:[])};
   if(d.filiais&&d.filiais[uniDemanda]){
     var f=d.filiais[uniDemanda];
     var rf=(r&&r.filiais&&r.filiais[uniDemanda])?r.filiais[uniDemanda].itens:[];
-    return {preparos:f.preparos, reconciliacao:rf};
+    return {preparos:f.preparos, reconciliacao:anexarOrigens_(f.materias_primas.itens, rf)};
   }
   return null;
 }
@@ -2410,6 +2422,7 @@ function setMesDemanda(m){mesDemanda=m;document.querySelectorAll('#demanda-mseg 
 function setUniDemanda(u){uniDemanda=u;document.querySelectorAll('#demanda-useg button').forEach(function(b){b.classList.toggle('on',b.textContent===(u==='TODAS'?'Todas':nomeUni(u)));});rDemanda();}
 
 function rDemanda(){
+  origemInsumoAberto=null;
   var mesesComDemanda=MESES.filter(function(m){return DEMANDAINSUMOS[m];});
   var cont=document.getElementById('demanda-content');
 
@@ -2467,10 +2480,12 @@ function rDemanda(){
         '<option value="diferenca">So com diferenca</option>'+
       '</select>'+
     '</div>'+
+    '<div class="ssub" style="margin:0 0 10px;color:var(--fg3)">Clique numa linha pra ver quais produtos vendidos geraram o Consumo Teorico daquele insumo.</div>'+
     '<div class="twrap"><table>'+
       '<thead><tr><th>#</th><th>Insumo</th><th>Unid.</th><th class="r">Estoque Inicial</th><th class="r">Compras</th><th class="r">Estoque Final</th><th class="r">Consumo Real</th><th class="r">Consumo Teorico</th><th class="r">Diferenca</th></tr></thead>'+
       '<tbody id="demanda-rec-body"></tbody>'+
-    '</table></div></div>';
+    '</table></div>'+
+    '<div id="demanda-origem-detail"></div></div>';
 
   html+='<div class="card"><div class="card-h"><div class="card-t">Preparos Internos a Produzir</div><div class="card-s" id="demanda-pp-count"></div></div>'+
     '<div class="ssub" style="margin:0 0 10px;">Quantidade que precisa ser preparada na cozinha pra cobrir as vendas do periodo.</div>'+
@@ -2500,7 +2515,9 @@ function rDemandaReconciliacao(){
   function cel(v){return v===null||v===undefined?'<span style="color:var(--fg3)">--</span>':fQd(v);}
   document.getElementById('demanda-rec-body').innerHTML=data.slice(0,400).map(function(it,i){
     var difCls=it.diferenca===null?'':(it.diferenca>0?'up':(it.diferenca<0?'down':''));
-    return '<tr><td class="n" style="color:var(--fg3)">'+String(i+1).padStart(3,'0')+'</td>'+
+    var prodEsc=it.produto.replace(/'/g,"\\'");
+    var openCls=origemInsumoAberto===it.produto?' open':'';
+    return '<tr class="rec-grow'+openCls+'" onclick="abrirOrigemInsumo(\''+prodEsc+'\')"><td class="n" style="color:var(--fg3)">'+String(i+1).padStart(3,'0')+'</td>'+
       '<td class="hi">'+it.produto+'</td>'+
       '<td>'+it.und+'</td>'+
       '<td class="n r">'+cel(it.ei)+'</td>'+
@@ -2511,6 +2528,56 @@ function rDemandaReconciliacao(){
       '<td class="n r '+difCls+'" style="font-weight:600">'+cel(it.diferenca)+'</td></tr>';
   }).join('');
   if(data.length>400)document.getElementById('demanda-rec-body').innerHTML+='<tr><td colspan="9" class="empty">Exibindo os 400 primeiros de '+data.length+'.</td></tr>';
+  if(origemInsumoAberto&&!data.some(function(it){return it.produto===origemInsumoAberto;})){
+    origemInsumoAberto=null;
+    var det=document.getElementById('demanda-origem-detail');if(det)det.innerHTML='';
+  }
+}
+
+/* Detalhe: de onde vem a demanda teorica de um insumo (clique na linha) */
+var origemInsumoAberto=null;
+function abrirOrigemInsumo(produto){
+  var det=document.getElementById('demanda-origem-detail');
+  if(!det)return;
+
+  if(origemInsumoAberto===produto){
+    origemInsumoAberto=null;det.innerHTML='';
+    document.querySelectorAll('#demanda-rec-body tr.rec-grow').forEach(function(r){r.classList.remove('open');});
+    return;
+  }
+  var d=demandaDados(mesDemanda);
+  if(!d)return;
+  var it=null;
+  for(var i=0;i<d.reconciliacao.length;i++){if(d.reconciliacao[i].produto===produto){it=d.reconciliacao[i];break;}}
+  if(!it)return;
+  origemInsumoAberto=produto;
+  document.querySelectorAll('#demanda-rec-body tr.rec-grow').forEach(function(r){r.classList.toggle('open',r.cells[1].textContent===produto);});
+
+  var origens=(it.origens||[]).slice();
+  var totalOrigens=origens.reduce(function(s,o){return s+o.qtde;},0);
+  var sufUni=uniDemanda==='TODAS'?'':' · '+nomeUni(uniDemanda);
+
+  var html='<div class="cmvg-detail"><div class="cmvg-head"><div class="cmvg-title">De onde vem a demanda teorica: '+it.produto+'</div>'+
+    '<button class="gd-close" onclick="abrirOrigemInsumo(\''+produto.replace(/'/g,"\\'")+'\')">Fechar &times;</button></div>'+
+    '<div class="ssub" style="margin:0 0 14px;">Produtos vendidos em '+(ML_MAP[mesDemanda]||mesDemanda)+sufUni+' que, pela ficha tecnica, geraram os '+fQd(it.consumo_teorico)+' '+it.und+' de Consumo Teorico deste insumo (inclui demanda que passou por preparos internos).</div>';
+
+  if(!origens.length){
+    html+='<div class="empty">Sem detalhamento por produto vendido disponivel pra este insumo.</div>';
+  }else{
+    html+='<div class="twrap"><table><thead><tr><th>#</th><th>Produto Vendido</th><th class="r">Qtd. Gerada</th><th class="r">% do Teorico</th></tr></thead><tbody>'+
+      origens.map(function(o,i){
+        var pct=totalOrigens>0?(o.qtde/totalOrigens*100):0;
+        return '<tr><td class="n" style="color:var(--fg3)">'+String(i+1).padStart(2,'0')+'</td>'+
+          '<td class="hi">'+o.produto+'</td>'+
+          '<td class="n r">'+fQd(o.qtde)+' '+it.und+'</td>'+
+          '<td class="n r" style="color:var(--fg2)">'+fP(pct)+'</td></tr>';
+      }).join('')+
+    '</tbody></table></div>';
+  }
+  html+='</div>';
+
+  det.innerHTML=html;
+  det.scrollIntoView({behavior:'smooth',block:'nearest'});
 }
 
 function rDemandaPreparos(){

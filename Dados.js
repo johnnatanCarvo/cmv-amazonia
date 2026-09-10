@@ -1251,7 +1251,11 @@ function todosInsumosFolha(receitas) {
 // pra dentro dele, até sobrar só matéria-prima real em "materiasPrimas" (o
 // que precisa ser COMPRADO). "cadeia" evita loop infinito se algum dia
 // houver referência circular entre receitas.
-function explodirInsumos(receitas, produtoNome, qtdeNecessaria, materiasPrimas, preparos, cadeia) {
+// "origemTopo" é o nome do produto VENDIDO que disparou a explosão original
+// (não muda na recursão, mesmo quando ela atravessa um ou mais preparos
+// internos) — permite, depois, mostrar pro usuário "essa demanda teórica de
+// tal insumo veio de tais produtos vendidos", sem ele precisar adivinhar.
+function explodirInsumos(receitas, produtoNome, qtdeNecessaria, materiasPrimas, preparos, cadeia, origemTopo) {
   var receita = receitas[produtoNome];
   if (!receita || !receita.insumos.length) return;
   if (cadeia.indexOf(produtoNome) >= 0) return;
@@ -1268,10 +1272,11 @@ function explodirInsumos(receitas, produtoNome, qtdeNecessaria, materiasPrimas, 
     if (ehPreparoComReceita) {
       if (!preparos[ins.nome]) preparos[ins.nome] = { nome: ins.nome, und: ins.und, qtde: 0, custo_unit: ins.custo_unit };
       preparos[ins.nome].qtde += qtdeInsumo;
-      explodirInsumos(receitas, ins.nome, qtdeInsumo, materiasPrimas, preparos, novaCadeia);
+      explodirInsumos(receitas, ins.nome, qtdeInsumo, materiasPrimas, preparos, novaCadeia, origemTopo);
     } else {
-      if (!materiasPrimas[ins.nome]) materiasPrimas[ins.nome] = { nome: ins.nome, und: ins.und, qtde: 0, custo_unit: ins.custo_unit };
+      if (!materiasPrimas[ins.nome]) materiasPrimas[ins.nome] = { nome: ins.nome, und: ins.und, qtde: 0, custo_unit: ins.custo_unit, origens: {} };
       materiasPrimas[ins.nome].qtde += qtdeInsumo;
+      if (origemTopo) materiasPrimas[ins.nome].origens[origemTopo] = (materiasPrimas[ins.nome].origens[origemTopo] || 0) + qtdeInsumo;
     }
   });
 }
@@ -1288,7 +1293,13 @@ function calcularDemandaInsumos(vendas, receitas) {
     var lista = Object.keys(mapa).map(function(k) {
       var it = mapa[k];
       var qtde = r4(it.qtde);
-      return { nome: it.nome, und: it.und, qtde: qtde, custo_unit: r4(it.custo_unit), custo_total: r2(qtde * it.custo_unit) };
+      var out = { nome: it.nome, und: it.und, qtde: qtde, custo_unit: r4(it.custo_unit), custo_total: r2(qtde * it.custo_unit) };
+      if (it.origens) {
+        out.origens = Object.keys(it.origens).map(function(p) {
+          return { produto: p, qtde: r4(it.origens[p]) };
+        }).sort(function(a, b) { return b.qtde - a.qtde; });
+      }
+      return out;
     }).sort(function(a, b) { return b.custo_total - a.custo_total; });
     var total = lista.reduce(function(s, it) { return s + it.custo_total; }, 0);
     return { itens: lista, total: r2(total) };
@@ -1298,7 +1309,7 @@ function calcularDemandaInsumos(vendas, receitas) {
     var materiasPrimas = {}, preparos = {};
     produtosVendidos.forEach(function(p) {
       if (receitas[p.produto]) {
-        explodirInsumos(receitas, p.produto, p.qtd, materiasPrimas, preparos, []);
+        explodirInsumos(receitas, p.produto, p.qtd, materiasPrimas, preparos, [], p.produto);
       }
     });
     return { materias_primas: finalizarLista(materiasPrimas), preparos: finalizarLista(preparos) };
