@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-09-10.1';
+var VERSAO_APP = '2026-09-10.2';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -763,6 +763,43 @@ function excluirFichaManual(senhaFichas, produto, responsavel) {
     return JSON.stringify({ ok: true, removidas: removidas });
   } catch (err) {
     Logger.log('excluirFichaManual ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
+// Remove TODAS as edições manuais de uma vez -- todo produto volta a usar
+// exatamente a ficha do Cloudfy. Usado quando uma ou mais edições manuais
+// entraram com erro (ex: quantidade digitada errada) e o jeito mais seguro
+// de corrigir é reiniciar do zero a partir da fonte original, em vez de
+// tentar consertar ficha por ficha. Produto que só existe de forma manual
+// (sem versão no Cloudfy) fica SEM ficha nenhuma depois disso -- o app
+// avisa e lista os produtos afetados antes de confirmar.
+function resetarTodasFichasManuais(senhaFichas, responsavel) {
+  if (!validarSenhaFichas(senhaFichas)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var ss = obterFichasManuaisSheet_();
+    var aba = ss.getSheetByName('FICHAS');
+    var valores = aba.getDataRange().getValues();
+    var produtos = {};
+    for (var i = 1; i < valores.length; i++) {
+      var produto = String(valores[i][C_FICHAS_MANUAIS.produto] || '').trim();
+      if (produto) produtos[produto.toUpperCase()] = true;
+    }
+    var nomes = Object.keys(produtos).sort();
+    var nLinhas = aba.getLastRow();
+    if (nLinhas > 1) aba.deleteRows(2, nLinhas - 1);
+
+    if (nomes.length) {
+      registrarHistoricoFicha_(ss, '(TODAS)', 'Reset geral (voltou tudo pro Cloudfy)', responsavel,
+        nomes.length + ' ficha(s) removida(s): ' + nomes.join(', '));
+    }
+
+    Logger.log('Reset geral de fichas manuais: ' + nomes.length + ' produto(s) removido(s).');
+    return JSON.stringify({ ok: true, removidos: nomes.length, produtos: nomes });
+  } catch (err) {
+    Logger.log('resetarTodasFichasManuais ERROR: ' + err.message + '\n' + err.stack);
     return JSON.stringify({ ok: false, erro: err.message });
   }
 }

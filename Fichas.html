@@ -103,7 +103,10 @@ button{cursor:pointer;}
         <div class="topbar-title">Fichas Técnicas</div>
         <div class="topbar-sub">Amazônia na Cuia</div>
       </div>
-      <button class="iconbtn" onclick="abrirHistorico()" title="Histórico">&#8635;</button>
+      <div style="display:flex;gap:8px;">
+        <button class="iconbtn" onclick="confirmarResetGeral()" title="Restaurar todas as fichas editadas para o Cloudfy" style="color:var(--rd);border-color:rgba(194,91,84,.4);">&#9888;</button>
+        <button class="iconbtn" onclick="abrirHistorico()" title="Histórico">&#8635;</button>
+      </div>
     </div>
     <input class="searchbox" id="busca-input" placeholder="Buscar produto..." oninput="buscarFichasNaLista()">
     <div class="lista" id="lista-fichas"><div class="empty">Carregando…</div></div>
@@ -392,6 +395,35 @@ function abrirHistorico(){
     })
     .withFailureHandler(function(e){cont.innerHTML='<div class="empty">Falha: '+(e.message||e)+'</div>';})
     .listarHistoricoFichas(SENHA_FICHAS);
+}
+
+// Restaura TODAS as fichas editadas manualmente de volta pro Cloudfy --
+// primeiro busca a lista atual pra saber exatamente quais produtos serão
+// afetados (mostra os nomes no confirm, não só um aviso genérico), só
+// então chama o reset de verdade.
+function confirmarResetGeral(){
+  google.script.run
+    .withSuccessHandler(function(json){
+      var res;try{res=JSON.parse(json);}catch(e){alert('Erro ao verificar fichas editadas.');return;}
+      if(!res.ok){alert(res.erro||'Erro ao verificar fichas editadas.');return;}
+      var manuais=(res.fichas||[]).filter(function(f){return f.origem==='manual';});
+      if(!manuais.length){alert('Nenhuma ficha editada manualmente no momento — nada pra restaurar.');return;}
+      var nomes=manuais.map(function(f){return f.produto;});
+      var msg='Isso vai remover a edição manual de '+manuais.length+' ficha(s):\n\n'+nomes.join('\n')+
+        '\n\nTodas voltam a usar exatamente a versão do Cloudfy. Produto que só existe de forma manual (sem ficha no Cloudfy) fica SEM ficha nenhuma depois disso.\n\nConfirmar?';
+      if(!confirm(msg))return;
+      google.script.run
+        .withSuccessHandler(function(json2){
+          var r2;try{r2=JSON.parse(json2);}catch(e){alert('Erro ao restaurar.');return;}
+          if(!r2.ok){alert(r2.erro||'Erro ao restaurar.');return;}
+          alert(r2.removidos+' ficha(s) restaurada(s) para o Cloudfy.');
+          carregarListaFichas();
+        })
+        .withFailureHandler(function(e){alert('Falha: '+(e.message||e));})
+        .resetarTodasFichasManuais(SENHA_FICHAS, NOME_FICHAS);
+    })
+    .withFailureHandler(function(e){alert('Falha: '+(e.message||e));})
+    .listarFichasCadastradas(SENHA_FICHAS, '');
 }
 
 function mostrarTela(nome){
