@@ -2471,7 +2471,7 @@ function rDemanda(){
   '</div>';
 
   html+='<div class="card"><div class="card-h"><div class="card-t">Reconciliacao de Insumos</div><div class="card-s" id="demanda-rec-count"></div></div>'+
-    '<div class="ssub" style="margin:0 0 10px;">Consumo Real = Estoque Inicial + Compras - Estoque Final (o que a contagem fisica mostra que sumiu). Consumo Teorico = o que a receita das vendas do periodo diz que deveria ter sido usado. Diferenca grande (positiva ou negativa) e o principal indicio de perda, desperdicio ou erro de contagem/compra.</div>'+
+    '<div class="ssub" style="margin:0 0 10px;">Consumo Real = Estoque Inicial + Compras - Estoque Final (o que a contagem fisica mostra que sumiu). Consumo Teorico = o que a receita das vendas do periodo diz que deveria ter sido usado. Diferenca grande (positiva ou negativa) e o principal indicio de perda, desperdicio ou erro de contagem/compra. Valores com <span style="color:var(--am)">*</span> nao tiveram contagem fisica naquele fechamento -- foram assumidos como zero.</div>'+
     '<div class="ctrl">'+
       '<input type="text" id="demanda-rec-busca" placeholder="Buscar insumo..." oninput="rDemandaReconciliacao()">'+
       '<select id="demanda-rec-filtro" onchange="rDemandaReconciliacao()">'+
@@ -2513,6 +2513,14 @@ function rDemandaReconciliacao(){
   });
   document.getElementById('demanda-rec-count').textContent=data.length+' de '+d.reconciliacao.length+' insumos';
   function cel(v){return v===null||v===undefined?'<span style="color:var(--fg3)">--</span>':fQd(v);}
+  // ei/ef "contado===false" -- não teve contagem física naquele fechamento
+  // pra esse insumo, o zero foi ASSUMIDO (decisão: sem contagem = 0). Marca
+  // com "*" pra não confundir com uma contagem real de zero.
+  function celContagem(v,contado){
+    if(v===null||v===undefined)return '<span style="color:var(--fg3)">--</span>';
+    if(contado===false)return '<span style="color:var(--am)" title="Sem contagem fisica neste fechamento -- assumido como zero.">'+fQd(v)+'*</span>';
+    return fQd(v);
+  }
   document.getElementById('demanda-rec-body').innerHTML=data.slice(0,400).map(function(it,i){
     var difCls=it.diferenca===null?'':(it.diferenca>0?'up':(it.diferenca<0?'down':''));
     var prodEsc=it.produto.replace(/'/g,"\\'");
@@ -2520,9 +2528,9 @@ function rDemandaReconciliacao(){
     return '<tr class="rec-grow'+openCls+'" onclick="abrirOrigemInsumo(\''+prodEsc+'\')"><td class="n" style="color:var(--fg3)">'+String(i+1).padStart(3,'0')+'</td>'+
       '<td class="hi">'+it.produto+'</td>'+
       '<td>'+it.und+'</td>'+
-      '<td class="n r">'+cel(it.ei)+'</td>'+
+      '<td class="n r">'+celContagem(it.ei,it.ei_contado)+'</td>'+
       '<td class="n r">'+cel(it.compras)+'</td>'+
-      '<td class="n r">'+cel(it.ef)+'</td>'+
+      '<td class="n r">'+celContagem(it.ef,it.ef_contado)+'</td>'+
       '<td class="n r hi">'+cel(it.consumo_real)+'</td>'+
       '<td class="n r">'+fQd(it.consumo_teorico)+'</td>'+
       '<td class="n r '+difCls+'" style="font-weight:600">'+cel(it.diferenca)+'</td></tr>';

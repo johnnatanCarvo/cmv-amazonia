@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-09-10.2';
+var VERSAO_APP = '2026-09-10.3';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -2365,9 +2365,21 @@ function montarListaReconciliada(teoricoItens, saldosEI, saldosEF, compras, insu
   if (compras)  Object.keys(compras.produtos).forEach(function(n) { if (insumosValidos[n]) nomes[n] = 1; });
 
   var lista = Object.keys(nomes).map(function(produto) {
-    var ei = (saldosEI && saldosEI.produtos[produto] !== undefined) ? r4(saldosEI.produtos[produto]) : null;
-    var ef = (saldosEF && saldosEF.produtos[produto] !== undefined) ? r4(saldosEF.produtos[produto]) : null;
-    var comp = (compras && compras.produtos[produto] !== undefined) ? r4(compras.produtos[produto]) : null;
+    // Se existe contagem/compra pra essa data/mês mas ESSE produto
+    // especificamente não aparece nela, é porque ninguém contou/comprou
+    // ele naquele fechamento -- tratado como ZERO (decisão do usuário: "se
+    // não teve contagem então a quantidade é 0"), não como "sem dado". Só
+    // fica null (vira "--" no painel) quando não existe contagem/compra
+    // NENHUMA pra aquela data/mês (aí sim não há nenhuma referência pra
+    // assumir nada). "ei_contado"/"ef_contado" marcam quando o zero foi
+    // ASSUMIDO (sem contagem física) em vez de vir de uma contagem real —
+    // o painel usa isso pra avisar visualmente, já que um zero assumido
+    // pode estar escondendo estoque de verdade que ninguém contou.
+    var eiContado = !!(saldosEI && saldosEI.produtos[produto] !== undefined);
+    var efContado = !!(saldosEF && saldosEF.produtos[produto] !== undefined);
+    var ei = saldosEI ? (eiContado ? r4(saldosEI.produtos[produto]) : 0) : null;
+    var ef = saldosEF ? (efContado ? r4(saldosEF.produtos[produto]) : 0) : null;
+    var comp = compras ? (compras.produtos[produto] !== undefined ? r4(compras.produtos[produto]) : 0) : null;
     var teorico = teoricoMapa[produto] !== undefined ? r4(teoricoMapa[produto]) : 0;
     var completo = ei !== null && ef !== null && comp !== null;
     var real = completo ? r4(ei + comp - ef) : null;
@@ -2382,6 +2394,7 @@ function montarListaReconciliada(teoricoItens, saldosEI, saldosEF, compras, insu
     return {
       produto: produto, und: und,
       ei: ei, compras: comp, ef: ef,
+      ei_contado: ei === null ? null : eiContado, ef_contado: ef === null ? null : efContado,
       consumo_real: real, consumo_teorico: teorico, diferenca: diferenca
     };
   });
