@@ -931,6 +931,58 @@ function recarregarApp(){
   }catch(e){/* sem acesso ao top por algum motivo -- cai pro reload abaixo */}
   location.href=urlSemCache;
 }
+/* ====== ATUALIZAÇÃO AUTOMÁTICA DAS ABAS DE ANÁLISE APÓS CORRIGIR CONTAGEM ======
+   Corrigir uma contagem (botão "Corrigir" de um item, ou editar saldo em
+   Ajustes > Contagem Inicial/Final) muda um dado que CMC/CMV/CMV Teórico/
+   Demanda de Insumos já usaram pra montar o payload inteiro no login --
+   sem isso, quem tivesse aberto uma dessas abas antes da correção
+   continuaria vendo o número antigo até relogar. Em vez de tentar remendar
+   cada número na mão (acoplado demais, arriscado de divergir do cálculo
+   real do servidor), busca o payload inteiro de novo em segundo plano e
+   re-renderiza só a aba de análise que estiver aberta agora. */
+function mostrarAvisoAtualizandoPainel(){
+  if(document.getElementById('atualizando-painel-aviso'))return;
+  var d=document.createElement('div');
+  d.id='atualizando-painel-aviso';
+  d.style.cssText='position:fixed;bottom:18px;right:18px;z-index:9999;background:var(--bg3);'+
+    'color:var(--fg2);padding:10px 16px;border-radius:10px;box-shadow:0 6px 20px rgba(0,0,0,.35);'+
+    'font-size:12.5px;display:flex;align-items:center;gap:10px;border:1px solid var(--ln2);';
+  d.innerHTML='<span>Atualizando os números do painel…</span>';
+  document.body.appendChild(d);
+}
+function esconderAvisoAtualizandoPainel(){
+  var d=document.getElementById('atualizando-painel-aviso');
+  if(d)d.remove();
+}
+function reRenderizarAbaAtual_(){
+  var sec=document.querySelector('section.on');
+  if(!sec)return;
+  if(sec.id==='mes')rMes();
+  else if(sec.id==='abc')rABC();
+  else if(sec.id==='custo')rCusto();
+  else if(sec.id==='cmv')rCMV();
+  else if(sec.id==='teorico')rTeorico();
+  else if(sec.id==='demanda')rDemanda();
+}
+function atualizarPainelAposCorrecao(){
+  mostrarAvisoAtualizandoPainel();
+  google.script.run
+    .withSuccessHandler(function(json){
+      esconderAvisoAtualizandoPainel();
+      var res;try{res=JSON.parse(json);}catch(e){return;}
+      if(!res.ok)return;
+      DADOS=res; CMC=res.cmc; VENDAS=res.vendas; CMV=res.cmv||{}; MESES=res.meses||[];
+      CMVTEORICO=res.cmvTeorico||{}; FICHAS_DISPONIVEL=!!res.fichasDisponivel;
+      DEMANDAINSUMOS=res.demandaInsumos||{}; RECONCILIACAOINSUMOS=res.reconciliacaoInsumos||{};
+      AVISOSINVENTARIO=res.avisosInventario||[];
+      if(MESES.indexOf(mesAtual)<0)mesAtual=MESES.length?MESES[MESES.length-1]:'';
+      rInventarioAvisos();
+      reRenderizarAbaAtual_();
+    })
+    .withFailureHandler(function(){esconderAvisoAtualizandoPainel();})
+    .getPayload(SENHA_ATUAL);
+}
+
 function mostrarAvisoNovaVersao(){
   if(document.getElementById('nova-versao-aviso'))return; // ja mostrando
   var d=document.createElement('div');
@@ -2975,6 +3027,7 @@ function salvarContadoItem(linha){
       }
       btn.disabled=false;btn.textContent='Salvo!';
       setTimeout(function(){btn.textContent=txtOriginal;},1500);
+      atualizarPainelAposCorrecao();
     })
     .withFailureHandler(function(err){
       alert('Falha ao salvar: '+(err.message||err));btn.disabled=false;btn.textContent=txtOriginal;
@@ -3375,6 +3428,7 @@ function salvarSaldoContagem(rowId, arquivo, linha){
       inp.value=fQd(res.saldo);
       btn.disabled=false;btn.textContent='Salvo!';
       setTimeout(function(){btn.textContent=txtOriginal;},1500);
+      atualizarPainelAposCorrecao();
     })
     .withFailureHandler(function(err){
       alert('Falha ao salvar: '+(err.message||err));btn.disabled=false;btn.textContent=txtOriginal;
