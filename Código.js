@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-09-15.6';
+var VERSAO_APP = '2026-09-15.7';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -1238,7 +1238,7 @@ function montarCMVDetalhadoUnidade_(eiPorProduto, efPorProduto, rowsCompras, mes
         if (!porProdGrupoQtd[g]) porProdGrupoQtd[g] = {};
         porProdGrupoQtd[g][p] = (porProdGrupoQtd[g][p] || 0) + (item.qtd || 0);
         // Contagem(ns) de origem deste produto — permite corrigir o valor
-        // direto da aba CMV (ver abrirCorrecaoDeItem/abrirCorrigirItemFonte).
+        // direto da aba CMV (ver buscarItemContagemPorLinha/abrirPopoverCorrigir).
         if (!porProdGrupoFontes[g]) porProdGrupoFontes[g] = {};
         porProdGrupoFontes[g][p] = (porProdGrupoFontes[g][p] || []).concat(item.fontes || []);
       }
@@ -1674,6 +1674,39 @@ function resolverContagemMeta_(contagemId) {
     }
   }
   return null;
+}
+
+// Busca UM item específico da contagem pela linha exata (mesma linha já
+// carregada em ei_fontes/ef_fontes) — usado pelo popover de correção rápida
+// direto na aba CMV, que não precisa (nem deve) carregar a contagem inteira
+// só pra editar um item. getRange(linha,1,1,5) lê só essa linha, sem varrer
+// a planilha toda.
+function buscarItemContagemPorLinha(senha, contagemId, linha) {
+  if (!validarSenha(senha)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var ss  = SpreadsheetApp.openById(CONTAGEM_SHEET_ID);
+    var aba = ss.getSheetByName('ITENS_CONTAGEM');
+    if (!aba) return JSON.stringify({ ok: false, erro: 'Aba ITENS_CONTAGEM não encontrada na planilha.' });
+    if (!linha || linha < 2) return JSON.stringify({ ok: false, erro: 'Linha inválida.' });
+
+    var r = aba.getRange(linha, 1, 1, 5).getValues()[0];
+    if (!r || String(r[C_ITENS_CONTAGEM.contagemId]).trim() !== String(contagemId).trim()) {
+      return JSON.stringify({ ok: false, erro: 'Item não encontrado nessa linha — a contagem pode ter mudado. Tente recarregar a aba.' });
+    }
+    return JSON.stringify({
+      ok: true,
+      linha: linha,
+      contagemId: String(r[C_ITENS_CONTAGEM.contagemId]).trim(),
+      produto: String(r[C_ITENS_CONTAGEM.produto]).trim(),
+      und: String(r[C_ITENS_CONTAGEM.und] || '').trim(),
+      contado: Number(r[C_ITENS_CONTAGEM.contado]) || 0
+    });
+  } catch (err) {
+    Logger.log('buscarItemContagemPorLinha ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
 }
 
 // Ponto de entrada do botão "Corrigir" que aparece direto num produto da

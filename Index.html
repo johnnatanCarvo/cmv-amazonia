@@ -252,6 +252,20 @@ td.hi{font-weight:600;}
 @media(max-width:760px){.cmvg-metrics{grid-template-columns:1fr 1fr;}}
 
 
+/* ===== POPOVER DE CORREÇÃO RÁPIDA (aba CMV, sem trocar de aba) ===== */
+.corrigir-popover{background:var(--bg2);border:1px solid var(--ln2);border-radius:10px;box-shadow:0 10px 28px rgba(0,0,0,.4);padding:12px 14px;width:240px;animation:fade .15s ease;}
+.corrigir-pop-head{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:4px;}
+.corrigir-pop-head b{font-size:12.5px;line-height:1.35;}
+.corrigir-pop-sub{font-size:11px;color:var(--fg3);margin-bottom:10px;line-height:1.4;}
+.pop-close{background:none;border:none;color:var(--fg3);cursor:pointer;font-size:16px;line-height:1;padding:0;flex:0 0 auto;}
+.pop-close:hover{color:var(--fg);}
+.corrigir-pop-body{font-size:12.5px;color:var(--fg3);}
+.corrigir-pop-row{display:flex;flex-direction:column;gap:6px;margin-bottom:10px;}
+.corrigir-pop-row span{font-size:11px;color:var(--fg3);text-transform:uppercase;letter-spacing:.03em;}
+.corrigir-pop-row input[type=text]{min-width:0;width:100%;}
+.corrigir-pop-actions{display:flex;align-items:center;gap:10px;}
+
+
 /* ===== TOGGLE DE ORDENAÇÃO ===== */
 .ord-toggle{display:inline-flex;gap:2px;background:var(--bg3);border:1px solid var(--ln);border-radius:8px;padding:2px;}
 .ord-toggle button{padding:5px 12px;font-size:12px;font-weight:500;color:var(--fg3);background:none;border:none;border-radius:6px;cursor:pointer;font-family:inherit;}
@@ -975,6 +989,17 @@ function reRenderizarAbaAtual_(){
 }
 function atualizarPainelAposCorrecao(){
   mostrarAvisoAtualizandoPainel();
+  // rCMV() sempre fecha o grupo aberto (reseta cmvGrupoAberto) pra evitar
+  // indice errado depois de reordenar -- sem isso, corrigir um item de
+  // dentro do grupo faria o painel "recolher" a tela que a pessoa estava
+  // olhando a cada correção. Guarda o NOME do grupo (não o índice -- a
+  // correção pode mudar o CMV do grupo o suficiente pra mudar sua posição
+  // na ordenação) antes de atualizar, pra reabrir o mesmo grupo depois.
+  var grupoCMVAbertoNome=null;
+  if(cmvGrupoAberto!==null){
+    var dAntes=cmvDados(mesCMV);
+    if(dAntes&&dAntes.grupos&&dAntes.grupos[cmvGrupoAberto])grupoCMVAbertoNome=dAntes.grupos[cmvGrupoAberto].grupo;
+  }
   google.script.run
     .withSuccessHandler(function(json){
       esconderAvisoAtualizandoPainel();
@@ -987,6 +1012,11 @@ function atualizarPainelAposCorrecao(){
       if(MESES.indexOf(mesAtual)<0)mesAtual=MESES.length?MESES[MESES.length-1]:'';
       rInventarioAvisos();
       reRenderizarAbaAtual_();
+      if(grupoCMVAbertoNome){
+        var dDepois=cmvDados(mesCMV);
+        var novoIdx=dDepois&&dDepois.grupos?dDepois.grupos.findIndex(function(g){return g.grupo===grupoCMVAbertoNome;}):-1;
+        if(novoIdx>=0)abrirCMVGrupo(novoIdx);
+      }
     })
     .withFailureHandler(function(){esconderAvisoAtualizandoPainel();})
     .getPayload(SENHA_ATUAL);
@@ -1909,7 +1939,7 @@ function renderCMVProdTabela(prods){
             : 'Corrigir a contagem que gerou este valor';
           var rotuloBtn=fontes.length>1?('&#9998;'+(idx+1)):'&#9998;';
           return ' <button class="mini-fix" title="'+titulo+'" '+
-            'onclick="event.stopPropagation();abrirCorrigirItemFonte(\''+f.contagemId+'\',\''+nomeEsc+'\','+(idx+1)+','+fontes.length+','+(f.linha||'null')+')" '+
+            'onclick="event.stopPropagation();abrirPopoverCorrigir(this,\''+f.contagemId+'\',\''+nomeEsc+'\','+(f.linha||'null')+','+(idx+1)+','+fontes.length+')" '+
             'style="border:none;background:none;cursor:pointer;opacity:.55;font-size:11px;padding:0 0 0 3px;">'+rotuloBtn+'</button>';
         }).join('');
       };
@@ -2946,8 +2976,8 @@ function abrirCorrigirContagem(contagemId, rotulo){
 // Preenche o corpo do card de correção já aberto (título/sub já setados por
 // quem chamou) a partir de um resultado {ok,itens,valorTotal,avisos}.
 // focoProduto (opcional): pré-preenche a busca com o nome do produto, pra
-// isolar de cara a linha que motivou a correção (usado por
-// abrirCorrigirItemFonte, vindo do botão "Corrigir" na aba CMV).
+// isolar de cara a linha que motivou a correção (usado pela tela de
+// Ajustes > Inventário quando a correção é feita por lá).
 function preencherCorrigirContagemCard(res, focoProduto){
   if(!res.ok){document.getElementById('corrigir-contagem-body').innerHTML='<tr><td colspan="7" class="empty">'+(res.erro||'Erro ao carregar.')+'</td></tr>';return;}
   CORRIGIR_CONTAGEM_ITENS=res.itens;
@@ -2961,58 +2991,89 @@ function preencherCorrigirContagemCard(res, focoProduto){
   rCorrigirContagemTable();
 }
 
-// Entrada do botão "Corrigir" num produto específico dentro de um grupo do
-// CMV (aparece pra cada contagem que soma o EI/EF desse produto — ver
-// ei_fontes/ef_fontes). Abre o MESMO card de correção de Ajustes >
-// Inventário, já na contagem certa e com a busca filtrada pro produto — sem
-// precisar navegar manualmente pra achar a linha. idx/total (opcionais):
-// quando o valor exibido na aba CMV é a SOMA de mais de uma contagem, avisa
-// no subtítulo qual das contagens é essa, pra não passar a impressão de que
-// corrigir uma já corrige o total somado.
-function abrirCorrigirItemFonte(contagemId, produtoNome, idx, total, linha){
-  // O card de correção mora dentro de Ajustes > Inventário -- se o usuário
-  // clicou vindo da aba CMV, essa seção inteira ainda está com display:none
-  // (troca de aba é feita por classe/estilo no <section>, não só no card).
-  // Sem trocar de aba primeiro, o card fica "aberto" mas invisível -- exatamente
-  // o "clico e não acontece nada" reportado.
-  go('ajustes');
-  setAjustesSub('inventario');
-  CORRIGIR_CONTAGEM_ID=contagemId;
-  document.getElementById('corrigir-contagem-card').style.display='';
-  document.getElementById('corrigir-contagem-sub').textContent='Carregando...';
-  document.getElementById('corrigir-contagem-avisos').innerHTML='';
-  document.getElementById('corrigir-contagem-total').textContent='--';
-  document.getElementById('corrigir-contagem-busca').value=produtoNome||'';
-  document.getElementById('corrigir-contagem-body').innerHTML='<tr><td colspan="7" class="empty">Carregando…</td></tr>';
-  document.getElementById('corrigir-contagem-card').scrollIntoView({behavior:'smooth',block:'start'});
+/* ====== POPOVER DE CORREÇÃO RÁPIDA (botão "Corrigir" na aba CMV) ======
+   Antes navegava pra Ajustes > Inventário pra editar um item -- agora abre
+   uma caixinha flutuante ancorada no próprio botão, sem trocar de aba nem
+   perder o contexto de onde a pessoa estava. Busca só a LINHA exata (não a
+   contagem inteira) e, ao salvar, reaproveita atualizarPainelAposCorrecao()
+   (já existente) pra atualizar CMC/CMV/etc na hora. */
+var POPOVER_CORRIGIR_CTX=null; // {contagemId, linha}
+
+function fecharPopoverCorrigirClickFora(ev){
+  var el=document.getElementById('corrigir-popover');
+  if(el && !el.contains(ev.target))fecharPopoverCorrigir();
+}
+function fecharPopoverCorrigir(){
+  var el=document.getElementById('corrigir-popover');
+  if(el)el.remove();
+  document.removeEventListener('click', fecharPopoverCorrigirClickFora, true);
+  POPOVER_CORRIGIR_CTX=null;
+}
+
+// idx/total (opcionais): quando o valor exibido na aba CMV é a SOMA de mais
+// de uma contagem, avisa no subtítulo qual das contagens é essa, pra não
+// passar a impressão de que corrigir uma já corrige o total somado.
+function abrirPopoverCorrigir(btnEl, contagemId, produtoNome, linha, idx, total){
+  fecharPopoverCorrigir();
+  if(linha==null){alert('Não foi possível identificar a linha exata dessa contagem.');return;}
+
+  var rect=btnEl.getBoundingClientRect();
+  var pop=document.createElement('div');
+  pop.id='corrigir-popover';
+  pop.className='corrigir-popover';
+  var top=rect.bottom+window.scrollY+6;
+  var maxLeft=window.scrollX+document.documentElement.clientWidth-256; // 240px + folga
+  var left=Math.max(window.scrollX+8, Math.min(rect.left+window.scrollX, maxLeft));
+  pop.style.cssText='position:absolute;top:'+top+'px;left:'+left+'px;z-index:9999;';
+  var sub=(total>1)?('Contagem '+idx+' de '+total+' que SOMAM o valor mostrado'):'';
+  pop.innerHTML='<div class="corrigir-pop-head"><b>'+produtoNome+'</b><button class="pop-close" onclick="fecharPopoverCorrigir()">&times;</button></div>'+
+    (sub?'<div class="corrigir-pop-sub">'+sub+'</div>':'')+
+    '<div class="corrigir-pop-body" id="corrigir-pop-body">Carregando…</div>';
+  document.body.appendChild(pop);
+  POPOVER_CORRIGIR_CTX={contagemId:contagemId, linha:linha};
+  setTimeout(function(){document.addEventListener('click', fecharPopoverCorrigirClickFora, true);},0);
+
   google.script.run
     .withSuccessHandler(function(json){
-      var res;try{res=JSON.parse(json);}catch(e){document.getElementById('corrigir-contagem-body').innerHTML='<tr><td colspan="7" class="empty">Erro ao carregar.</td></tr>';return;}
-      if(res.ok){
-        var m=res.meta;
-        var sub = m ? (m.data+' · '+nomeUni(m.unidade)+' · '+m.setor) : contagemId;
-        if(total>1) sub += ' — contagem '+idx+' de '+total+' que SOMAM o valor mostrado na aba CMV (corrigir aqui muda só esta parte)';
-        document.getElementById('corrigir-contagem-sub').textContent = sub;
-      }
-      // A aba CMV mostra o nome CANÔNICO do produto (às vezes casado por
-      // código ou por aproximação de nome — ver valorizarItensInventario_),
-      // que pode ser bem diferente do nome BRUTO digitado na contagem
-      // (ex: "CHARQUE DESFIADO" na contagem virando "PP CHARQUE DESFIADO
-      // REFOGADO KG" no CMV). Filtrar a lista pelo nome canônico então não
-      // achava nada — "clico e o item não aparece". Em vez disso, acha o
-      // item pela LINHA exata (mesma fonte que o botão já sabia) e usa o
-      // nome bruto DELE pra filtrar — sempre bate, porque é o mesmo texto.
-      var focoProduto=produtoNome;
-      if(res.ok&&linha!=null&&res.itens){
-        var itemExato=res.itens.filter(function(it){return it.linha===linha;})[0];
-        if(itemExato)focoProduto=itemExato.produto;
-      }
-      preencherCorrigirContagemCard(res, focoProduto);
+      var body=document.getElementById('corrigir-pop-body');
+      if(!body)return; // popover já foi fechado antes da resposta chegar
+      var res;try{res=JSON.parse(json);}catch(e){body.textContent='Erro ao carregar.';return;}
+      if(!res.ok){body.textContent=res.erro||'Erro ao carregar.';return;}
+      body.innerHTML=
+        '<div class="corrigir-pop-row"><span>Qtd. contada'+(res.und?' ('+res.und+')':'')+'</span>'+
+        '<input type="text" inputmode="decimal" id="corrigir-pop-input" value="'+fQd(res.contado)+'"></div>'+
+        '<div class="corrigir-pop-actions"><button class="gd-close" onclick="salvarPopoverCorrigir()">Salvar</button>'+
+        '<span id="corrigir-pop-status" class="ssub" style="margin:0;"></span></div>';
+      var inp=document.getElementById('corrigir-pop-input');
+      if(inp){inp.focus();inp.select();inp.onkeydown=function(ev){if(ev.key==='Enter')salvarPopoverCorrigir();};}
     })
     .withFailureHandler(function(err){
-      document.getElementById('corrigir-contagem-body').innerHTML='<tr><td colspan="7" class="empty">Falha: '+(err.message||err)+'</td></tr>';
+      var body=document.getElementById('corrigir-pop-body');
+      if(body)body.textContent='Falha: '+(err.message||err);
     })
-    .abrirCorrecaoDeItem(SENHA_ATUAL, contagemId);
+    .buscarItemContagemPorLinha(SENHA_ATUAL, contagemId, linha);
+}
+
+function salvarPopoverCorrigir(){
+  if(!POPOVER_CORRIGIR_CTX)return;
+  var ctx=POPOVER_CORRIGIR_CTX;
+  var inp=document.getElementById('corrigir-pop-input');
+  var status=document.getElementById('corrigir-pop-status');
+  var novoValor=inp.value;
+  status.textContent='Salvando...';status.style.color='var(--fg3)';
+  google.script.run
+    .withSuccessHandler(function(json){
+      var res;try{res=JSON.parse(json);}catch(e){status.textContent='Erro ao salvar.';status.style.color='var(--rd)';return;}
+      if(!res.ok){status.textContent=res.erro||'Erro ao salvar.';status.style.color='var(--rd)';return;}
+      status.textContent='Salvo!';status.style.color='var(--ac2)';
+      if(inp)inp.value=fQd(res.contado);
+      atualizarPainelAposCorrecao();
+      setTimeout(fecharPopoverCorrigir,1200);
+    })
+    .withFailureHandler(function(err){
+      status.textContent='Falha: '+(err.message||err);status.style.color='var(--rd)';
+    })
+    .editarContadoItem(SENHA_ATUAL, ctx.contagemId, ctx.linha, novoValor);
 }
 
 function rCorrigirContagemTable(){
