@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-09-15.4';
+var VERSAO_APP = '2026-09-15.5';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -361,6 +361,120 @@ function gerarPlanilhaItensSemPreco(senha) {
     return JSON.stringify({ ok: true, url: ss.getUrl(), total: lista.length });
   } catch (err) {
     Logger.log('gerarPlanilhaItensSemPreco ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
+// Lista, em TODAS as unidades e setores, os itens que ficam sem grupo
+// reconhecido — os que caem no balde "SEM GRUPO" na aba CMV (ver
+// agruparPorGrupo/montarGruposCMV_). Cobre as DUAS fontes de dado que
+// alimentam o CMV: o CSV mensal do Cloudfy (grupo já vem pronto na
+// própria coluna, mas pode vir em branco) e as semanas/quinzenas salvas no
+// sistema de contagem separado (onde o grupo precisa ser resolvido por
+// código/nome contra Compras e Ficha Técnica — é aqui que mais aparece
+// grupo vazio, porque um preparo interno nunca é comprado).
+function gerarPlanilhaItensSemGrupo(senha) {
+  if (!validarSenha(senha)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var porProduto = {}; // produto -> {produto, unidades:{}, setores:{}, meses:{}, nOcorrencias, qtdTotal}
+    function registrar(produto, unidade, setor, mesNome, ano, qtd) {
+      if (!produto) return;
+      if (!porProduto[produto]) porProduto[produto] = { produto: produto, unidades: {}, setores: {}, meses: {}, nOcorrencias: 0, qtdTotal: 0 };
+      var p = porProduto[produto];
+      p.nOcorrencias++;
+      p.qtdTotal += (qtd || 0);
+      if (unidade) p.unidades[unidade] = true;
+      if (setor) p.setores[setor] = true;
+      if (mesNome && ano) p.meses[mesNome + '/' + ano] = true;
+    }
+
+    // ── 1. CSV mensal (Cloudfy) — grupo já vem pronto na coluna, mas pode
+    //    vir em branco (falha de cadastro no próprio Cloudfy) ──
+    var rowsEstoque = lerTodosCSVs('estoque');
+    for (var i = 1; i < rowsEstoque.length; i++) {
+      var r = rowsEstoque[i];
+      if (!r || r.length < 16) continue;
+      if (limpaCelula(r[C_ESTOQUE.tp_movto]) !== ESTOQUE_TIPO_VALIDO) continue;
+      if (limpaCelula(r[C_ESTOQUE.grupo])) continue; // tem grupo, ok
+      var dataInfo = parseDataCompleta(r[C_ESTOQUE.data]);
+      if (!dataInfo) continue;
+      var produto = limpaCelula(r[C_ESTOQUE.produto]);
+      var filial = limpaCelula(r[C_ESTOQUE.filial]) || 'OUTRA';
+      registrar(produto, filial, '(CSV mensal — sem setor)', NOMES_MESES[dataInfo.mes], dataInfo.ano, numVal(r[C_ESTOQUE.saldo]));
+    }
+
+    // ── 2. Semanas/quinzenas salvas (sistema de contagem à parte) — roda o
+    //    MESMO casamento de nome/código usado em valorizarItensInventario_ ──
+    var ctx = construirContextoPrecificacao_();
+    var ssContagem = SpreadsheetApp.openById(CONTAGEM_SHEET_ID);
+    var abaContagens = ssContagem.getSheetByName('CONTAGENS');
+    var contagemInfo = {}; // contagemId -> {setor}
+    if (abaContagens) {
+      var rowsC = abaContagens.getDataRange().getValues();
+      for (var k = 1; k < rowsC.length; k++) {
+        var rc = rowsC[k];
+        if (!rc[0]) continue;
+        contagemInfo[String(rc[0]).trim()] = { setor: String(rc[3] || '').trim() };
+      }
+    }
+
+    var inventarios = obterInventariosSalvos_();
+    var dataPorContagemId = lerDataPorContagemId_();
+    inventarios.forEach(function(inv) {
+      var info = resolverDataInventario_(inv, dataPorContagemId);
+      if (!info) return;
+      var mesNome = NOMES_MESES[info.mes];
+      var itens = buscarItensDeContagens_(inv.contagemIds);
+      itens.forEach(function(item) {
+        var cat = null;
+        if (item.cod && ctx.catalogoPorCodigo[item.cod]) cat = ctx.catalogoPorCodigo[item.cod];
+        if (!cat && item.cod && ctx.fichaPorCodigo[item.cod]) cat = ctx.fichaPorCodigo[item.cod];
+        var nomeContado = APELIDOS_PRODUTO[item.produto] || item.produto;
+        if (!cat) cat = ctx.catalogo[nomeContado.toUpperCase()];
+        if (!cat) {
+          var chaveCatalogo = acharUnicoPorSubconjuntoDePalavras_(nomeContado, ctx.catalogo);
+          if (chaveCatalogo) cat = ctx.catalogo[chaveCatalogo];
+        }
+        if (cat && cat.grupo) return; // tem grupo, ok
+
+        var setores = {};
+        (item.fontes || []).forEach(function(f) {
+          var ci = contagemInfo[f.contagemId];
+          if (ci && ci.setor) setores[ci.setor] = true;
+        });
+        registrar(item.produto, inv.unidade, Object.keys(setores).sort().join(', '), mesNome, info.ano, item.qtde);
+      });
+    });
+
+    var lista = Object.keys(porProduto).map(function(k) {
+      var p = porProduto[k];
+      return [
+        p.produto,
+        Object.keys(p.unidades).sort().join(', '),
+        Object.keys(p.setores).sort().join(', '),
+        p.nOcorrencias, r2(p.qtdTotal),
+        Object.keys(p.meses).sort().join(', ')
+      ];
+    }).sort(function(a, b) { return b[3] - a[3]; }); // mais ocorrências primeiro
+
+    var nomePlanilha = 'Itens sem grupo - CMV - ' + Utilities.formatDate(new Date(), 'America/Fortaleza', 'dd-MM-yyyy HH:mm');
+    var ss = SpreadsheetApp.create(nomePlanilha);
+    var aba = ss.getSheets()[0];
+    aba.setName('Itens sem grupo');
+    var header = ['Produto', 'Unidades', 'Setores', 'Nº de Ocorrências', 'Qtd. Total Contada', 'Meses'];
+    aba.getRange(1, 1, 1, header.length).setValues([header]).setFontWeight('bold');
+    if (lista.length) {
+      aba.getRange(2, 1, lista.length, header.length).setValues(lista);
+    }
+    aba.autoResizeColumns(1, header.length);
+    aba.setFrozenRows(1);
+
+    Logger.log('Planilha de itens sem grupo criada: ' + ss.getUrl() + ' (' + lista.length + ' produtos)');
+    return JSON.stringify({ ok: true, url: ss.getUrl(), total: lista.length });
+  } catch (err) {
+    Logger.log('gerarPlanilhaItensSemGrupo ERROR: ' + err.message + '\n' + err.stack);
     return JSON.stringify({ ok: false, erro: err.message });
   }
 }

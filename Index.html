@@ -634,6 +634,15 @@ td.hi{font-weight:600;}
           <span id="sempreco-status" class="ssub" style="margin:0;"></span>
         </div>
       </div>
+
+      <div class="card">
+        <div class="card-h"><div class="card-t">Itens sem grupo no CMV</div></div>
+        <div class="ssub" style="margin:0 0 14px;">Produtos que caem no grupo "SEM GRUPO" na aba CMV — sem grupo reconhecido nem em Compras nem na Ficha Técnica. Gera uma planilha nova do Google, por produto, com unidades, setores, quantas vezes apareceu e em quais meses — útil pra decidir quais precisam de grupo cadastrado no Cloudfy.</div>
+        <div class="ctrl">
+          <button class="gd-close" onclick="gerarPlanilhaSemGrupo()">Gerar planilha</button>
+          <span id="semgrupo-status" class="ssub" style="margin:0;"></span>
+        </div>
+      </div>
     </div>
 
     <div class="ajustes-sub" id="sub-inventario" style="display:none">
@@ -2786,6 +2795,22 @@ function gerarPlanilhaSemPreco(){
       status.textContent='Falha: '+(err.message||err);status.style.color='var(--rd)';
     })
     .gerarPlanilhaItensSemPreco(SENHA_ATUAL);
+}
+
+function gerarPlanilhaSemGrupo(){
+  var status=document.getElementById('semgrupo-status');
+  status.textContent='Gerando planilha (pode levar alguns segundos)...';status.style.color='var(--fg3)';
+  google.script.run
+    .withSuccessHandler(function(json){
+      var res;try{res=JSON.parse(json);}catch(e){status.textContent='Erro ao gerar.';status.style.color='var(--rd)';return;}
+      if(!res.ok){status.textContent=res.erro||'Erro ao gerar.';status.style.color='var(--rd)';return;}
+      status.innerHTML=res.total+' produto(s) sem grupo — <a href="'+res.url+'" target="_blank" style="color:var(--ac2);text-decoration:underline;">abrir planilha</a>';
+      status.style.color='var(--ac2)';
+    })
+    .withFailureHandler(function(err){
+      status.textContent='Falha: '+(err.message||err);status.style.color='var(--rd)';
+    })
+    .gerarPlanilhaItensSemGrupo(SENHA_ATUAL);
 }
 
 /* ============================================================
