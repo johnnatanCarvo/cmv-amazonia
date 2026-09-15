@@ -358,12 +358,18 @@ function processarComprasIntervaloDias(rows, mesNome, ano, diaMin, diaMax) {
 // estar em meses diferentes. Compara direto pelo "ts" (string YYYYMMDD) de
 // cada linha em vez de exigir mês/ano únicos -- funciona pra qualquer
 // intervalo, cruzando mês ou não.
+//
+// tsMin é EXCLUSIVO (ts > tsMin, não >=) pelo mesmo motivo documentado em
+// somarPeriodoPreAgregadoCross_: o dia de início é a mesma contagem que
+// fechou o período anterior (auto-encadeamento), então já é contado como
+// fim (inclusive) daquele período -- contar de novo aqui duplicaria o dia
+// da virada em "Semana 1 + Semana 2" comparado à Quinzena.
 function processarComprasIntervaloDiasCross_(rows, mesIniNum, anoIni, diaIni, mesFimNum, anoFim, diaFim) {
   var CHAVE = 'PERIODO';
   var tsMin = anoIni + pad2(mesIniNum) + pad2(diaIni);
   var tsMax = anoFim + pad2(mesFimNum) + pad2(diaFim);
   var resultado = processarComprasPorPeriodo_(rows || [], function(dataInfo) {
-    if (dataInfo.ts < tsMin || dataInfo.ts > tsMax) return null;
+    if (dataInfo.ts <= tsMin || dataInfo.ts > tsMax) return null;
     return CHAVE;
   });
   return resultado[CHAVE] || { cmc_total: 0, faturamento: 0, cmc_pct_fat: null, grupos: {}, filiais: {} };
@@ -700,12 +706,15 @@ function comprasPeriodoCMV_(rowsCompras, mesNome, ano, diaMin, diaMax) {
 // Mesma coisa que comprasPeriodoCMV_, mas aceitando início/fim em meses
 // diferentes (ver processarComprasIntervaloDiasCross_ acima) -- usada pelo
 // CMV por Semana/Quinzena quando a semana cruza a virada do mês.
+//
+// tsMin é EXCLUSIVO -- mesmo motivo de processarComprasIntervaloDiasCross_
+// (dia de início = mesma contagem que fechou o período anterior).
 function comprasPeriodoCMVCross_(rowsCompras, mesIniNum, anoIni, diaIni, mesFimNum, anoFim, diaFim) {
   var CHAVE = 'PERIODO';
   var tsMin = anoIni + pad2(mesIniNum) + pad2(diaIni);
   var tsMax = anoFim + pad2(mesFimNum) + pad2(diaFim);
   var resultado = agregarComprasPeriodoCMV_(rowsCompras || [], function(dataInfo) {
-    if (dataInfo.ts < tsMin || dataInfo.ts > tsMax) return null;
+    if (dataInfo.ts <= tsMin || dataInfo.ts > tsMax) return null;
     return CHAVE;
   });
   return resultado[CHAVE] || {
@@ -1780,18 +1789,40 @@ function somarPeriodoPreAgregado(porDia, mesNome, ano, diaMin, diaMax) {
 // junta os dois. Só existem duas partes porque salvarSemana só aceita
 // início no mesmo mês do fim OU no mês imediatamente anterior (nunca mais
 // que isso) -- ver validação lá.
+//
+// IMPORTANTE — diaIni é EXCLUSIVO, não inclusivo: o dia de início de uma
+// semana/quinzena é a MESMA contagem que fechou o período anterior
+// (auto-encadeamento das Semanas do Mês — "início sempre é o fim da
+// semana anterior"). Essa contagem já captura o consumo do dia inteiro,
+// então esse dia já "pertence" ao período que está FECHANDO nele (contado
+// como diaFim, inclusive, desse período anterior) — contá-lo de novo aqui
+// como início duplicaria o dia em "Semana 1 + Semana 2" (cada uma conta o
+// dia da virada uma vez), inflando a soma das semanas em relação à
+// Quinzena (que soma o intervalo inteiro de uma vez só, sem essa
+// duplicação). Calcula o total INCLUSIVE normal e desconta o dia de
+// início sozinho (sempre dentro do próprio mês de início, nunca precisa de
+// rollover de mês/ano) — depois da correção, Semana1+Semana2 bate exato
+// com a Quinzena correspondente.
 function somarPeriodoPreAgregadoCross_(porDia, mesIniNum, anoIni, diaIni, mesFimNum, anoFim, diaFim) {
   var mesIniNome = NOMES_MESES[mesIniNum], mesFimNome = NOMES_MESES[mesFimNum];
+  var totalInclusive;
   if (mesIniNum === mesFimNum && anoIni === anoFim) {
-    return somarPeriodoPreAgregado(porDia, mesFimNome, anoFim, diaIni, diaFim);
+    totalInclusive = somarPeriodoPreAgregado(porDia, mesFimNome, anoFim, diaIni, diaFim);
+  } else {
+    var parte1 = somarPeriodoPreAgregado(porDia, mesIniNome, anoIni, diaIni, diasNoMes(mesIniNome, anoIni));
+    var parte2 = somarPeriodoPreAgregado(porDia, mesFimNome, anoFim, 1, diaFim);
+    var filiaisSoma = {};
+    Object.keys(parte1.filiais).forEach(function(f) { filiaisSoma[f] = (filiaisSoma[f] || 0) + parte1.filiais[f]; });
+    Object.keys(parte2.filiais).forEach(function(f) { filiaisSoma[f] = (filiaisSoma[f] || 0) + parte2.filiais[f]; });
+    totalInclusive = { total: (parte1.total || 0) + (parte2.total || 0), filiais: filiaisSoma };
   }
-  var parte1 = somarPeriodoPreAgregado(porDia, mesIniNome, anoIni, diaIni, diasNoMes(mesIniNome, anoIni));
-  var parte2 = somarPeriodoPreAgregado(porDia, mesFimNome, anoFim, 1, diaFim);
+
+  var diaIniSozinho = somarPeriodoPreAgregado(porDia, mesIniNome, anoIni, diaIni, diaIni);
   var filiais = {};
-  Object.keys(parte1.filiais).forEach(function(f) { filiais[f] = (filiais[f] || 0) + parte1.filiais[f]; });
-  Object.keys(parte2.filiais).forEach(function(f) { filiais[f] = (filiais[f] || 0) + parte2.filiais[f]; });
-  Object.keys(filiais).forEach(function(f) { filiais[f] = r2(filiais[f]); });
-  return { total: r2((parte1.total || 0) + (parte2.total || 0)), filiais: filiais };
+  Object.keys(totalInclusive.filiais).forEach(function(f) {
+    filiais[f] = r2((totalInclusive.filiais[f] || 0) - (diaIniSozinho.filiais[f] || 0));
+  });
+  return { total: r2(totalInclusive.total - diaIniSozinho.total), filiais: filiais };
 }
 
 function calcularPct(numerador, denominador) {
