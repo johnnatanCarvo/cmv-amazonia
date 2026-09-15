@@ -798,6 +798,15 @@ function montarGruposCMV_(eiPorGrupoF, eiProdGrupoF, efPorGrupoF, efProdGrupoF,
         // (unidade homogênea); um grupo pode misturar KG/UN/L, por isso não
         // existe um "ei_qtd"/"ef_qtd" agregado no nível do grupo.
         ei_qtd: r2(eiQtdProdsG[p] || 0), ef_qtd: r2(efQtdProdsG[p] || 0),
+        // Se o produto NÃO tem chave em eiProdsG/efProdsG, "eiP"/"efP" veio
+        // do fallback "|| 0" acima -- ou seja, ninguém contou esse item
+        // nesse fechamento (zero ASSUMIDO, não confirmado por contagem
+        // física). Sem isso, um item sem contagem inicial fica indistinguível
+        // de um item contado e que realmente deu zero, e o CMV pode sair
+        // fortemente negativo (EI=0 + Compras=0 - EF) sem nenhum aviso —
+        // corrigir só o Estoque Final não resolve nesse caso, porque o
+        // problema real é a falta da contagem inicial.
+        ei_contado: eiProdsG.hasOwnProperty(p), ef_contado: efProdsG.hasOwnProperty(p),
         // Contagem(ns) de origem do EI/EF deste produto (só no caminho de
         // semana/quinzena) — permite o botão "Corrigir" na aba CMV.
         ei_fontes: eiFontesProdsG[p] || [], ef_fontes: efFontesProdsG[p] || [],

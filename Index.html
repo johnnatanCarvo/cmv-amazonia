@@ -1830,6 +1830,7 @@ function abrirCMVGrupo(gi){
         '<button id="ord-cmv" onclick="setCMVProdOrder(\'cmv\')" class="'+(cmvProdOrder==='cmv'?'on':'')+'">Por valor</button>'+
         '<button id="ord-qtd" onclick="setCMVProdOrder(\'qtd\')" class="'+(cmvProdOrder==='qtd'?'on':'')+'">Por quantidade</button>'+
       '</div></div>'+
+      '<div class="ssub" style="margin:0 0 10px;color:var(--fg3)">Valores com <span style="color:var(--am)">*</span> nao tiveram contagem fisica neste fechamento -- foram assumidos como zero (nao e uma contagem confirmada).</div>'+
       '<div class="twrap" id="cmvg-prod-tbl"></div>';
   }else{
     html+='<div class="empty">Sem detalhe de produtos para este grupo.</div>';
@@ -1904,15 +1905,21 @@ function renderCMVProdTabela(prods){
         }).join('');
       };
       var eiBtn=btnCorrigir(p.ei_fontes,p.nome), efBtn=btnCorrigir(p.ef_fontes,p.nome);
+      // "*" -- mesma logica de Demanda de Insumos: contado===false significa
+      // que ninguem contou esse produto nesse fechamento (zero ASSUMIDO, nao
+      // confirmado). Sem isso, um item sem contagem inicial fica indistinguivel
+      // de um item contado que realmente deu zero.
+      var eiMarca=p.ei_contado===false?'<span style="color:var(--am)" title="Sem contagem fisica neste fechamento -- assumido como zero.">*</span>':'';
+      var efMarca=p.ef_contado===false?'<span style="color:var(--am)" title="Sem contagem fisica neste fechamento -- assumido como zero.">*</span>':'';
       if(porQtd){
         return '<tr><td class="hi">'+p.nome+'</td>'+
-          '<td class="n r">'+fQ(p.ei_qtd||0)+eiBtn+'</td><td class="n r">'+fQ(p.qtd||0)+'</td>'+
-          '<td class="n r">'+fQ(p.ef_qtd||0)+efBtn+'</td>'+tdTransf+'<td class="n r hi">'+fR2(p.cmv)+'</td></tr>';
+          '<td class="n r">'+fQ(p.ei_qtd||0)+eiMarca+eiBtn+'</td><td class="n r">'+fQ(p.qtd||0)+'</td>'+
+          '<td class="n r">'+fQ(p.ef_qtd||0)+efMarca+efBtn+'</td>'+tdTransf+'<td class="n r hi">'+fR2(p.cmv)+'</td></tr>';
       }
       return '<tr><td class="hi">'+p.nome+'</td>'+
         '<td class="n r" style="color:var(--fg2)">'+fQ(p.qtd||0)+'</td>'+
-        '<td class="n r">'+fR2(p.ei)+eiBtn+'</td><td class="n r">'+fR2(p.compras)+'</td>'+
-        '<td class="n r">'+fR2(p.ef)+efBtn+'</td>'+tdTransf+'<td class="n r hi">'+fR2(p.cmv)+'</td></tr>';
+        '<td class="n r">'+fR2(p.ei)+eiMarca+eiBtn+'</td><td class="n r">'+fR2(p.compras)+'</td>'+
+        '<td class="n r">'+fR2(p.ef)+efMarca+efBtn+'</td>'+tdTransf+'<td class="n r hi">'+fR2(p.cmv)+'</td></tr>';
     }).join('')+'</tbody></table>';
 }
 
