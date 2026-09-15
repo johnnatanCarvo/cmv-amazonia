@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-09-10.3';
+var VERSAO_APP = '2026-09-15.1';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -834,6 +834,21 @@ function listarHistoricoFichas(senhaFichas, limite) {
 // ── INTEGRAÇÃO COM O SISTEMA DE CONTAGEM/ESTOQUE (projeto Apps Script separado) ──
 var CONTAGEM_SHEET_ID = '15NWs6IiDMJEOYaiDWPzSSAtHsJoziSpkwaz2yjgkppU';
 
+// Converte "DD/MM/AAAA HH:mm" pra "AAAAMMDDHHmm" -- comparação de texto direta
+// (localeCompare) numa data em formato brasileiro ordena errado, porque o dia
+// vem antes do ano (ex: "28/08/2026" > "14/09/2026" como texto, mesmo sendo
+// cronologicamente anterior). Sem essa conversão, "Contagens Registradas"
+// (Ajustes > Inventário) aparecia fora de ordem. Se não bater o padrão
+// esperado, devolve a string original (mantém o comportamento antigo em vez
+// de quebrar a ordenação toda por causa de uma linha mal formatada).
+function chaveOrdenavelDataHora_(str) {
+  var m = String(str || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})\s+(\d{1,2}):(\d{2})/);
+  if (!m) return String(str || '');
+  var dia = m[1].padStart(2, '0'), mes = m[2].padStart(2, '0'), ano = m[3];
+  var hora = m[4].padStart(2, '0'), min = m[5];
+  return ano + mes + dia + hora + min;
+}
+
 // Lista as contagens registradas no sistema de contagem (aba CONTAGENS),
 // pra unidade escolhida — usado na tela de Ajustes > Inventário, pra o
 // usuário escolher manualmente quais contagens representam o inventário de
@@ -866,7 +881,7 @@ function listarContagensDisponiveis(senha, unidade) {
         dataFechamento: String(r[7] || '').trim()
       });
     }
-    lista.sort(function(a, b) { return b.data.localeCompare(a.data); });
+    lista.sort(function(a, b) { return chaveOrdenavelDataHora_(b.data).localeCompare(chaveOrdenavelDataHora_(a.data)); });
     return JSON.stringify({ ok: true, contagens: lista });
   } catch (err) {
     Logger.log('listarContagensDisponiveis ERROR: ' + err.message + '\n' + err.stack);
