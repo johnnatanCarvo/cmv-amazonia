@@ -1142,7 +1142,9 @@ var APELIDOS_PRODUTO = {
   // Cápsulas de gás: sistema de contagem usa prefixo "MP", Compras usa "UC".
   'MP CAPSULAS DE GAS': 'UC CAPSULAS DE GAS',
   // Confirmado pelo usuário — não é "MP TOMATE UVA KG" (variante diferente).
-  'MP TOMATE': 'MP TOMATE KG'
+  'MP TOMATE': 'MP TOMATE KG',
+  // Confirmado pelo usuário — sistema de contagem usa o nome curto, sem a marca.
+  'MP BARRIL DE CHOPP 50L': 'MP BARRIL DE CHOPP CABOCA 50L'
 };
 
 // Aplica APELIDOS_PRODUTO num mapa já construído (fichasMap ou receitas):
