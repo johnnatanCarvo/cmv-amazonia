@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-09-15.3';
+var VERSAO_APP = '2026-09-15.4';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -1105,10 +1105,16 @@ function montarCMVDetalhadoUnidade_(eiPorProduto, efPorProduto, rowsCompras, mes
   function agruparPorGrupo(itens) {
     var porGrupo = {}, porProdGrupo = {}, porProdGrupoQtd = {}, porProdGrupoFontes = {};
     (itens || []).forEach(function(item) {
-      var g = item.grupo || '';
+      // Item sem grupo reconhecido (ex: preparo interno casado só pelo
+      // código da ficha técnica, que antes não trazia grupo nenhum — ver
+      // valorizarItensInventario_) cai num grupo "SEM GRUPO" em vez de ser
+      // descartado. Descartar fazia o valor continuar contando no total de
+      // Estoque Inicial/Final (somado direto da lista de itens) mas sumir
+      // da tabela "Produtos do Grupo" — o total não batia com a soma dos
+      // grupos exibidos, sem nenhum aviso.
+      var g = item.grupo || 'SEM GRUPO';
       var p = item.produto || '';
       var v = item.custoTotal || 0;
-      if (!g) return;
       porGrupo[g] = (porGrupo[g] || 0) + v;
       if (p) {
         if (!porProdGrupo[g]) porProdGrupo[g] = {};
@@ -1778,7 +1784,7 @@ function valorizarItensInventario_(itens, mesNome, ano, historicoPorInsumo, fich
     // DE PIRARUCU UND" na contagem = "PP CROQUETE PIRARUCU UND" na
     // ficha, mesmo com a grafia levemente diferente).
     if (!cat && item.cod && fichaPorCodigo && fichaPorCodigo[item.cod]) {
-      cat = { nome: fichaPorCodigo[item.cod], grupo: '' };
+      cat = fichaPorCodigo[item.cod];
     }
 
     // Sem COD ou COD não encontrado em nenhum dos dois: o sistema de

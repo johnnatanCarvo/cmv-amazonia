@@ -1100,6 +1100,7 @@ function processarCMV(rowsEstoque, rowsCompras, historicoPorInsumo, fichasMap) {
 var C_FICHAS = {
   cod:        0,   // Cód. ref. do PRODUTO da ficha (não confundir com o cod do insumo, índice 12)
   produto:    1,   // Nome do produto (ou insumo/preparo)
+  grupo:      4,   // Grupo do produto (ex: PP SALGADOS, BOMBONIERE)
   tipo:       3,   // "Venda" (produto final) ou "Matéria prima" (preparo interno)
   rendimento: 5,   // Quantas unidades do produto UMA receita/lote produz
   custo_unit: 6,   // Custo unitário teórico do produto, já somando os insumos
@@ -1423,7 +1424,7 @@ function preAgregarFichaPorCodigo(rowsFichas) {
     if (!cod || catalogo[cod] !== undefined) continue;
     var nome = limpaCelula(r[C_FICHAS.produto]);
     if (!nome) continue;
-    catalogo[cod] = nome;
+    catalogo[cod] = { nome: nome, grupo: limpaCelula(r[C_FICHAS.grupo]) };
   }
   return catalogo;
 }
