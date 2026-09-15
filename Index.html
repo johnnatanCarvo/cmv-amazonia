@@ -1909,7 +1909,7 @@ function renderCMVProdTabela(prods){
             : 'Corrigir a contagem que gerou este valor';
           var rotuloBtn=fontes.length>1?('&#9998;'+(idx+1)):'&#9998;';
           return ' <button class="mini-fix" title="'+titulo+'" '+
-            'onclick="event.stopPropagation();abrirCorrigirItemFonte(\''+f.contagemId+'\',\''+nomeEsc+'\','+(idx+1)+','+fontes.length+')" '+
+            'onclick="event.stopPropagation();abrirCorrigirItemFonte(\''+f.contagemId+'\',\''+nomeEsc+'\','+(idx+1)+','+fontes.length+','+(f.linha||'null')+')" '+
             'style="border:none;background:none;cursor:pointer;opacity:.55;font-size:11px;padding:0 0 0 3px;">'+rotuloBtn+'</button>';
         }).join('');
       };
@@ -2969,7 +2969,7 @@ function preencherCorrigirContagemCard(res, focoProduto){
 // quando o valor exibido na aba CMV é a SOMA de mais de uma contagem, avisa
 // no subtítulo qual das contagens é essa, pra não passar a impressão de que
 // corrigir uma já corrige o total somado.
-function abrirCorrigirItemFonte(contagemId, produtoNome, idx, total){
+function abrirCorrigirItemFonte(contagemId, produtoNome, idx, total, linha){
   // O card de correção mora dentro de Ajustes > Inventário -- se o usuário
   // clicou vindo da aba CMV, essa seção inteira ainda está com display:none
   // (troca de aba é feita por classe/estilo no <section>, não só no card).
@@ -2994,7 +2994,20 @@ function abrirCorrigirItemFonte(contagemId, produtoNome, idx, total){
         if(total>1) sub += ' — contagem '+idx+' de '+total+' que SOMAM o valor mostrado na aba CMV (corrigir aqui muda só esta parte)';
         document.getElementById('corrigir-contagem-sub').textContent = sub;
       }
-      preencherCorrigirContagemCard(res, produtoNome);
+      // A aba CMV mostra o nome CANÔNICO do produto (às vezes casado por
+      // código ou por aproximação de nome — ver valorizarItensInventario_),
+      // que pode ser bem diferente do nome BRUTO digitado na contagem
+      // (ex: "CHARQUE DESFIADO" na contagem virando "PP CHARQUE DESFIADO
+      // REFOGADO KG" no CMV). Filtrar a lista pelo nome canônico então não
+      // achava nada — "clico e o item não aparece". Em vez disso, acha o
+      // item pela LINHA exata (mesma fonte que o botão já sabia) e usa o
+      // nome bruto DELE pra filtrar — sempre bate, porque é o mesmo texto.
+      var focoProduto=produtoNome;
+      if(res.ok&&linha!=null&&res.itens){
+        var itemExato=res.itens.filter(function(it){return it.linha===linha;})[0];
+        if(itemExato)focoProduto=itemExato.produto;
+      }
+      preencherCorrigirContagemCard(res, focoProduto);
     })
     .withFailureHandler(function(err){
       document.getElementById('corrigir-contagem-body').innerHTML='<tr><td colspan="7" class="empty">Falha: '+(err.message||err)+'</td></tr>';
