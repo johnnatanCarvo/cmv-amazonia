@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-09-16.10';
+var VERSAO_APP = '2026-09-16.11';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -1609,7 +1609,17 @@ function calcularPeriodoPersonalizado(senha, dataIniStr, dataFimStr) {
 // Mesma regra de início exclusivo de sempre (a contagem inicial já
 // capturou o estoque até aquele momento; contar de novo a compra do mesmo
 // dia duplicaria).
-function calcularCMVPersonalizado(senha, unidade, inventarioInicialId, inventarioFinalId) {
+//
+// dataIniOverride/dataFimOverride (opcionais, "DD/MM/AAAA"): a data da
+// contagem (resolverDataInventario_) é usada por padrão pra somar
+// compras/vendas, mas às vezes a contagem foi feita fisicamente num dia e
+// só foi LANÇADA no sistema em outro -- nesse caso a data resolvida fica
+// errada pra fins de "até onde contar compra/venda", mesmo estando certa
+// pra saber qual mês reprecificar o estoque. Por isso o usuário pode
+// corrigir manualmente só o intervalo usado pra somar compras/vendas,
+// sem mudar qual contagem (e qual mês de reprecificação) representa o
+// Estoque Inicial/Final.
+function calcularCMVPersonalizado(senha, unidade, inventarioInicialId, inventarioFinalId, dataIniOverride, dataFimOverride) {
   if (!validarSenha(senha)) {
     return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
   }
@@ -1629,8 +1639,14 @@ function calcularCMVPersonalizado(senha, unidade, inventarioInicialId, inventari
     if (!infoInicial || !infoFinal) {
       return JSON.stringify({ ok: false, erro: 'Não foi possível resolver a data de um dos inventários.' });
     }
-    if (infoFinal.ts <= infoInicial.ts) {
-      return JSON.stringify({ ok: false, erro: 'O inventário final precisa ser de uma data depois do inicial.' });
+
+    var periodoIni = dataIniOverride ? parseDataCompleta(dataIniOverride) : infoInicial;
+    var periodoFim = dataFimOverride ? parseDataCompleta(dataFimOverride) : infoFinal;
+    if (!periodoIni || !periodoFim) {
+      return JSON.stringify({ ok: false, erro: 'Data do período inválida.' });
+    }
+    if (periodoFim.ts <= periodoIni.ts) {
+      return JSON.stringify({ ok: false, erro: 'A data final do período precisa ser depois da inicial.' });
     }
 
     var rowsCompras = lerTodosCSVs('compras');
@@ -1653,23 +1669,25 @@ function calcularCMVPersonalizado(senha, unidade, inventarioInicialId, inventari
     var valFinal   = valorizarItensInventario_(itensFinal, mesNomeFinal, infoFinal.ano, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (final)', catalogoPorCodigo, fichaPorCodigo);
     var avisos = [].concat(valInicial.avisos).concat(valFinal.avisos);
 
-    var compras = somarPeriodoPreAgregadoCross_(porDiaCompras, infoInicial.mes, infoInicial.ano, infoInicial.dia, infoFinal.mes, infoFinal.ano, infoFinal.dia);
-    var vendas  = somarPeriodoPreAgregadoCross_(porDiaVendas, infoInicial.mes, infoInicial.ano, infoInicial.dia, infoFinal.mes, infoFinal.ano, infoFinal.dia);
+    var compras = somarPeriodoPreAgregadoCross_(porDiaCompras, periodoIni.mes, periodoIni.ano, periodoIni.dia, periodoFim.mes, periodoFim.ano, periodoFim.dia);
+    var vendas  = somarPeriodoPreAgregadoCross_(porDiaVendas, periodoIni.mes, periodoIni.ano, periodoIni.dia, periodoFim.mes, periodoFim.ano, periodoFim.dia);
     var compraUni = compras.filiais[unidade] || 0;
     var vendaUni  = vendas.filiais[unidade] || 0;
     var ei = valInicial.total, ef = valFinal.total;
     var cmv = r2(ei + compraUni - ef);
 
-    var cmcDetalhado = processarComprasIntervaloDiasCross_(rowsCompras, infoInicial.mes, infoInicial.ano, infoInicial.dia, infoFinal.mes, infoFinal.ano, infoFinal.dia);
-    injetarFaturamentoCmcPeriodo_(cmcDetalhado, porDiaVendas, infoInicial.mes, infoInicial.ano, infoInicial.dia, infoFinal.mes, infoFinal.ano, infoFinal.dia);
-    var cmvDetalhado = montarCMVDetalhadoUnidade_(valInicial.porProduto, valFinal.porProduto, rowsCompras, infoInicial.mes, infoInicial.ano, infoInicial.dia, infoFinal.mes, infoFinal.ano, infoFinal.dia, unidade);
+    var cmcDetalhado = processarComprasIntervaloDiasCross_(rowsCompras, periodoIni.mes, periodoIni.ano, periodoIni.dia, periodoFim.mes, periodoFim.ano, periodoFim.dia);
+    injetarFaturamentoCmcPeriodo_(cmcDetalhado, porDiaVendas, periodoIni.mes, periodoIni.ano, periodoIni.dia, periodoFim.mes, periodoFim.ano, periodoFim.dia);
+    var cmvDetalhado = montarCMVDetalhadoUnidade_(valInicial.porProduto, valFinal.porProduto, rowsCompras, periodoIni.mes, periodoIni.ano, periodoIni.dia, periodoFim.mes, periodoFim.ano, periodoFim.dia, unidade);
 
     var resultado = {
       ei: r2(ei), ef: r2(ef), compras: r2(compraUni), faturamento: r2(vendaUni), cmv: cmv,
       cmc_pct: calcularPct(compraUni, vendaUni), cmv_pct: calcularPct(cmv, vendaUni),
       cmcDetalhado: cmcDetalhado, cmvDetalhado: cmvDetalhado,
-      dataInicio: pad2(infoInicial.dia) + '/' + pad2(infoInicial.mes) + '/' + infoInicial.ano,
-      dataFim: pad2(infoFinal.dia) + '/' + pad2(infoFinal.mes) + '/' + infoFinal.ano,
+      dataInicio: pad2(periodoIni.dia) + '/' + pad2(periodoIni.mes) + '/' + periodoIni.ano,
+      dataFim: pad2(periodoFim.dia) + '/' + pad2(periodoFim.mes) + '/' + periodoFim.ano,
+      dataContagemInicial: pad2(infoInicial.dia) + '/' + pad2(infoInicial.mes) + '/' + infoInicial.ano,
+      dataContagemFinal: pad2(infoFinal.dia) + '/' + pad2(infoFinal.mes) + '/' + infoFinal.ano,
       labelInicial: invInicial.label, labelFinal: invFinal.label
     };
     return JSON.stringify({ ok: true, dados: resultado, avisos: avisos });
