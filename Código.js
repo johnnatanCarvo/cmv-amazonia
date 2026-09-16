@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-09-16.11';
+var VERSAO_APP = '2026-09-16.12';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -1434,7 +1434,14 @@ function calcularAnaliseSemanal(senha, mes, ano) {
         diaInicio: infoInicial.dia, diaFim: infoFinal.dia,
         mesInicioNum: infoInicial.mes, anoInicio: infoInicial.ano,
         mesInicioCompras: mesInicioCompras, anoInicioCompras: anoInicioCompras, diaInicioCompras: diaInicioCompras,
-        dataInicio: pad2(infoInicial.dia) + '/' + pad2(infoInicial.mes) + '/' + infoInicial.ano,
+        // Rotulo mostrado na tela: pra Semana 1, tem que bater com o
+        // intervalo que Compras/Vendas realmente somam (desde o dia 1) --
+        // mostrar a data real da contagem (ex: 02/09) enquanto o numero
+        // exibido já soma desde 01/09 seria inconsistente (mesmo raciocinio
+        // do "Mês Todo" em processarCMV, Dados.js).
+        dataInicio: ehPrimeiraSemanaDoMes
+          ? ('01/' + pad2(mesFimNum) + '/' + anoNum)
+          : (pad2(infoInicial.dia) + '/' + pad2(infoInicial.mes) + '/' + infoInicial.ano),
         dataFim: pad2(infoFinal.dia) + '/' + pad2(infoFinal.mes) + '/' + infoFinal.ano,
         ei: valInicial.total, ef: valFinal.total,
         eiPorProduto: valInicial.porProduto, efPorProduto: valFinal.porProduto,

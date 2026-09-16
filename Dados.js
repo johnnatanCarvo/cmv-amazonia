@@ -1085,7 +1085,14 @@ function processarCMV(rowsEstoque, rowsCompras, historicoPorInsumo, fichasMap) {
       cmv_total:     r2(cmvReal),
       cmv_pct:       null,
       faturamento:   0,
-      data_ei:       tsEI.slice(6,8)+'/'+tsEI.slice(4,6)+'/'+tsEI.slice(0,4),
+      // "Mês Todo" mostra o período como dia 1 do mês até a data da última
+      // contagem -- não a data real da contagem de Estoque Inicial (que
+      // normalmente é o fechamento do mês ANTERIOR, ex: 31/08 fechando/
+      // abrindo Setembro). Compras já é sempre o total do mês inteiro por
+      // nome (comprasMes[mesNome].total, algumas linhas acima) — mostrar
+      // "31/08 a 15/09" no rótulo enquanto Compras só cobre 01/09 a 15/09
+      // seria inconsistente com o número exibido.
+      data_ei:       '01/'+pad2(ef.mes)+'/'+ef.ano,
       data_ef:       tsEF.slice(6,8)+'/'+tsEF.slice(4,6)+'/'+tsEF.slice(0,4),
       grupos:        grupos,
       filiais:       filiais
