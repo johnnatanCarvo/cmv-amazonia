@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-09-16.7';
+var VERSAO_APP = '2026-09-16.8';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -243,7 +243,7 @@ function getPayload(senha) {
       }
     });
 
-    return JSON.stringify({
+    var _payload = {
       ok:              true,
       cmc:             cmc,
       cmv:             cmv,
@@ -254,7 +254,13 @@ function getPayload(senha) {
       reconciliacaoInsumos: reconciliacaoInsumos,
       fichasDisponivel: Object.keys(fichasMap).length > 0,
       avisosInventario: inventarioConectado.avisos
-    });
+    };
+    var _json = JSON.stringify(_payload);
+    Logger.log('[PERF-SIZE] payload JSON: ' + _json.length + ' chars (' + (_json.length / 1024 / 1024).toFixed(2) + ' MB) | ' +
+      'cmc=' + JSON.stringify(cmc).length + ' vendas=' + JSON.stringify(vendas).length + ' cmv=' + JSON.stringify(cmv).length +
+      ' cmvTeorico=' + JSON.stringify(cmvTeorico).length + ' demandaInsumos=' + JSON.stringify(demandaInsumos).length +
+      ' reconciliacaoInsumos=' + JSON.stringify(reconciliacaoInsumos).length);
+    return _json;
 
   } catch (err) {
     Logger.log('getPayload ERROR: ' + err.message + '\n' + err.stack);
