@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-09-16.3';
+var VERSAO_APP = '2026-09-16.4';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -75,20 +75,39 @@ function getPayload(senha) {
     return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
   }
   try {
+    // ── INSTRUMENTACAO TEMPORARIA (investigar lentidao do getPayload,
+    // ver update.log/Execucoes do Apps Script pra comparar os deltas) ──
+    var _t0 = new Date().getTime();
+    var _tLast = _t0;
+    function _lap(rotulo) {
+      var agora = new Date().getTime();
+      Logger.log('[PERF] ' + rotulo + ': ' + (agora - _tLast) + 'ms (acumulado: ' + (agora - _t0) + 'ms)');
+      _tLast = agora;
+    }
+
     var rowsCompras = lerTodosCSVs('compras');
+    _lap('lerTodosCSVs(compras) -- ' + (rowsCompras ? rowsCompras.length : 0) + ' linhas');
     var rowsVendas  = lerTodosCSVs('vendas');
+    _lap('lerTodosCSVs(vendas) -- ' + (rowsVendas ? rowsVendas.length : 0) + ' linhas');
     var rowsEstoque = lerTodosCSVs('estoque');
+    _lap('lerTodosCSVs(estoque) -- ' + (rowsEstoque ? rowsEstoque.length : 0) + ' linhas');
     var rowsFichas  = lerFichaTecnica(); // opcional — [] se ainda nao foi enviada
+    _lap('lerFichaTecnica -- ' + (rowsFichas ? rowsFichas.length : 0) + ' linhas');
 
     var cmc        = processarCompras(rowsCompras);
+    _lap('processarCompras');
     var vendas     = processarVendas(rowsVendas);
+    _lap('processarVendas');
     var fichasMap  = processarFichas(rowsFichas);
+    _lap('processarFichas');
     var receitas   = processarReceitas(rowsFichas);
+    _lap('processarReceitas');
 
     // Custo médio de compra de cada insumo por mês — usado tanto pro CMV
     // Teórico (reprecificação) quanto pra precificar o inventário salvo
     // (Ajustes > Inventário) na conexão com o CMV/CMC logo abaixo.
     var historicoPorInsumo = preAgregarCustoMedioPorInsumo(rowsCompras);
+    _lap('preAgregarCustoMedioPorInsumo');
 
     // Conecta o CONTADO do sistema de contagem separado (Ajustes >
     // Inventário) no CMV/CMC: gera linhas de estoque sintéticas SÓ pros
@@ -96,23 +115,30 @@ function getPayload(senha) {
     // a partir do CSV continuam exatamente como estavam (ver comentário de
     // gerarLinhasEstoqueDeInventariosSalvos_).
     var inventarioConectado = gerarLinhasEstoqueDeInventariosSalvos_(rowsEstoque, rowsCompras, rowsVendas, historicoPorInsumo, fichasMap, rowsFichas);
+    _lap('gerarLinhasEstoqueDeInventariosSalvos_');
     if (inventarioConectado.avisos.length) {
       Logger.log('Inventário salvo -> CMV: ' + inventarioConectado.avisos.join(' | '));
     }
     var rowsEstoqueCompleto = (rowsEstoque && rowsEstoque.length ? rowsEstoque : [[]]).concat(inventarioConectado.linhas);
 
     var cmv        = processarCMV(rowsEstoqueCompleto, rowsCompras, historicoPorInsumo, fichasMap);
+    _lap('processarCMV');
 
     // Meses disponíveis — derivados dos dados de compras
     var mOrdem = ['JANEIRO','FEVEREIRO','MARÇO','ABRIL','MAIO','JUNHO',
                   'JULHO','AGOSTO','SETEMBRO','OUTUBRO','NOVEMBRO','DEZEMBRO'];
     var meses = mOrdem.filter(function(m) { return cmc[m]; });
     var anoPorMes = inferirAnoPorMes(rowsCompras, meses);
+    _lap('inferirAnoPorMes');
 
     var produtosMenuEscolha = obterProdutosMenuEscolha();
+    _lap('obterProdutosMenuEscolha');
     var cmvTeorico = calcularCMVTeorico(vendas, fichasMap, produtosMenuEscolha, receitas, historicoPorInsumo, anoPorMes);
+    _lap('calcularCMVTeorico');
     var demandaInsumos = calcularDemandaInsumos(vendas, receitas);
+    _lap('calcularDemandaInsumos');
     var reconciliacaoInsumos = reconciliarInsumos(demandaInsumos, receitas);
+    _lap('reconciliarInsumos');
 
     // Faturamento por mês a partir das vendas (by_mes)
     var fatPorMes = {};
@@ -242,6 +268,7 @@ function getPayload(senha) {
         }
       }
     });
+    _lap('injecao de faturamento (loop de meses)');
 
     return JSON.stringify({
       ok:              true,
