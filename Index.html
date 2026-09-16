@@ -347,6 +347,16 @@ td.hi{font-weight:600;}
         <div class="mseg" id="mes-seg"></div>
         <div class="useg" id="mes-useg"></div>
         <div class="mseg" id="mes-granseg" style="display:none;"></div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button type="button" class="gd-close" id="mes-custom-toggle" onclick="toggleCustomCMC()">Período personalizado</button>
+          <div id="mes-custom-box" style="display:none;align-items:center;gap:6px;">
+            <input type="date" id="mes-custom-ini" style="font-size:12px;padding:5px 7px;border:1px solid var(--ln2);border-radius:7px;background:var(--bg3);color:var(--fg);font-family:inherit;">
+            <span style="font-size:12px;color:var(--fg2);">até</span>
+            <input type="date" id="mes-custom-fim" style="font-size:12px;padding:5px 7px;border:1px solid var(--ln2);border-radius:7px;background:var(--bg3);color:var(--fg);font-family:inherit;">
+            <button type="button" class="gd-close" onclick="aplicarPeriodoCustomCMC()">Aplicar</button>
+          </div>
+        </div>
+        <div id="mes-custom-label" style="display:none;font-size:12px;color:var(--ac);font-weight:600;"></div>
       </div>
     </div>
 
@@ -1074,6 +1084,53 @@ var ANALISE_SEMANAL_CACHE={};
 var periodoAtualCMC={tipo:'mes'};
 var periodoAtualCMV={tipo:'mes'};
 
+/* ── Período personalizado (Análise Mês a Mês) ──────────────
+   Compras/faturamento entre duas datas quaisquer, sem depender de
+   nenhuma Semana do Mês salva. Só existe pra CMC (compras) -- CMV Real
+   precisa de Estoque Inicial/Final contados fisicamente numa data real,
+   então não dá pra oferecer isso pra qualquer data escolhida. */
+var CUSTOM_CMC_CACHE={};
+var periodoCustomBoxAberto=false;
+
+function toggleCustomCMC(){
+  periodoCustomBoxAberto=!periodoCustomBoxAberto;
+  document.getElementById('mes-custom-box').style.display=periodoCustomBoxAberto?'flex':'none';
+}
+
+function aplicarPeriodoCustomCMC(){
+  var iniEl=document.getElementById('mes-custom-ini'), fimEl=document.getElementById('mes-custom-fim');
+  var iniISO=iniEl.value, fimISO=fimEl.value;
+  if(!iniISO||!fimISO){alert('Escolha as duas datas.');return;}
+  if(fimISO<iniISO){alert('A data final não pode ser antes da inicial.');return;}
+  var iniBR=iniISO.split('-').reverse().join('/'), fimBR=fimISO.split('-').reverse().join('/');
+  var chave=iniBR+'_'+fimBR;
+  function aplicar(){
+    periodoAtualCMC={tipo:'custom',key:chave,dataIni:iniBR,dataFim:fimBR};
+    document.getElementById('mes-granseg').style.display='none';
+    document.querySelectorAll('#mes-seg button').forEach(function(b){b.classList.remove('on');});
+    var lbl=document.getElementById('mes-custom-label');
+    lbl.style.display='block';lbl.textContent='Período personalizado: '+iniBR+' a '+fimBR;
+    rMes();
+  }
+  if(CUSTOM_CMC_CACHE[chave]){aplicar();return;}
+  google.script.run.withSuccessHandler(function(json){
+    var res;try{res=JSON.parse(json);}catch(e){res=null;}
+    if(!res||!res.ok){alert('Não foi possível calcular esse período: '+(res&&res.erro||'erro desconhecido'));return;}
+    CUSTOM_CMC_CACHE[chave]=res.dados;
+    aplicar();
+  }).withFailureHandler(function(err){alert('Erro ao calcular período: '+err);}).calcularPeriodoPersonalizado(SENHA_ATUAL, iniBR, fimBR);
+}
+
+// Sai do modo "período personalizado" -- chamado sempre que o usuário
+// troca de mês/semana/quinzena pelos seletores normais.
+function limparPeriodoCustomCMC(){
+  var lbl=document.getElementById('mes-custom-label');
+  if(lbl)lbl.style.display='none';
+  periodoCustomBoxAberto=false;
+  var box=document.getElementById('mes-custom-box');
+  if(box)box.style.display='none';
+}
+
 function obterAnaliseSemanalCache_(mesNome, callback){
   if(ANALISE_SEMANAL_CACHE[mesNome]){callback(ANALISE_SEMANAL_CACHE[mesNome]);return;}
   google.script.run.withSuccessHandler(function(json){
@@ -1200,7 +1257,7 @@ function dadosPeriodoCMV(mesNome, periodo){
 /* ============================================================
    ABA 1: ANÁLISE MÊS A MÊS
    ============================================================ */
-function setMes(m){mesAtual=m;periodoAtualCMC={tipo:'mes'};document.querySelectorAll('#mes-seg button').forEach(function(b){b.classList.toggle('on',b.textContent===(ML_MAP[m]||m));});rMes();}
+function setMes(m){mesAtual=m;periodoAtualCMC={tipo:'mes'};limparPeriodoCustomCMC();document.querySelectorAll('#mes-seg button').forEach(function(b){b.classList.toggle('on',b.textContent===(ML_MAP[m]||m));});rMes();}
 function setUni(u){uniAtual=u;document.querySelectorAll('#mes-useg button').forEach(function(b){b.classList.toggle('on',b.textContent===(u==='TODAS'?'Todas':nomeUni(u)));});rMes();}
 function nomeUni(f){var map={'MARCO':'Marco','PORTO FUTURO':'Porto Futuro','UMARIZAL':'Umarizal'};return map[f]||f.charAt(0)+f.slice(1).toLowerCase();}
 
@@ -1217,12 +1274,14 @@ function atualizarGranularidadeCMC(){
   var jaTinhaCache=!!ANALISE_SEMANAL_CACHE[mesNoMomento];
   obterAnaliseSemanalCache_(mesNoMomento, function(){
     if(mesAtual!==mesNoMomento)return; // usuário já trocou de mês antes da resposta voltar
+    if(periodoAtualCMC.tipo==='custom')return; // período personalizado não usa o seletor de semana/quinzena
     montarGranSeg_('mes-granseg', mesNoMomento, periodoAtualCMC, 'setPeriodoCMC');
     if(!jaTinhaCache&&periodoAtualCMC.tipo!=='mes')rMes();
   });
 }
 function setPeriodoCMC(key){
   periodoAtualCMC=key?chaveParaPeriodo_(key):{tipo:'mes'};
+  limparPeriodoCustomCMC();
   montarGranSeg_('mes-granseg', mesAtual, periodoAtualCMC, 'setPeriodoCMC');
   rMes();
 }
@@ -1238,15 +1297,12 @@ function valorEvolucaoCMC(key){
   return dadosPeriodoCMC(mesAtual, chaveParaPeriodo_(key));
 }
 
-// Retorna o objeto de dados do mês conforme a unidade selecionada -- ou,
-// quando mesAtual tem uma semana/quinzena selecionada, os dados desse
-// período (mesma forma, fonte diferente — ver dadosPeriodoCMC).
-function dadosMes(mes){
-  if(mes===mesAtual&&periodoAtualCMC.tipo!=='mes'){
-    var dp=dadosPeriodoCMC(mes, periodoAtualCMC);
-    if(dp)return dp;
-  }
-  var d=CMC[mes];if(!d)return null;
+// Extrai o formato usado pela tela (cmc_total, grupos, transf...) da
+// unidade selecionada a partir de um objeto no formato cmc[mes] -- usado
+// tanto pro mês inteiro (CMC[mes]) quanto pro período personalizado
+// (mesmo formato, fonte diferente: calcularPeriodoPersonalizado).
+function extrairCMCPorUnidade_(d){
+  if(!d)return null;
   var tr=d.transferencias||null;
   if(uniAtual==='TODAS')return {cmc_total:d.cmc_total,faturamento:d.faturamento||0,grupos:d.grupos,transf:tr,transfUni:null,transfSaldo:tr?tr.total:0,transfEntrada:0,transfSaida:0,
     transfEntradaQtd:0,cmcComTransf:d.cmc_total,cmcPctFatComTransf:d.cmc_pct_fat};
@@ -1263,6 +1319,22 @@ function dadosMes(mes){
     transfEntradaQtd:0,cmcComTransf:0,cmcPctFatComTransf:null};
 }
 
+// Retorna o objeto de dados do mês conforme a unidade selecionada -- ou,
+// quando mesAtual tem uma semana/quinzena/período personalizado
+// selecionado, os dados desse período (mesma forma, fonte diferente — ver
+// dadosPeriodoCMC / extrairCMCPorUnidade_).
+function dadosMes(mes){
+  if(mes===mesAtual&&periodoAtualCMC.tipo==='custom'){
+    var dc=extrairCMCPorUnidade_(CUSTOM_CMC_CACHE[periodoAtualCMC.key]);
+    if(dc)return dc;
+  }
+  if(mes===mesAtual&&periodoAtualCMC.tipo!=='mes'&&periodoAtualCMC.tipo!=='custom'){
+    var dp=dadosPeriodoCMC(mes, periodoAtualCMC);
+    if(dp)return dp;
+  }
+  return extrairCMCPorUnidade_(CMC[mes]);
+}
+
 function rMes(){
   atualizarGranularidadeCMC();
   var d=dadosMes(mesAtual);
@@ -1270,7 +1342,7 @@ function rMes(){
   // não soma grupo a grupo entre unidades com datas de contagem diferentes --
   // ver comentário lá) -- isso NÃO significa "sem dados": o cmc_total é real.
   // Só trata como "sem dados de verdade" quando falta o total em si.
-  var semGrupos = (uniAtual!=='TODAS' || periodoAtualCMC.tipo==='mes')
+  var semGrupos = (uniAtual!=='TODAS' || periodoAtualCMC.tipo==='mes' || periodoAtualCMC.tipo==='custom')
     ? (!d||!d.grupos||Object.keys(d.grupos).length===0)
     : (!d||d.cmc_total===undefined||d.cmc_total===null);
   if(semGrupos){
@@ -1352,8 +1424,10 @@ function rMes(){
   // ===== RANKING =====
   document.getElementById('rank-mes').textContent=labelAtual+' · '+grupos.length+' grupos';
   var maxV=grupos[0]?grupos[0].total:1;
-  if(!grupos.length&&uniAtual==='TODAS'&&periodoAtualCMC.tipo!=='mes'){
+  if(!grupos.length&&uniAtual==='TODAS'&&periodoAtualCMC.tipo!=='mes'&&periodoAtualCMC.tipo!=='custom'){
     document.getElementById('mes-rank').innerHTML='<div class="empty">"Todas" nesta Semana/Quinzena mostra só o total consolidado — escolha uma unidade específica pra ver o detalhe por grupo.</div>';
+  }else if(!grupos.length){
+    document.getElementById('mes-rank').innerHTML='<div class="empty">Sem compras nesse período.</div>';
   }else{
     document.getElementById('mes-rank').innerHTML=grupos.slice(0,12).map(function(g){
       var w=(g.total/maxV*100).toFixed(1);

@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-09-16.1';
+var VERSAO_APP = '2026-09-16.2';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -1514,6 +1514,57 @@ function calcularAnaliseSemanal(senha, mes, ano) {
     return JSON.stringify({ ok: true, semanas: semanas, quinzenas: quinzenas, avisos: avisos });
   } catch (err) {
     Logger.log('calcularAnaliseSemanal ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
+// Período livre (Análise Mês a Mês > "Período personalizado"): compras +
+// faturamento entre duas datas quaisquer escolhidas na tela, SEM depender
+// de nenhuma contagem/Semana do Mês salva -- ao contrário da Análise
+// Semanal, aqui não existe EI/EF (isso exige uma contagem física de
+// verdade numa data real; não dá pra "inventar" um Estoque Inicial pra
+// uma data arbitrária), então só mostra Compras/CMC + faturamento, no
+// mesmo formato de cmc[mes] (grupos, transferências etc.) -- alimenta a
+// mesma tela rica de "Análise Mês a Mês" (rMes), só que a partir de um
+// intervalo de dias livre em vez de mês/semana/quinzena.
+// dataIniStr/dataFimStr: "DD/MM/AAAA". Ambas as datas são INCLUSIVE (ao
+// contrário do início das Semanas do Mês, que é exclusivo pra não duplicar
+// o dia de virada entre semanas consecutivas -- aqui não existe período
+// anterior encadeado, então não há o que duplicar). Pra reaproveitar as
+// funções "Cross" (que tratam início como exclusivo) sem duplicar lógica,
+// passamos o dia ANTERIOR ao início escolhido -- dia 0 é um valor seguro
+// mesmo no dia 1 do mês (nenhuma linha real tem dia "00", então vira um
+// sentinela que nunca exclui nada de verdade; ver comentário de
+// somarPeriodoPreAgregadoCross_ em Dados.js pra o raciocínio completo).
+function calcularPeriodoPersonalizado(senha, dataIniStr, dataFimStr) {
+  if (!validarSenha(senha)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var ini = parseDataCompleta(dataIniStr);
+    var fim = parseDataCompleta(dataFimStr);
+    if (!ini || !fim) {
+      return JSON.stringify({ ok: false, erro: 'Data invalida.' });
+    }
+    if (fim.ts < ini.ts) {
+      return JSON.stringify({ ok: false, erro: 'A data final não pode ser antes da data inicial.' });
+    }
+
+    var rowsCompras = lerTodosCSVs('compras');
+    var rowsVendas  = lerTodosCSVs('vendas');
+    var porDiaVendas = preAgregarVendasPorDia(rowsVendas);
+
+    var diaIniAjustado = ini.dia - 1; // sentinela: inclui o dia de inicio escolhido
+    var cmcPeriodo = processarComprasIntervaloDiasCross_(rowsCompras, ini.mes, ini.ano, diaIniAjustado, fim.mes, fim.ano, fim.dia);
+    injetarFaturamentoCmcPeriodo_(cmcPeriodo, porDiaVendas, ini.mes, ini.ano, diaIniAjustado, fim.mes, fim.ano, fim.dia);
+
+    return JSON.stringify({
+      ok: true, dados: cmcPeriodo,
+      dataIni: pad2(ini.dia) + '/' + pad2(ini.mes) + '/' + ini.ano,
+      dataFim: pad2(fim.dia) + '/' + pad2(fim.mes) + '/' + fim.ano
+    });
+  } catch (err) {
+    Logger.log('calcularPeriodoPersonalizado ERROR: ' + err.message + '\n' + err.stack);
     return JSON.stringify({ ok: false, erro: err.message });
   }
 }
