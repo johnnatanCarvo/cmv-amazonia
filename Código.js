@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-09-16.2';
+var VERSAO_APP = '2026-09-16.3';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -1565,6 +1565,85 @@ function calcularPeriodoPersonalizado(senha, dataIniStr, dataFimStr) {
     });
   } catch (err) {
     Logger.log('calcularPeriodoPersonalizado ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
+// CMV Real de período livre (aba CMV > "Período personalizado"): ao invés
+// de datas de calendário (isso não existe pra CMV, ver comentário de
+// calcularPeriodoPersonalizado acima), o usuário escolhe DUAS contagens já
+// salvas (quaisquer, não só as atreladas a uma Semana do Mês) como Estoque
+// Inicial e Final -- exatamente o mesmo que ele já faz em Ajustes >
+// Inventário > Semanas do Mês, só que sem estar preso aos 4 slots fixos.
+// Mesma regra de início exclusivo de sempre (a contagem inicial já
+// capturou o estoque até aquele momento; contar de novo a compra do mesmo
+// dia duplicaria).
+function calcularCMVPersonalizado(senha, unidade, inventarioInicialId, inventarioFinalId) {
+  if (!validarSenha(senha)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var inventarios = obterInventariosSalvos_();
+    var invPorId = {};
+    inventarios.forEach(function(i) { invPorId[i.id] = i; });
+    var dataPorContagemId = lerDataPorContagemId_();
+
+    var invInicial = invPorId[inventarioInicialId];
+    var invFinal = invPorId[inventarioFinalId];
+    if (!invInicial || !invFinal) {
+      return JSON.stringify({ ok: false, erro: 'Um dos inventários selecionados não existe mais.' });
+    }
+    var infoInicial = resolverDataInventario_(invInicial, dataPorContagemId);
+    var infoFinal = resolverDataInventario_(invFinal, dataPorContagemId);
+    if (!infoInicial || !infoFinal) {
+      return JSON.stringify({ ok: false, erro: 'Não foi possível resolver a data de um dos inventários.' });
+    }
+    if (infoFinal.ts <= infoInicial.ts) {
+      return JSON.stringify({ ok: false, erro: 'O inventário final precisa ser de uma data depois do inicial.' });
+    }
+
+    var rowsCompras = lerTodosCSVs('compras');
+    var rowsVendas  = lerTodosCSVs('vendas');
+    var rowsFichas  = lerFichaTecnica();
+    var fichasMap   = processarFichas(rowsFichas);
+    var historicoPorInsumo = preAgregarCustoMedioPorInsumo(rowsCompras);
+    var catalogo    = preAgregarCatalogoProdutos(rowsCompras, rowsVendas);
+    var catalogoPorCodigo = preAgregarCatalogoPorCodigo(rowsCompras);
+    var fichaPorCodigo = preAgregarFichaPorCodigo(rowsFichas);
+    var porDiaCompras = preAgregarComprasPorDia(rowsCompras);
+    var porDiaVendas  = preAgregarVendasPorDia(rowsVendas);
+
+    var itensInicial = buscarItensDeContagens_(invInicial.contagemIds);
+    var itensFinal   = buscarItensDeContagens_(invFinal.contagemIds);
+    var rotulo = 'Período personalizado, ' + unidade;
+    var mesNomeInicial = NOMES_MESES[infoInicial.mes];
+    var mesNomeFinal   = NOMES_MESES[infoFinal.mes];
+    var valInicial = valorizarItensInventario_(itensInicial, mesNomeInicial, infoInicial.ano, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (inicial)', catalogoPorCodigo, fichaPorCodigo);
+    var valFinal   = valorizarItensInventario_(itensFinal, mesNomeFinal, infoFinal.ano, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (final)', catalogoPorCodigo, fichaPorCodigo);
+    var avisos = [].concat(valInicial.avisos).concat(valFinal.avisos);
+
+    var compras = somarPeriodoPreAgregadoCross_(porDiaCompras, infoInicial.mes, infoInicial.ano, infoInicial.dia, infoFinal.mes, infoFinal.ano, infoFinal.dia);
+    var vendas  = somarPeriodoPreAgregadoCross_(porDiaVendas, infoInicial.mes, infoInicial.ano, infoInicial.dia, infoFinal.mes, infoFinal.ano, infoFinal.dia);
+    var compraUni = compras.filiais[unidade] || 0;
+    var vendaUni  = vendas.filiais[unidade] || 0;
+    var ei = valInicial.total, ef = valFinal.total;
+    var cmv = r2(ei + compraUni - ef);
+
+    var cmcDetalhado = processarComprasIntervaloDiasCross_(rowsCompras, infoInicial.mes, infoInicial.ano, infoInicial.dia, infoFinal.mes, infoFinal.ano, infoFinal.dia);
+    injetarFaturamentoCmcPeriodo_(cmcDetalhado, porDiaVendas, infoInicial.mes, infoInicial.ano, infoInicial.dia, infoFinal.mes, infoFinal.ano, infoFinal.dia);
+    var cmvDetalhado = montarCMVDetalhadoUnidade_(valInicial.porProduto, valFinal.porProduto, rowsCompras, infoInicial.mes, infoInicial.ano, infoInicial.dia, infoFinal.mes, infoFinal.ano, infoFinal.dia, unidade);
+
+    var resultado = {
+      ei: r2(ei), ef: r2(ef), compras: r2(compraUni), faturamento: r2(vendaUni), cmv: cmv,
+      cmc_pct: calcularPct(compraUni, vendaUni), cmv_pct: calcularPct(cmv, vendaUni),
+      cmcDetalhado: cmcDetalhado, cmvDetalhado: cmvDetalhado,
+      dataInicio: pad2(infoInicial.dia) + '/' + pad2(infoInicial.mes) + '/' + infoInicial.ano,
+      dataFim: pad2(infoFinal.dia) + '/' + pad2(infoFinal.mes) + '/' + infoFinal.ano,
+      labelInicial: invInicial.label, labelFinal: invFinal.label
+    };
+    return JSON.stringify({ ok: true, dados: resultado, avisos: avisos });
+  } catch (err) {
+    Logger.log('calcularCMVPersonalizado ERROR: ' + err.message + '\n' + err.stack);
     return JSON.stringify({ ok: false, erro: err.message });
   }
 }

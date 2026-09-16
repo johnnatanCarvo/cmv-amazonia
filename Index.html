@@ -530,6 +530,16 @@ td.hi{font-weight:600;}
         <div class="mseg" id="cmv-mseg"></div>
         <div class="useg" id="cmv-useg"></div>
         <div class="mseg" id="cmv-granseg" style="display:none;"></div>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button type="button" class="gd-close" id="cmv-custom-toggle" onclick="toggleCustomCMV()">Período personalizado</button>
+          <div id="cmv-custom-box" style="display:none;align-items:center;gap:6px;">
+            <select id="cmv-custom-ini" style="font-size:12px;padding:5px 7px;border:1px solid var(--ln2);border-radius:7px;background:var(--bg3);color:var(--fg);font-family:inherit;max-width:180px;"></select>
+            <span style="font-size:12px;color:var(--fg2);">até</span>
+            <select id="cmv-custom-fim" style="font-size:12px;padding:5px 7px;border:1px solid var(--ln2);border-radius:7px;background:var(--bg3);color:var(--fg);font-family:inherit;max-width:180px;"></select>
+            <button type="button" class="gd-close" onclick="aplicarPeriodoCustomCMV()">Aplicar</button>
+          </div>
+        </div>
+        <div id="cmv-custom-label" style="display:none;font-size:12px;color:var(--ac);font-weight:600;"></div>
       </div>
     </div>
 
@@ -1634,7 +1644,102 @@ function fecharGrupo(){
    ============================================================ */
 var mesCMV='', uniCMV='TODAS', cmvGrupoOrder='cmv';
 
+/* ── Período personalizado (CMV) ──────────────────────────────
+   Ao contrário do CMC, aqui não dá pra escolher datas de calendário
+   livremente -- Estoque Inicial/Final só existem em cima de contagens
+   físicas reais. Em vez disso, o usuário escolhe DUAS contagens já
+   salvas (quaisquer, não só as atreladas a uma Semana do Mês) direto
+   nos dropdowns -- mesma ideia de Ajustes > Inventário > Semanas do
+   Mês, sem estar preso aos 4 slots fixos. Só funciona com uma unidade
+   específica selecionada (inventário é por unidade, não dá pra
+   combinar "Todas"). */
+var CUSTOM_CMV_CACHE={};
+var periodoCustomCMVBoxAberto=false;
+var INVENTARIOS_SALVOS_CACHE=null;
+
+function toggleCustomCMV(){
+  if(uniCMV==='TODAS'){alert('Escolha uma unidade específica (Marco, Porto Futuro ou Umarizal) antes de usar período personalizado.');return;}
+  periodoCustomCMVBoxAberto=!periodoCustomCMVBoxAberto;
+  document.getElementById('cmv-custom-box').style.display=periodoCustomCMVBoxAberto?'flex':'none';
+  if(periodoCustomCMVBoxAberto)carregarInventariosParaCustomCMV_();
+}
+
+function carregarInventariosParaCustomCMV_(){
+  function popular(lista){
+    var doUniCMV=lista.filter(function(i){return i.unidade===uniCMV;});
+    var opts='<option value="">Selecione…</option>'+doUniCMV.map(function(i){return '<option value="'+i.id+'">'+i.label+'</option>';}).join('');
+    document.getElementById('cmv-custom-ini').innerHTML=opts;
+    document.getElementById('cmv-custom-fim').innerHTML=opts;
+    if(!doUniCMV.length){
+      document.getElementById('cmv-custom-ini').innerHTML='<option value="">Nenhum inventário salvo pra '+nomeUni(uniCMV)+'</option>';
+    }
+  }
+  if(INVENTARIOS_SALVOS_CACHE){popular(INVENTARIOS_SALVOS_CACHE);return;}
+  google.script.run.withSuccessHandler(function(json){
+    var res;try{res=JSON.parse(json);}catch(e){res=null;}
+    INVENTARIOS_SALVOS_CACHE=(res&&res.ok)?res.inventarios:[];
+    popular(INVENTARIOS_SALVOS_CACHE);
+  }).withFailureHandler(function(){
+    document.getElementById('cmv-custom-ini').innerHTML='<option value="">Erro ao carregar inventários</option>';
+  }).listarInventariosSalvos(SENHA_ATUAL);
+}
+
+function aplicarPeriodoCustomCMV(){
+  var idIni=document.getElementById('cmv-custom-ini').value;
+  var idFim=document.getElementById('cmv-custom-fim').value;
+  if(!idIni||!idFim){alert('Escolha os dois inventários.');return;}
+  if(idIni===idFim){alert('Escolha dois inventários diferentes.');return;}
+  var chave=uniCMV+'|'+idIni+'|'+idFim;
+  function aplicar(dados){
+    CUSTOM_CMV_CACHE[chave]=dados;
+    periodoAtualCMV={tipo:'custom',key:chave};
+    document.getElementById('cmv-granseg').style.display='none';
+    document.querySelectorAll('#cmv-mseg button').forEach(function(b){b.classList.remove('on');});
+    var lbl=document.getElementById('cmv-custom-label');
+    lbl.style.display='block';lbl.textContent='Período personalizado: '+dados.labelInicial+' → '+dados.labelFinal+' ('+dados.dataInicio+' a '+dados.dataFim+')';
+    rCMV();
+  }
+  if(CUSTOM_CMV_CACHE[chave]){aplicar(CUSTOM_CMV_CACHE[chave]);return;}
+  google.script.run.withSuccessHandler(function(json){
+    var res;try{res=JSON.parse(json);}catch(e){res=null;}
+    if(!res||!res.ok){alert('Não foi possível calcular esse período: '+(res&&res.erro||'erro desconhecido'));return;}
+    aplicar(res.dados);
+  }).withFailureHandler(function(err){alert('Erro ao calcular período: '+err);}).calcularCMVPersonalizado(SENHA_ATUAL, uniCMV, idIni, idFim);
+}
+
+function limparPeriodoCustomCMV(){
+  var lbl=document.getElementById('cmv-custom-label');
+  if(lbl)lbl.style.display='none';
+  periodoCustomCMVBoxAberto=false;
+  var box=document.getElementById('cmv-custom-box');
+  if(box)box.style.display='none';
+}
+
+// Mesma extração de dadosPeriodoCMV (ramo "unidade específica"), só que a
+// partir do resultado plano de calcularCMVPersonalizado em vez de um
+// bloco de Semana/Quinzena.
+function extrairCMVCustom_(){
+  var resultado=CUSTOM_CMV_CACHE[periodoAtualCMV.key];
+  if(!resultado||!resultado.cmvDetalhado)return null;
+  var f=resultado.cmvDetalhado;
+  var fatFil=resultado.faturamento||0;
+  var pct=(fatFil>0)?Math.round(f.cmv/fatFil*10000)/100:null;
+  var pctPuro=(fatFil>0&&f.cmv_puro!==undefined)?Math.round(f.cmv_puro/fatFil*10000)/100:null;
+  var pctSemAjuste=(fatFil>0&&f.cmv_sem_ajuste!==undefined)?Math.round(f.cmv_sem_ajuste/fatFil*10000)/100:null;
+  return {ei:f.ei,ef:f.ef,compras:f.compras,cmv:f.cmv,pct:pct,fat:fatFil,
+    data_ei:resultado.dataInicio||null,data_ef:resultado.dataFim||null,grupos:(f.grupos||null),
+    transfEntrada:f.transf_entrada||0,transfSaida:f.transf_saida||0,transfSaldo:f.transf_saldo||0,
+    cmvAjustado:f.cmv,pctAjustado:pct,
+    cmvSemAjuste:(f.cmv_sem_ajuste!==undefined?f.cmv_sem_ajuste:f.cmv),pctSemAjuste:pctSemAjuste,
+    comprasPuro:(f.compras_puro!==undefined?f.compras_puro:f.compras),
+    cmvPuro:(f.cmv_puro!==undefined?f.cmv_puro:f.cmv),pctPuro:pctPuro};
+}
+
 function cmvDados(mes){
+  if(periodoAtualCMV.tipo==='custom'){
+    var dcustom=extrairCMVCustom_();
+    if(dcustom)return dcustom;
+  }
   if(mes===mesCMV&&periodoAtualCMV.tipo!=='mes'){
     var dp=dadosPeriodoCMV(mes, periodoAtualCMV);
     if(dp)return dp;
@@ -1658,8 +1763,8 @@ function cmvDados(mes){
   return null;
 }
 
-function setMesCMV(m){mesCMV=m;periodoAtualCMV={tipo:'mes'};document.querySelectorAll('#cmv-mseg button').forEach(function(b){b.classList.toggle('on',b.dataset.m===m);});rCMV();}
-function setUniCMV(u){uniCMV=u;document.querySelectorAll('#cmv-useg button').forEach(function(b){b.classList.toggle('on',b.textContent===(u==='TODAS'?'Todas':nomeUni(u)));});rCMV();}
+function setMesCMV(m){mesCMV=m;periodoAtualCMV={tipo:'mes'};limparPeriodoCustomCMV();document.querySelectorAll('#cmv-mseg button').forEach(function(b){b.classList.toggle('on',b.dataset.m===m);});rCMV();}
+function setUniCMV(u){uniCMV=u;periodoAtualCMV={tipo:'mes'};limparPeriodoCustomCMV();document.querySelectorAll('#cmv-useg button').forEach(function(b){b.classList.toggle('on',b.textContent===(u==='TODAS'?'Todas':nomeUni(u)));});rCMV();}
 
 function atualizarGranularidadeCMV(){
   var mesNoMomento=mesCMV;
@@ -1667,12 +1772,14 @@ function atualizarGranularidadeCMV(){
   var jaTinhaCache=!!ANALISE_SEMANAL_CACHE[mesNoMomento];
   obterAnaliseSemanalCache_(mesNoMomento, function(){
     if(mesCMV!==mesNoMomento)return;
+    if(periodoAtualCMV.tipo==='custom')return; // período personalizado não usa o seletor de semana/quinzena
     montarGranSeg_('cmv-granseg', mesNoMomento, periodoAtualCMV, 'setPeriodoCMV');
     if(!jaTinhaCache&&periodoAtualCMV.tipo!=='mes')rCMV();
   });
 }
 function setPeriodoCMV(key){
   periodoAtualCMV=key?chaveParaPeriodo_(key):{tipo:'mes'};
+  limparPeriodoCustomCMV();
   montarGranSeg_('cmv-granseg', mesCMV, periodoAtualCMV, 'setPeriodoCMV');
   rCMV();
 }
