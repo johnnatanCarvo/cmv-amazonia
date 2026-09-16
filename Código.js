@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-09-16.4';
+var VERSAO_APP = '2026-09-16.5';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -137,7 +137,7 @@ function getPayload(senha) {
     _lap('calcularCMVTeorico');
     var demandaInsumos = calcularDemandaInsumos(vendas, receitas);
     _lap('calcularDemandaInsumos');
-    var reconciliacaoInsumos = reconciliarInsumos(demandaInsumos, receitas);
+    var reconciliacaoInsumos = reconciliarInsumos(demandaInsumos, receitas, rowsEstoque, rowsCompras);
     _lap('reconciliarInsumos');
 
     // Faturamento por mês a partir das vendas (by_mes)
@@ -2511,8 +2511,33 @@ function editarQtdCompra(senha, arquivo, linha, novaQtd) {
 }
 
 // Lê todas as contagens de estoque (só linhas de Inventário) com metadados de origem.
-function lerContagensBrutas() {
+// rowsEstoquePreLidas (opcional): quando informado (array-de-arrays já
+// parseado, ex: lerTodosCSVs('estoque')), usa ESSAS linhas em vez de reler
+// e reparsear os arquivos do Drive do zero -- evita re-pagar o custo de
+// Drive I/O quando quem chama (reconciliarInsumos, dentro de getPayload)
+// já leu o mesmo CSV momentos antes. Nesse modo "arquivo"/"linha" ficam
+// null (a posição original por arquivo se perde ao concatenar) -- tudo
+// bem, porque só listarContagemMes (que NUNCA passa esse parametro) usa
+// esses dois campos, pra permitir editar a linha certa depois.
+function lerContagensBrutas(rowsEstoquePreLidas) {
   var linhas = [];
+  if (rowsEstoquePreLidas) {
+    for (var i = 1; i < rowsEstoquePreLidas.length; i++) {
+      var cel = rowsEstoquePreLidas[i];
+      if (!cel || cel.length < 16) continue;
+      if (cel[C_ESTOQUE.tp_movto] !== ESTOQUE_TIPO_VALIDO) continue;
+      var dataInfo = parseDataCompleta(cel[C_ESTOQUE.data]);
+      if (!dataInfo) continue;
+      linhas.push({
+        arquivo: null, linha: null, ts: dataInfo.ts, mes: dataInfo.mes, ano: dataInfo.ano,
+        filial: cel[C_ESTOQUE.filial], grupo: cel[C_ESTOQUE.grupo], produto: cel[C_ESTOQUE.produto],
+        centro: cel[C_ESTOQUE.centro], unid: cel[C_ESTOQUE.unid],
+        saldo: numVal(cel[C_ESTOQUE.saldo]), custo_unit: numVal(cel[C_ESTOQUE.custo_unit]),
+        custo_total: numVal(cel[C_ESTOQUE.custo_total])
+      });
+    }
+    return linhas;
+  }
   arquivosDoTipo('estoque').forEach(function(f) {
     var linhasTexto = conteudoDoArquivo(f).split(/\r?\n/);
     for (var i = 1; i < linhasTexto.length; i++) {
@@ -2648,43 +2673,54 @@ function agregarSaldosPorProduto(linhasContagem) {
 //   - Filial de DESTINO: conta normalmente (o estoque dela aumentou de verdade).
 //   - Filial de ORIGEM: desconta a quantidade enviada (senão pareceria que ela
 //     ainda tem esse insumo disponível, inflando o Consumo Real dela).
-function agregarComprasPorProduto() {
+// rowsComprasPreLidas (opcional): mesma ideia de lerContagensBrutas() acima
+// -- quando informado (ex: lerTodosCSVs('compras')), usa essas linhas já
+// lidas em vez de reler e reparsear os arquivos do Drive do zero.
+function agregarComprasPorProduto(rowsComprasPreLidas) {
   var porMes = {};
+  function processarLinha(cel) {
+    if (!cel || cel.length < 18) return;
+    var mes = mesNum(cel[C_COMPRAS.data]);
+    if (!mes) return;
+    var mesNome = NOMES_MESES[mes];
+    var produto = limpaCelula(cel[C_COMPRAS.produto]);
+    var filial  = limpaCelula(cel[C_COMPRAS.filial]) || 'OUTRA';
+    var qtd     = numVal(cel[C_COMPRAS.qtd]);
+    var unid    = limpaCelula(cel[C_COMPRAS.unid]);
+    if (!produto || qtd <= 0) return;
+
+    if (!porMes[mesNome]) porMes[mesNome] = { produtos: {}, unidades: {}, filiais: {} };
+    var bucket = porMes[mesNome];
+    if (!bucket.filiais[filial]) bucket.filiais[filial] = { produtos: {}, unidades: {} };
+
+    var fornecedor = limpaCelula(cel[C_COMPRAS_FORNECEDOR]);
+    var pareceTransf = fornecedor.toUpperCase().indexOf(TRANSFERENCIA_MARCADOR) >= 0;
+    var filOrig = pareceTransf ? filialOrigem(fornecedor) : null;
+    var ehTransf = pareceTransf && filOrig !== filial;
+
+    bucket.unidades[produto] = unid;
+    bucket.filiais[filial].unidades[produto] = unid;
+    bucket.filiais[filial].produtos[produto] = (bucket.filiais[filial].produtos[produto] || 0) + qtd;
+
+    if (ehTransf) {
+      if (!bucket.filiais[filOrig]) bucket.filiais[filOrig] = { produtos: {}, unidades: {} };
+      bucket.filiais[filOrig].produtos[produto] = (bucket.filiais[filOrig].produtos[produto] || 0) - qtd;
+      bucket.filiais[filOrig].unidades[produto] = unid;
+    } else {
+      bucket.produtos[produto] = (bucket.produtos[produto] || 0) + qtd;
+    }
+  }
+
+  if (rowsComprasPreLidas) {
+    for (var i = 1; i < rowsComprasPreLidas.length; i++) processarLinha(rowsComprasPreLidas[i]);
+    return porMes;
+  }
   arquivosDoTipo('compras').forEach(function(f) {
     var linhasTexto = conteudoDoArquivo(f).split(/\r?\n/);
     for (var i = 1; i < linhasTexto.length; i++) {
       if (!linhasTexto[i]) continue;
       var cel = linhasTexto[i].split('\t').map(function(c) { return c.replace(/^"|"$/g, ''); });
-      if (cel.length < 18) continue;
-      var mes = mesNum(cel[C_COMPRAS.data]);
-      if (!mes) continue;
-      var mesNome = NOMES_MESES[mes];
-      var produto = limpaCelula(cel[C_COMPRAS.produto]);
-      var filial  = limpaCelula(cel[C_COMPRAS.filial]) || 'OUTRA';
-      var qtd     = numVal(cel[C_COMPRAS.qtd]);
-      var unid    = limpaCelula(cel[C_COMPRAS.unid]);
-      if (!produto || qtd <= 0) continue;
-
-      if (!porMes[mesNome]) porMes[mesNome] = { produtos: {}, unidades: {}, filiais: {} };
-      var bucket = porMes[mesNome];
-      if (!bucket.filiais[filial]) bucket.filiais[filial] = { produtos: {}, unidades: {} };
-
-      var fornecedor = limpaCelula(cel[C_COMPRAS_FORNECEDOR]);
-      var pareceTransf = fornecedor.toUpperCase().indexOf(TRANSFERENCIA_MARCADOR) >= 0;
-      var filOrig = pareceTransf ? filialOrigem(fornecedor) : null;
-      var ehTransf = pareceTransf && filOrig !== filial;
-
-      bucket.unidades[produto] = unid;
-      bucket.filiais[filial].unidades[produto] = unid;
-      bucket.filiais[filial].produtos[produto] = (bucket.filiais[filial].produtos[produto] || 0) + qtd;
-
-      if (ehTransf) {
-        if (!bucket.filiais[filOrig]) bucket.filiais[filOrig] = { produtos: {}, unidades: {} };
-        bucket.filiais[filOrig].produtos[produto] = (bucket.filiais[filOrig].produtos[produto] || 0) - qtd;
-        bucket.filiais[filOrig].unidades[produto] = unid;
-      } else {
-        bucket.produtos[produto] = (bucket.produtos[produto] || 0) + qtd;
-      }
+      processarLinha(cel);
     }
   });
   return porMes;
@@ -2753,11 +2789,17 @@ function montarListaReconciliada(teoricoItens, saldosEI, saldosEF, compras, insu
 // Reconcilia, por mês (e por filial), Estoque Inicial + Compras - Estoque
 // Final (Consumo Real, vindo da contagem física) contra o Consumo Teórico
 // (vindo da explosão de receita em calcularDemandaInsumos).
-function reconciliarInsumos(demandaInsumos, receitas) {
+// rowsEstoquePreLidas/rowsComprasPreLidas (opcionais): getPayload ja leu
+// esses CSVs momentos antes (lerTodosCSVs) -- passar pra ca evita reler e
+// reparsear tudo de novo do Drive (era o maior gargalo isolado dentro de
+// reconciliarInsumos, ~9s numa base com 9 meses de dados). Quem chama sem
+// esses parametros (nenhum outro lugar chama hoje, mas mantido por
+// seguranca) cai no comportamento antigo, lendo do Drive direto.
+function reconciliarInsumos(demandaInsumos, receitas, rowsEstoquePreLidas, rowsComprasPreLidas) {
   var resultado = {};
-  var linhasContagem = lerContagensBrutas();
+  var linhasContagem = lerContagensBrutas(rowsEstoquePreLidas);
   var saldosPorTs = agregarSaldosPorProduto(linhasContagem);
-  var comprasPorMes = agregarComprasPorProduto();
+  var comprasPorMes = agregarComprasPorProduto(rowsComprasPreLidas);
   var insumosValidos = todosInsumosFolha(receitas);
 
   Object.keys(demandaInsumos).forEach(function(mes) {
