@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-09-16.5';
+var VERSAO_APP = '2026-09-16.6';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -2796,11 +2796,20 @@ function montarListaReconciliada(teoricoItens, saldosEI, saldosEF, compras, insu
 // esses parametros (nenhum outro lugar chama hoje, mas mantido por
 // seguranca) cai no comportamento antigo, lendo do Drive direto.
 function reconciliarInsumos(demandaInsumos, receitas, rowsEstoquePreLidas, rowsComprasPreLidas) {
+  var _t0i = new Date().getTime();
   var resultado = {};
   var linhasContagem = lerContagensBrutas(rowsEstoquePreLidas);
+  Logger.log('[PERF-RI] lerContagensBrutas: ' + (new Date().getTime() - _t0i) + 'ms -- ' + linhasContagem.length + ' linhas');
+  var _t1i = new Date().getTime();
   var saldosPorTs = agregarSaldosPorProduto(linhasContagem);
+  Logger.log('[PERF-RI] agregarSaldosPorProduto: ' + (new Date().getTime() - _t1i) + 'ms');
+  var _t2i = new Date().getTime();
   var comprasPorMes = agregarComprasPorProduto(rowsComprasPreLidas);
+  Logger.log('[PERF-RI] agregarComprasPorProduto: ' + (new Date().getTime() - _t2i) + 'ms');
+  var _t3i = new Date().getTime();
   var insumosValidos = todosInsumosFolha(receitas);
+  Logger.log('[PERF-RI] todosInsumosFolha: ' + (new Date().getTime() - _t3i) + 'ms');
+  var _t4i = new Date().getTime();
 
   Object.keys(demandaInsumos).forEach(function(mes) {
     var d = demandaInsumos[mes];
@@ -2825,6 +2834,7 @@ function reconciliarInsumos(demandaInsumos, receitas, rowsEstoquePreLidas, rowsC
       });
     }
   });
+  Logger.log('[PERF-RI] loop de meses/filiais (montarListaReconciliada): ' + (new Date().getTime() - _t4i) + 'ms');
 
   return resultado;
 }
