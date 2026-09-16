@@ -1665,9 +1665,16 @@ function toggleCustomCMV(){
 }
 
 function carregarInventariosParaCustomCMV_(){
+  // Mostra a DATA real de cada contagem (não só o rótulo que foi digitado
+  // ao salvar) e ordena cronologicamente -- escolher "por data" só faz
+  // sentido enxergando a data de cada opção, não um nome arbitrário tipo
+  // "1ª semana setembro" que não deixa óbvio o dia exato.
   function popular(lista){
     var doUniCMV=lista.filter(function(i){return i.unidade===uniCMV;});
-    var opts='<option value="">Selecione…</option>'+doUniCMV.map(function(i){return '<option value="'+i.id+'">'+i.label+'</option>';}).join('');
+    var opts='<option value="">Selecione…</option>'+doUniCMV.map(function(i){
+      var rotulo=(i.data?i.data+' — ':'')+i.label;
+      return '<option value="'+i.id+'">'+rotulo+'</option>';
+    }).join('');
     document.getElementById('cmv-custom-ini').innerHTML=opts;
     document.getElementById('cmv-custom-fim').innerHTML=opts;
     if(!doUniCMV.length){
@@ -1681,7 +1688,7 @@ function carregarInventariosParaCustomCMV_(){
     popular(INVENTARIOS_SALVOS_CACHE);
   }).withFailureHandler(function(){
     document.getElementById('cmv-custom-ini').innerHTML='<option value="">Erro ao carregar inventários</option>';
-  }).listarInventariosSalvos(SENHA_ATUAL);
+  }).listarInventariosSalvosComData(SENHA_ATUAL);
 }
 
 function aplicarPeriodoCustomCMV(){

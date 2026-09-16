@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-09-16.9';
+var VERSAO_APP = '2026-09-16.10';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -1018,6 +1018,37 @@ function listarInventariosSalvos(senha) {
     return JSON.stringify({ ok: true, inventarios: lista });
   } catch (err) {
     Logger.log('listarInventariosSalvos ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
+// Mesma lista de listarInventariosSalvos, mas com a DATA real resolvida de
+// cada inventário (mesma logica de resolverDataInventario_, ja usada em
+// calcularAnaliseSemanal) -- o rotulo que a pessoa deu ao salvar (ex: "1ª
+// semana setembro") nem sempre deixa obvio qual data exata ele representa,
+// e pro CMV > "Período personalizado" escolher pela data é o que faz
+// sentido (a pessoa pensa em datas, nao em rotulos que ela mesma escreveu
+// meses atras). Ordenada por data (mais antiga primeiro), pra ler como um
+// calendario na tela.
+function listarInventariosSalvosComData(senha) {
+  if (!validarSenha(senha)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var lista = obterInventariosSalvos_();
+    var dataPorContagemId = lerDataPorContagemId_();
+    var comData = lista.map(function(inv) {
+      var info = resolverDataInventario_(inv, dataPorContagemId);
+      return {
+        id: inv.id, label: inv.label, unidade: inv.unidade,
+        data: info ? (pad2(info.dia) + '/' + pad2(info.mes) + '/' + info.ano) : null,
+        ts: info ? info.ts : null
+      };
+    });
+    comData.sort(function(a, b) { return (a.ts || '') < (b.ts || '') ? -1 : ((a.ts || '') > (b.ts || '') ? 1 : 0); });
+    return JSON.stringify({ ok: true, inventarios: comData });
+  } catch (err) {
+    Logger.log('listarInventariosSalvosComData ERROR: ' + err.message + '\n' + err.stack);
     return JSON.stringify({ ok: false, erro: err.message });
   }
 }
