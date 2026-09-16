@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-09-15.9';
+var VERSAO_APP = '2026-09-16.1';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -1381,10 +1381,28 @@ function calcularAnaliseSemanal(senha, mes, ano) {
       var valFinal   = valorizarItensInventario_(itensFinal, mes, anoNum, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (final)', catalogoPorCodigo, fichaPorCodigo);
       avisos = avisos.concat(valInicial.avisos).concat(valFinal.avisos);
 
+      // Semana 1 do mes (a primeira salva) e um caso especial pedido pelo
+      // cliente: COMPRAS e VENDAS dessa semana (e, por tabela, da 1a
+      // Quinzena, que comeca nela) devem somar sempre desde o DIA 1 do mes
+      // alvo -- nao a partir da data real da contagem de Estoque Inicial
+      // (que pode ter sido feita so no dia 2, 3 etc). O EI continua
+      // valorizado pela contagem real (e' um numero fisico contado, nao
+      // tem "intervalo" pra ajustar) -- so o INTERVALO usado pra somar
+      // compras/vendas muda. Usa diaInicioCompras=0 (em vez de 1) porque
+      // somarPeriodoPreAgregadoCross_/processarComprasIntervaloDiasCross_
+      // tratam o dia de inicio como EXCLUSIVO (ver comentario delas) --
+      // dia "0" nunca existe em nenhum mes, entao vira um sentinela seguro
+      // que inclui o dia 1 inteiro sem duplicar nada.
+      var ehPrimeiraSemanaDoMes = s.semanaNum === 1;
+      var mesInicioCompras = ehPrimeiraSemanaDoMes ? mesFimNum : infoInicial.mes;
+      var anoInicioCompras = ehPrimeiraSemanaDoMes ? anoNum : infoInicial.ano;
+      var diaInicioCompras = ehPrimeiraSemanaDoMes ? 0 : infoInicial.dia;
+
       blocos[s.semanaNum + '|' + s.unidade] = {
         semanaNum: s.semanaNum, unidade: s.unidade,
         diaInicio: infoInicial.dia, diaFim: infoFinal.dia,
         mesInicioNum: infoInicial.mes, anoInicio: infoInicial.ano,
+        mesInicioCompras: mesInicioCompras, anoInicioCompras: anoInicioCompras, diaInicioCompras: diaInicioCompras,
         dataInicio: pad2(infoInicial.dia) + '/' + pad2(infoInicial.mes) + '/' + infoInicial.ano,
         dataFim: pad2(infoFinal.dia) + '/' + pad2(infoFinal.mes) + '/' + infoFinal.ano,
         ei: valInicial.total, ef: valFinal.total,
@@ -1450,7 +1468,7 @@ function calcularAnaliseSemanal(senha, mes, ano) {
     var semanas = { 1: {}, 2: {}, 3: {}, 4: {} };
     Object.keys(blocos).forEach(function(chave) {
       var b = blocos[chave];
-      var periodo = montarPeriodo(b.ei, b.ef, b.mesInicioNum, b.anoInicio, b.diaInicio, b.diaFim, b.unidade, b.eiPorProduto, b.efPorProduto);
+      var periodo = montarPeriodo(b.ei, b.ef, b.mesInicioCompras, b.anoInicioCompras, b.diaInicioCompras, b.diaFim, b.unidade, b.eiPorProduto, b.efPorProduto);
       semanas[b.semanaNum][b.unidade] = Object.assign({
         dataInicio: b.dataInicio, dataFim: b.dataFim,
         labelInicial: b.labelInicial, labelFinal: b.labelFinal
@@ -1482,7 +1500,7 @@ function calcularAnaliseSemanal(senha, mes, ano) {
         if (!bFim) return; // essa unidade ainda não tem a segunda semana da quinzena salva
         porUnidade[u] = Object.assign({
           dataInicio: bIni.dataInicio, dataFim: bFim.dataFim
-        }, montarPeriodo(bIni.ei, bFim.ef, bIni.mesInicioNum, bIni.anoInicio, bIni.diaInicio, bFim.diaFim, u, bIni.eiPorProduto, bFim.efPorProduto));
+        }, montarPeriodo(bIni.ei, bFim.ef, bIni.mesInicioCompras, bIni.anoInicioCompras, bIni.diaInicioCompras, bFim.diaFim, u, bIni.eiPorProduto, bFim.efPorProduto));
       });
 
       if (!Object.keys(porUnidade).length) return;
