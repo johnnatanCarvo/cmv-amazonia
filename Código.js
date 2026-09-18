@@ -1718,13 +1718,22 @@ function calcularCMVPersonalizadoTodas(senha, dataIniStr, dataFimStr) {
     return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
   }
   try {
+    var resultado = calcularCMVPersonalizadoTodas_(dataIniStr, dataFimStr);
+    return JSON.stringify({ ok: true, dados: resultado, avisos: [] });
+  } catch (err) {
+    Logger.log('calcularCMVPersonalizadoTodas ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
+function calcularCMVPersonalizadoTodas_(dataIniStr, dataFimStr) {
     var dataIni = parseDataCompleta(dataIniStr);
     var dataFim = parseDataCompleta(dataFimStr);
     if (!dataIni || !dataFim) {
-      return JSON.stringify({ ok: false, erro: 'Data do período inválida.' });
+      throw new Error('Data do período inválida.');
     }
     if (dataFim.ts <= dataIni.ts) {
-      return JSON.stringify({ ok: false, erro: 'A data final do período precisa ser depois da inicial.' });
+      throw new Error('A data final do período precisa ser depois da inicial.');
     }
 
     var unidades = ['MARCO', 'PORTO FUTURO', 'UMARIZAL'];
@@ -1774,7 +1783,10 @@ function calcularCMVPersonalizadoTodas(senha, dataIniStr, dataFimStr) {
         detalheUnidades[u] = {
           eiData: pad2(eiInfo.dia) + '/' + pad2(eiInfo.mes) + '/' + eiInfo.ano,
           efData: pad2(efInfo.dia) + '/' + pad2(efInfo.mes) + '/' + efInfo.ano,
-          eiDesvioDias: eiInfo.desvioDias, efDesvioDias: efInfo.desvioDias
+          eiDesvioDias: eiInfo.desvioDias, efDesvioDias: efInfo.desvioDias,
+          ei: r2(valEi.total), ef: r2(valEf.total),
+          eiIds: eiInfo.ids, efIds: efInfo.ids,
+          eiItens: itensEi.length, efItens: itensEf.length
         };
       } else {
         todasDisponivel = false;
@@ -1793,11 +1805,7 @@ function calcularCMVPersonalizadoTodas(senha, dataIniStr, dataFimStr) {
       dataContagemInicial: dataIniFmt, dataContagemFinal: dataFimFmt,
       labelInicial: 'Todas as unidades', labelFinal: 'Todas as unidades'
     };
-    return JSON.stringify({ ok: true, dados: resultado, avisos: [] });
-  } catch (err) {
-    Logger.log('calcularCMVPersonalizadoTodas ERROR: ' + err.message + '\n' + err.stack);
-    return JSON.stringify({ ok: false, erro: err.message });
-  }
+    return resultado;
 }
 
 // ── CMC/CMV POR SEMANA DE CALENDÁRIO (SEGUNDA A DOMINGO) ────────────────
