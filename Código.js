@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-09-18.3';
+var VERSAO_APP = '2026-09-18.4';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -1748,6 +1748,8 @@ function calcularCMVPersonalizadoTodas_(dataIniStr, dataFimStr) {
       if (!contagensPorUnidade[uni]) contagensPorUnidade[uni] = [];
       contagensPorUnidade[uni].push({ id: String(r[0]).trim(), data: String(r[1]).trim() });
     }
+    var inventariosSalvos = obterInventariosSalvos_();
+    var dataPorContagemId = lerDataPorContagemId_();
 
     var rowsCompras = lerTodosCSVs('compras');
     var rowsVendas  = lerTodosCSVs('vendas');
@@ -1768,8 +1770,8 @@ function calcularCMVPersonalizadoTodas_(dataIniStr, dataFimStr) {
     var detalheUnidades = {};
     unidades.forEach(function(u) {
       var pd = agruparContagensPorDia_(contagensPorUnidade[u] || []);
-      var eiInfo = contagemMaisProxima_(pd, dataIni, JANELA_MAX_DIAS_CONTAGEM_PROXIMA);
-      var efInfo = contagemMaisProxima_(pd, dataFim, JANELA_MAX_DIAS_CONTAGEM_PROXIMA);
+      var eiInfo = contagemOuInventarioMaisProximo_(pd, inventariosSalvos, u, dataIni, dataPorContagemId, JANELA_MAX_DIAS_CONTAGEM_PROXIMA);
+      var efInfo = contagemOuInventarioMaisProximo_(pd, inventariosSalvos, u, dataFim, dataPorContagemId, JANELA_MAX_DIAS_CONTAGEM_PROXIMA);
       var compraUni = compras.filiais[u] || 0;
       var vendaUni  = vendas.filiais[u] || 0;
       somaCompras += compraUni; somaFat += vendaUni;
@@ -1891,6 +1893,47 @@ function contagemMaisProxima_(porDia, alvo, janelaMaxDias) {
   return { ts: melhor.ts, ano: melhor.ano, mes: melhor.mes, dia: melhor.dia, ids: melhor.ids, desvioDias: melhorDelta };
 }
 
+// A contagem "mais próxima" pura (agruparContagensPorDia_ + contagemMaisProxima_)
+// assume que todas as contagens de um MESMO DIA formam a foto completa do
+// estoque -- mas na prática o fechamento às vezes atravessa a virada da
+// meia-noite (ex: Estoquista só é contado de madrugada do dia seguinte),
+// e nesse caso o agrupamento por dia corta o fechamento pela metade,
+// subestimando o estoque. O inventário salvo manualmente (Ajustes >
+// Inventário > Semanas do Mês) já resolve isso -- a pessoa escolhe à mão
+// TODAS as contagens que juntas formam o fechamento certo, não importa em
+// que dia cada uma caiu. Por isso, sempre que existir um inventário salvo
+// da unidade dentro da janela, ele tem prioridade sobre o agrupamento
+// automático por dia (que só entra como fallback quando não há nada salvo
+// perto o suficiente).
+function inventarioSalvoMaisProximo_(inventariosSalvos, unidade, alvo, dataPorContagemId, janelaMaxDias) {
+  var alvoDate = new Date(alvo.ano, alvo.mes - 1, alvo.dia);
+  var melhor = null, melhorDelta = Infinity;
+  (inventariosSalvos || []).forEach(function(inv) {
+    if (inv.unidade !== unidade) return;
+    var info = resolverDataInventario_(inv, dataPorContagemId);
+    if (!info) return;
+    var infoDate = new Date(info.ano, info.mes - 1, info.dia);
+    var deltaDias = Math.round((infoDate - alvoDate) / 86400000);
+    var deltaAbs = Math.abs(deltaDias);
+    if (deltaAbs <= janelaMaxDias && deltaAbs < melhorDelta) {
+      melhor = { ano: info.ano, mes: info.mes, dia: info.dia, ids: inv.contagemIds, label: inv.label };
+      melhorDelta = deltaAbs;
+    }
+  });
+  if (!melhor) return null;
+  melhor.desvioDias = melhorDelta;
+  return melhor;
+}
+
+// Combina os dois: inventário salvo (curado à mão) tem prioridade; cai pro
+// agrupamento automático por dia só quando não há nada salvo dentro da
+// janela pra essa unidade/data.
+function contagemOuInventarioMaisProximo_(porDia, inventariosSalvos, unidade, alvo, dataPorContagemId, janelaMaxDias) {
+  var salvo = inventarioSalvoMaisProximo_(inventariosSalvos, unidade, alvo, dataPorContagemId, janelaMaxDias);
+  if (salvo) return salvo;
+  return contagemMaisProxima_(porDia, alvo, janelaMaxDias);
+}
+
 function calcularSemanaCalendario(senha, mes, ano) {
   if (!validarSenha(senha)) {
     return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
@@ -1913,6 +1956,8 @@ function calcularSemanaCalendario(senha, mes, ano) {
     }
     var porDiaPorUnidade = {};
     unidades.forEach(function(u) { porDiaPorUnidade[u] = agruparContagensPorDia_(contagensPorUnidade[u] || []); });
+    var inventariosSalvos = obterInventariosSalvos_();
+    var dataPorContagemId = lerDataPorContagemId_();
 
     var rowsCompras = lerTodosCSVs('compras');
     var rowsVendas  = lerTodosCSVs('vendas');
@@ -1934,8 +1979,8 @@ function calcularSemanaCalendario(senha, mes, ano) {
       var somaEi = 0, somaEf = 0, somaCompras = 0, somaFat = 0, todasDisponivel = true, algumaDisponivel = false;
       unidades.forEach(function(u) {
         var pd = porDiaPorUnidade[u];
-        var eiInfo = contagemMaisProxima_(pd, sem.segunda, JANELA_MAX_DIAS_CONTAGEM_PROXIMA);
-        var efInfo = contagemMaisProxima_(pd, sem.domingo, JANELA_MAX_DIAS_CONTAGEM_PROXIMA);
+        var eiInfo = contagemOuInventarioMaisProximo_(pd, inventariosSalvos, u, sem.segunda, dataPorContagemId, JANELA_MAX_DIAS_CONTAGEM_PROXIMA);
+        var efInfo = contagemOuInventarioMaisProximo_(pd, inventariosSalvos, u, sem.domingo, dataPorContagemId, JANELA_MAX_DIAS_CONTAGEM_PROXIMA);
         var compraUni = compras.filiais[u] || 0;
         var vendaUni  = vendas.filiais[u] || 0;
 
