@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-09-16.12';
+var VERSAO_APP = '2026-09-18.1';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -1700,6 +1700,189 @@ function calcularCMVPersonalizado(senha, unidade, inventarioInicialId, inventari
     return JSON.stringify({ ok: true, dados: resultado, avisos: avisos });
   } catch (err) {
     Logger.log('calcularCMVPersonalizado ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
+// ── CMC/CMV POR SEMANA DE CALENDÁRIO (SEGUNDA A DOMINGO) ────────────────
+// Diferente da Análise Semanal (Semana 1-4, ligada a contagens escolhidas
+// manualmente), aqui a semana é sempre o calendário real -- segunda a
+// domingo -- independente de quando alguém contou o estoque. Automático,
+// não depende de nada configurado em Ajustes > Inventário.
+//
+// Compras/Vendas: soma direta do intervalo segunda-domingo (dado
+// transacional, sem depender de contagem nenhuma -- sempre exato).
+//
+// CMV Real: Estoque Inicial/Final só existe em cima de contagem física de
+// verdade, que raramente cai exatamente numa segunda ou domingo. Por isso
+// usa a contagem mais PRÓXIMA de cada segunda (pro EI) e de cada domingo
+// (pro EF), dentro de uma janela máxima de dias -- fora dessa janela,
+// marca a semana como sem CMV disponível em vez de aproximar com uma
+// contagem longe demais pra fazer sentido. O desvio (quantos dias a
+// contagem usada fica da segunda/domingo exatos) vai junto na resposta,
+// pra tela poder avisar quando o número é uma aproximação.
+//
+// Assume que todas as contagens de um mesmo dia (mesma unidade) juntas
+// formam uma "foto" completa do estoque daquele dia -- mesma lógica que
+// salvarInventarioSemanal já deixa o usuário fazer na mão (escolher vários
+// contagemIds pra uma semana), só que automático por data em vez de manual.
+var JANELA_MAX_DIAS_CONTAGEM_PROXIMA = 10;
+
+function enumerarSemanasCalendario_(mesNome, ano) {
+  var mesIdx = ORDEM_MESES.indexOf(mesNome);
+  var totalDias = diasNoMes(mesNome, ano);
+  var semanas = [];
+  var vistas = {};
+  for (var dia = 1; dia <= totalDias; dia++) {
+    var d = new Date(ano, mesIdx, dia);
+    var dow = d.getDay(); // 0=domingo .. 6=sabado
+    var deltaParaSegunda = (dow === 0) ? -6 : (1 - dow);
+    var segunda = new Date(ano, mesIdx, dia + deltaParaSegunda);
+    var domingo = new Date(segunda.getFullYear(), segunda.getMonth(), segunda.getDate() + 6);
+    var chave = segunda.getFullYear() + '-' + segunda.getMonth() + '-' + segunda.getDate();
+    if (vistas[chave]) continue;
+    vistas[chave] = true;
+    semanas.push({
+      segunda: { ano: segunda.getFullYear(), mes: segunda.getMonth() + 1, dia: segunda.getDate() },
+      domingo: { ano: domingo.getFullYear(), mes: domingo.getMonth() + 1, dia: domingo.getDate() }
+    });
+  }
+  semanas.sort(function(a, b) {
+    var ta = a.segunda.ano + pad2(a.segunda.mes) + pad2(a.segunda.dia);
+    var tb = b.segunda.ano + pad2(b.segunda.mes) + pad2(b.segunda.dia);
+    return ta < tb ? -1 : 1;
+  });
+  return semanas;
+}
+
+function diaAnterior_(info) {
+  var d = new Date(info.ano, info.mes - 1, info.dia - 1);
+  return { ano: d.getFullYear(), mes: d.getMonth() + 1, dia: d.getDate() };
+}
+
+function agruparContagensPorDia_(contagens) {
+  var porDia = {};
+  contagens.forEach(function(c) {
+    var info = parseDataCompleta(c.data);
+    if (!info) return;
+    if (!porDia[info.ts]) porDia[info.ts] = { ts: info.ts, ano: info.ano, mes: info.mes, dia: info.dia, ids: [] };
+    porDia[info.ts].ids.push(c.id);
+  });
+  return porDia;
+}
+
+function contagemMaisProxima_(porDia, alvo, janelaMaxDias) {
+  var alvoDate = new Date(alvo.ano, alvo.mes - 1, alvo.dia);
+  var melhor = null, melhorDelta = Infinity;
+  Object.keys(porDia).forEach(function(ts) {
+    var b = porDia[ts];
+    var bDate = new Date(b.ano, b.mes - 1, b.dia);
+    var deltaDias = Math.round((bDate - alvoDate) / 86400000);
+    var deltaAbs = Math.abs(deltaDias);
+    if (deltaAbs <= janelaMaxDias && deltaAbs < melhorDelta) {
+      melhor = b; melhorDelta = deltaAbs;
+    }
+  });
+  if (!melhor) return null;
+  return { ts: melhor.ts, ano: melhor.ano, mes: melhor.mes, dia: melhor.dia, ids: melhor.ids, desvioDias: melhorDelta };
+}
+
+function calcularSemanaCalendario(senha, mes, ano) {
+  if (!validarSenha(senha)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var anoNum = Number(ano);
+    var semanas = enumerarSemanasCalendario_(mes, anoNum);
+    var unidades = ['MARCO', 'PORTO FUTURO', 'UMARIZAL'];
+
+    var ss = SpreadsheetApp.openById(CONTAGEM_SHEET_ID);
+    var aba = ss.getSheetByName('CONTAGENS');
+    var rows = aba ? aba.getDataRange().getValues() : [];
+    var contagensPorUnidade = {};
+    for (var i = 1; i < rows.length; i++) {
+      var r = rows[i];
+      if (!r[0]) continue;
+      var uni = String(r[2]).trim();
+      if (!contagensPorUnidade[uni]) contagensPorUnidade[uni] = [];
+      contagensPorUnidade[uni].push({ id: String(r[0]).trim(), data: String(r[1]).trim() });
+    }
+    var porDiaPorUnidade = {};
+    unidades.forEach(function(u) { porDiaPorUnidade[u] = agruparContagensPorDia_(contagensPorUnidade[u] || []); });
+
+    var rowsCompras = lerTodosCSVs('compras');
+    var rowsVendas  = lerTodosCSVs('vendas');
+    var rowsFichas  = lerFichaTecnica();
+    var fichasMap   = processarFichas(rowsFichas);
+    var historicoPorInsumo = preAgregarCustoMedioPorInsumo(rowsCompras);
+    var catalogo    = preAgregarCatalogoProdutos(rowsCompras, rowsVendas);
+    var catalogoPorCodigo = preAgregarCatalogoPorCodigo(rowsCompras);
+    var fichaPorCodigo = preAgregarFichaPorCodigo(rowsFichas);
+    var porDiaCompras = preAgregarComprasPorDia(rowsCompras);
+    var porDiaVendas  = preAgregarVendasPorDia(rowsVendas);
+
+    var resultado = semanas.map(function(sem) {
+      var anterior = diaAnterior_(sem.segunda); // sentinela: torna a soma inclusive na segunda
+      var compras = somarPeriodoPreAgregadoCross_(porDiaCompras, anterior.mes, anterior.ano, anterior.dia, sem.domingo.mes, sem.domingo.ano, sem.domingo.dia);
+      var vendas  = somarPeriodoPreAgregadoCross_(porDiaVendas,  anterior.mes, anterior.ano, anterior.dia, sem.domingo.mes, sem.domingo.ano, sem.domingo.dia);
+
+      var porUnidade = {};
+      var somaEi = 0, somaEf = 0, somaCompras = 0, somaFat = 0, todasDisponivel = true, algumaDisponivel = false;
+      unidades.forEach(function(u) {
+        var pd = porDiaPorUnidade[u];
+        var eiInfo = contagemMaisProxima_(pd, sem.segunda, JANELA_MAX_DIAS_CONTAGEM_PROXIMA);
+        var efInfo = contagemMaisProxima_(pd, sem.domingo, JANELA_MAX_DIAS_CONTAGEM_PROXIMA);
+        var compraUni = compras.filiais[u] || 0;
+        var vendaUni  = vendas.filiais[u] || 0;
+
+        var linha = {
+          compras: r2(compraUni), faturamento: r2(vendaUni), cmc_pct: calcularPct(compraUni, vendaUni),
+          ei: null, ef: null, cmv: null, cmv_pct: null,
+          eiData: null, efData: null, eiDesvioDias: null, efDesvioDias: null, disponivel: false
+        };
+
+        if (eiInfo && efInfo) {
+          var rotulo = 'Semana calendario ' + pad2(sem.segunda.dia) + '/' + pad2(sem.segunda.mes) + ', ' + u;
+          var itensEi = buscarItensDeContagens_(eiInfo.ids);
+          var itensEf = buscarItensDeContagens_(efInfo.ids);
+          var mesNomeEi = NOMES_MESES[eiInfo.mes];
+          var mesNomeEf = NOMES_MESES[efInfo.mes];
+          var valEi = valorizarItensInventario_(itensEi, mesNomeEi, eiInfo.ano, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (inicial)', catalogoPorCodigo, fichaPorCodigo);
+          var valEf = valorizarItensInventario_(itensEf, mesNomeEf, efInfo.ano, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (final)', catalogoPorCodigo, fichaPorCodigo);
+          var cmv = r2(valEi.total + compraUni - valEf.total);
+          linha.ei = r2(valEi.total); linha.ef = r2(valEf.total); linha.cmv = cmv;
+          linha.cmv_pct = calcularPct(cmv, vendaUni);
+          linha.eiData = pad2(eiInfo.dia) + '/' + pad2(eiInfo.mes) + '/' + eiInfo.ano;
+          linha.efData = pad2(efInfo.dia) + '/' + pad2(efInfo.mes) + '/' + efInfo.ano;
+          linha.eiDesvioDias = eiInfo.desvioDias; linha.efDesvioDias = efInfo.desvioDias;
+          linha.disponivel = true;
+          somaEi += valEi.total; somaEf += valEf.total; algumaDisponivel = true;
+        } else {
+          todasDisponivel = false;
+        }
+        somaCompras += compraUni; somaFat += vendaUni;
+        porUnidade[u] = linha;
+      });
+
+      var todas = { compras: r2(somaCompras), faturamento: r2(somaFat), cmc_pct: calcularPct(somaCompras, somaFat),
+        ei: null, ef: null, cmv: null, cmv_pct: null, disponivel: false };
+      if (algumaDisponivel) {
+        var cmvTodas = r2(somaEi + somaCompras - somaEf);
+        todas.ei = r2(somaEi); todas.ef = r2(somaEf); todas.cmv = cmvTodas;
+        todas.cmv_pct = calcularPct(cmvTodas, somaFat);
+        todas.disponivel = todasDisponivel; // "Todas" só é 100% confiável se TODA unidade tinha contagem próxima
+      }
+
+      return {
+        segunda: pad2(sem.segunda.dia) + '/' + pad2(sem.segunda.mes) + '/' + sem.segunda.ano,
+        domingo: pad2(sem.domingo.dia) + '/' + pad2(sem.domingo.mes) + '/' + sem.domingo.ano,
+        porUnidade: porUnidade, todas: todas
+      };
+    });
+
+    return JSON.stringify({ ok: true, semanas: resultado });
+  } catch (err) {
+    Logger.log('calcularSemanaCalendario ERROR: ' + err.message + '\n' + err.stack);
     return JSON.stringify({ ok: false, erro: err.message });
   }
 }

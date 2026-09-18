@@ -320,6 +320,7 @@ td.hi{font-weight:600;}
     <button class="tab" data-sec="abc" onclick="go('abc')">Curva ABC</button>
     <button class="tab" data-sec="custo" onclick="go('custo')">Variação de Custo</button>
     <button class="tab" data-sec="cmv" onclick="go('cmv')">CMV</button>
+    <button class="tab" data-sec="semcal" onclick="go('semcal')">Semana Calendário</button>
     <button class="tab" data-sec="teorico" onclick="go('teorico')">CMV Teórico</button>
     <button class="tab" data-sec="demanda" onclick="go('demanda')">Demanda de Insumos</button>
     <button class="tab" data-sec="ajustes" onclick="go('ajustes')">Ajustes</button>
@@ -552,6 +553,23 @@ td.hi{font-weight:600;}
     </div>
 
     <div id="cmv-content"></div>
+  </section>
+
+  <!-- ===== SEMANA CALENDÁRIO (sempre segunda a domingo) ===== -->
+  <section id="semcal">
+    <div class="shead">
+      <div>
+        <div class="eyebrow">CMC e CMV Real</div>
+        <div class="stitle">Semana Calendário</div>
+        <div class="ssub">Todas as semanas do mês, sempre de segunda a domingo — inclusive quando a semana atravessa a virada do mês. Compras e vendas somam os dias corridos normalmente. O estoque inicial/final usa a contagem real mais próxima da segunda-feira/domingo (até 10 dias de distância); quando não é a data exata, o desvio aparece marcado. Sem contagem próxima o suficiente, o CMV daquela semana fica indisponível.</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end;">
+        <div class="mseg" id="semcal-mseg"></div>
+        <div class="useg" id="semcal-useg"></div>
+      </div>
+    </div>
+
+    <div id="semcal-content"></div>
   </section>
 
   <!-- ===== CMV TEÓRICO ===== -->
@@ -836,6 +854,7 @@ var ML_MAP={'JANEIRO':'Jan','FEVEREIRO':'Fev','MARÇO':'Mar','ABRIL':'Abr','MAIO
 var DADOS=null, MESES=[], CMC={}, VENDAS={}, CMV={}, mesAtual='', uniAtual='TODAS', grupoAberto=null, charts={};
 var CMVTEORICO={}, FICHAS_DISPONIVEL=false, mesTeorico='', uniTeorico='TODAS';
 var DEMANDAINSUMOS={}, RECONCILIACAOINSUMOS={}, mesDemanda='', uniDemanda='TODAS';
+var SEMCAL_CACHE={}, mesSemCal='', uniSemCal='TODAS';
 var AVISOSINVENTARIO=[];
 var abcOrder='valor', custoCache=null, uniABC='TODAS', mesABC='TODOS';
 var custoMesA='', custoMesB='';
@@ -870,6 +889,7 @@ function go(id){
   if(id==='abc')   rABC();
   if(id==='custo') rCusto();
   if(id==='cmv')   rCMV();
+  if(id==='semcal')rSemCal();
   if(id==='teorico')rTeorico();
   if(id==='demanda')rDemanda();
   if(id==='ajustes')carregarAjustesSub(ajustesSubAtual);
@@ -1754,6 +1774,81 @@ function limparPeriodoCustomCMV(){
   periodoCustomCMVBoxAberto=false;
   var box=document.getElementById('cmv-custom-box');
   if(box)box.style.display='none';
+}
+
+/* ====== SEMANA CALENDÁRIO (segunda a domingo, sempre) ====== */
+var SEMCAL_UNIDADES=['MARCO','PORTO FUTURO','UMARIZAL'];
+function setMesSemCal(m){mesSemCal=m;document.querySelectorAll('#semcal-mseg button').forEach(function(b){b.classList.toggle('on',b.dataset.m===m);});rSemCal();}
+function setUniSemCal(u){uniSemCal=u;document.querySelectorAll('#semcal-useg button').forEach(function(b){b.classList.toggle('on',b.textContent===(u==='TODAS'?'Todas':nomeUni(u)));});rSemCal();}
+
+function linhaSemCal_(semana){
+  if(uniSemCal==='TODAS')return semana.todas;
+  return semana.porUnidade[uniSemCal];
+}
+
+function badgeSemCal_(linha){
+  if(!linha||!linha.disponivel)return '<span class="tag tC">sem contagem próxima</span>';
+  var desvio=Math.max(linha.eiDesvioDias||0,linha.efDesvioDias||0);
+  if(uniSemCal==='TODAS')return '<span class="tag tA">disponível</span>';
+  if(desvio===0)return '<span class="tag tA">exato</span>';
+  return '<span class="tag tB" title="Estoque inicial '+(linha.eiData||'')+' ('+(linha.eiDesvioDias||0)+'d) · Estoque final '+(linha.efData||'')+' ('+(linha.efDesvioDias||0)+'d)">aprox. ±'+desvio+'d</span>';
+}
+
+function rSemCal(){
+  if(!MESES.length)return;
+  var cont=document.getElementById('semcal-content');
+  if(!mesSemCal||MESES.indexOf(mesSemCal)<0)mesSemCal=MESES[MESES.length-1];
+
+  var mseg=document.getElementById('semcal-mseg');
+  if(mseg&&!mseg.dataset.ready){
+    mseg.innerHTML=MESES.map(function(m){return '<button class="'+(m===mesSemCal?'on':'')+'" data-m="'+m+'" onclick="setMesSemCal(\''+m+'\')">'+(ML_MAP[m]||m)+'</button>';}).join('');
+    mseg.dataset.ready='1';
+  }
+  var useg=document.getElementById('semcal-useg');
+  if(useg&&!useg.dataset.ready){
+    useg.innerHTML='<button class="on" onclick="setUniSemCal(\'TODAS\')">Todas</button>'+
+      SEMCAL_UNIDADES.map(function(f){return '<button onclick="setUniSemCal(\''+f+'\')">'+nomeUni(f)+'</button>';}).join('');
+    useg.dataset.ready='1';
+  }
+
+  cont.innerHTML='<div class="card"><div class="empty">Calculando semanas de '+(ML_MAP[mesSemCal]||mesSemCal)+'...</div></div>';
+
+  if(SEMCAL_CACHE[mesSemCal]){rSemCalPintar_(SEMCAL_CACHE[mesSemCal]);return;}
+  var mesPedido=mesSemCal;
+  google.script.run.withSuccessHandler(function(json){
+    var res;try{res=JSON.parse(json);}catch(e){res=null;}
+    if(!res||!res.ok){if(mesSemCal===mesPedido)cont.innerHTML='<div class="card"><div class="empty">Não foi possível calcular: '+(res&&res.erro||'erro desconhecido')+'</div></div>';return;}
+    SEMCAL_CACHE[mesPedido]=res.semanas;
+    if(mesSemCal===mesPedido)rSemCalPintar_(res.semanas);
+  }).withFailureHandler(function(err){
+    if(mesSemCal===mesPedido)cont.innerHTML='<div class="card"><div class="empty">Erro ao calcular semanas: '+err+'</div></div>';
+  }).calcularSemanaCalendario(SENHA_ATUAL, mesSemCal, ANO_OPERACIONAL);
+}
+
+function rSemCalPintar_(semanas){
+  var cont=document.getElementById('semcal-content');
+  if(!semanas||!semanas.length){cont.innerHTML='<div class="card"><div class="empty">Sem semanas para exibir.</div></div>';return;}
+
+  var linhas=semanas.map(function(semana){
+    var l=linhaSemCal_(semana);
+    var pctCls=function(p){return (p>35)?'rd':(p>30)?'am':'ac';};
+    return '<tr>'+
+      '<td class="hi">'+semana.segunda+' a '+semana.domingo+'</td>'+
+      '<td>'+badgeSemCal_(l)+'</td>'+
+      '<td class="r">'+(l.ei!==null&&l.ei!==undefined?fR(l.ei):'--')+'</td>'+
+      '<td class="r">'+fR(l.compras)+'</td>'+
+      '<td class="r">'+(l.ef!==null&&l.ef!==undefined?fR(l.ef):'--')+'</td>'+
+      '<td class="r '+(l.cmv!==null&&l.cmv!==undefined?pctCls(l.cmv_pct||0):'')+'" style="font-weight:600;">'+(l.cmv!==null&&l.cmv!==undefined?fR(l.cmv):'--')+'</td>'+
+      '<td class="r">'+(l.cmv_pct!==null&&l.cmv_pct!==undefined?fP(l.cmv_pct):'--')+'</td>'+
+      '<td class="r">'+fR(l.faturamento)+'</td>'+
+      '<td class="r">'+(l.cmc_pct!==null&&l.cmc_pct!==undefined?fP(l.cmc_pct):'--')+'</td>'+
+    '</tr>';
+  }).join('');
+
+  cont.innerHTML='<div class="card"><div class="twrap"><table>'+
+    '<thead><tr><th>Semana</th><th>Contagem</th><th class="r">Est. Inicial</th><th class="r">Compras</th><th class="r">Est. Final</th>'+
+    '<th class="r">CMV</th><th class="r">CMV%</th><th class="r">Faturamento</th><th class="r">CMC%</th></tr></thead>'+
+    '<tbody>'+linhas+'</tbody></table></div></div>';
 }
 
 // Mesma extração de dadosPeriodoCMV (ramo "unidade específica"), só que a
