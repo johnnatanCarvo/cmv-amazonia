@@ -534,17 +534,26 @@ td.hi{font-weight:600;}
         <div style="display:flex;gap:8px;align-items:center;">
           <button type="button" class="gd-close" id="cmv-custom-toggle" onclick="toggleCustomCMV()">Período personalizado</button>
           <div id="cmv-custom-box" style="display:none;flex-direction:column;gap:6px;align-items:flex-end;">
-            <div style="display:flex;align-items:center;gap:6px;">
-              <select id="cmv-custom-ini" onchange="sincronizarDataCustomCMV_()" style="font-size:12px;padding:5px 7px;border:1px solid var(--ln2);border-radius:7px;background:var(--bg3);color:var(--fg);font-family:inherit;max-width:220px;"></select>
-              <span style="font-size:12px;color:var(--fg2);">até</span>
-              <select id="cmv-custom-fim" onchange="sincronizarDataCustomCMV_()" style="font-size:12px;padding:5px 7px;border:1px solid var(--ln2);border-radius:7px;background:var(--bg3);color:var(--fg);font-family:inherit;max-width:220px;"></select>
+            <div id="cmv-custom-unidade-rows" style="display:none;flex-direction:column;gap:6px;align-items:flex-end;">
+              <div style="display:flex;align-items:center;gap:6px;">
+                <select id="cmv-custom-ini" onchange="sincronizarDataCustomCMV_()" style="font-size:12px;padding:5px 7px;border:1px solid var(--ln2);border-radius:7px;background:var(--bg3);color:var(--fg);font-family:inherit;max-width:220px;"></select>
+                <span style="font-size:12px;color:var(--fg2);">até</span>
+                <select id="cmv-custom-fim" onchange="sincronizarDataCustomCMV_()" style="font-size:12px;padding:5px 7px;border:1px solid var(--ln2);border-radius:7px;background:var(--bg3);color:var(--fg);font-family:inherit;max-width:220px;"></select>
+              </div>
+              <div style="display:flex;align-items:center;gap:6px;">
+                <span style="font-size:11px;color:var(--fg2);white-space:nowrap;" title="Por padrão usa a data da contagem -- corrija aqui se a contagem foi feita num dia mas lançada no sistema em outro.">período p/ compras e vendas:</span>
+                <input type="date" id="cmv-custom-data-ini" style="font-size:12px;padding:5px 7px;border:1px solid var(--ln2);border-radius:7px;background:var(--bg3);color:var(--fg);font-family:inherit;">
+                <span style="font-size:12px;color:var(--fg2);">até</span>
+                <input type="date" id="cmv-custom-data-fim" style="font-size:12px;padding:5px 7px;border:1px solid var(--ln2);border-radius:7px;background:var(--bg3);color:var(--fg);font-family:inherit;">
+                <button type="button" class="gd-close" onclick="aplicarPeriodoCustomCMV()">Aplicar</button>
+              </div>
             </div>
-            <div style="display:flex;align-items:center;gap:6px;">
-              <span style="font-size:11px;color:var(--fg2);white-space:nowrap;" title="Por padrão usa a data da contagem -- corrija aqui se a contagem foi feita num dia mas lançada no sistema em outro.">período p/ compras e vendas:</span>
-              <input type="date" id="cmv-custom-data-ini" style="font-size:12px;padding:5px 7px;border:1px solid var(--ln2);border-radius:7px;background:var(--bg3);color:var(--fg);font-family:inherit;">
+            <div id="cmv-custom-todas-row" style="display:none;align-items:center;gap:6px;">
+              <span style="font-size:11px;color:var(--fg2);white-space:nowrap;" title="Cada unidade usa a contagem real mais próxima dessas datas (até 10 dias) -- não dá pra escolher uma contagem específica que sirva pras 3 unidades juntas.">período (Todas as unidades):</span>
+              <input type="date" id="cmv-custom-todas-ini" style="font-size:12px;padding:5px 7px;border:1px solid var(--ln2);border-radius:7px;background:var(--bg3);color:var(--fg);font-family:inherit;">
               <span style="font-size:12px;color:var(--fg2);">até</span>
-              <input type="date" id="cmv-custom-data-fim" style="font-size:12px;padding:5px 7px;border:1px solid var(--ln2);border-radius:7px;background:var(--bg3);color:var(--fg);font-family:inherit;">
-              <button type="button" class="gd-close" onclick="aplicarPeriodoCustomCMV()">Aplicar</button>
+              <input type="date" id="cmv-custom-todas-fim" style="font-size:12px;padding:5px 7px;border:1px solid var(--ln2);border-radius:7px;background:var(--bg3);color:var(--fg);font-family:inherit;">
+              <button type="button" class="gd-close" onclick="aplicarPeriodoCustomCMVTodas()">Aplicar</button>
             </div>
           </div>
         </div>
@@ -1676,10 +1685,12 @@ var periodoCustomCMVBoxAberto=false;
 var INVENTARIOS_SALVOS_CACHE=null;
 
 function toggleCustomCMV(){
-  if(uniCMV==='TODAS'){alert('Escolha uma unidade específica (Marco, Porto Futuro ou Umarizal) antes de usar período personalizado.');return;}
   periodoCustomCMVBoxAberto=!periodoCustomCMVBoxAberto;
   document.getElementById('cmv-custom-box').style.display=periodoCustomCMVBoxAberto?'flex':'none';
-  if(periodoCustomCMVBoxAberto)carregarInventariosParaCustomCMV_();
+  var ehTodas=(uniCMV==='TODAS');
+  document.getElementById('cmv-custom-unidade-rows').style.display=(periodoCustomCMVBoxAberto&&!ehTodas)?'flex':'none';
+  document.getElementById('cmv-custom-todas-row').style.display=(periodoCustomCMVBoxAberto&&ehTodas)?'flex':'none';
+  if(periodoCustomCMVBoxAberto&&!ehTodas)carregarInventariosParaCustomCMV_();
 }
 
 function carregarInventariosParaCustomCMV_(){
@@ -1756,6 +1767,37 @@ function aplicarPeriodoCustomCMV(){
     if(!res||!res.ok){alert('Não foi possível calcular esse período: '+(res&&res.erro||'erro desconhecido'));return;}
     aplicar(res.dados);
   }).withFailureHandler(function(err){alert('Erro ao calcular período: '+err);}).calcularCMVPersonalizado(SENHA_ATUAL, uniCMV, idIni, idFim, dataIniBR, dataFimBR);
+}
+
+// Mesma ideia de aplicarPeriodoCustomCMV, mas pra "Todas as unidades" --
+// aqui não tem inventário salvo pra escolher (cada um é de uma unidade só),
+// só as duas datas; cada unidade resolve sozinha a contagem mais próxima
+// no servidor (ver calcularCMVPersonalizadoTodas).
+function aplicarPeriodoCustomCMVTodas(){
+  var dataIniISO=document.getElementById('cmv-custom-todas-ini').value;
+  var dataFimISO=document.getElementById('cmv-custom-todas-fim').value;
+  if(!dataIniISO||!dataFimISO){alert('Escolha as duas datas.');return;}
+  if(dataFimISO<=dataIniISO){alert('A data final precisa ser depois da inicial.');return;}
+  var dataIniBR=dataIniISO.split('-').reverse().join('/');
+  var dataFimBR=dataFimISO.split('-').reverse().join('/');
+  var chave='TODAS|'+dataIniBR+'|'+dataFimBR;
+  function aplicar(dados){
+    CUSTOM_CMV_CACHE[chave]=dados;
+    periodoAtualCMV={tipo:'custom',key:chave};
+    document.getElementById('cmv-granseg').style.display='none';
+    document.querySelectorAll('#cmv-mseg button').forEach(function(b){b.classList.remove('on');});
+    var lbl=document.getElementById('cmv-custom-label');
+    lbl.style.display='block';
+    lbl.textContent='Período personalizado (Todas as unidades): '+dados.dataInicio+' a '+dados.dataFim+
+      (dados.disponivel===false?' — CMV aproximado: alguma unidade não tem contagem próxima o suficiente dessas datas':'');
+    rCMV();
+  }
+  if(CUSTOM_CMV_CACHE[chave]){aplicar(CUSTOM_CMV_CACHE[chave]);return;}
+  google.script.run.withSuccessHandler(function(json){
+    var res;try{res=JSON.parse(json);}catch(e){res=null;}
+    if(!res||!res.ok){alert('Não foi possível calcular esse período: '+(res&&res.erro||'erro desconhecido'));return;}
+    aplicar(res.dados);
+  }).withFailureHandler(function(err){alert('Erro ao calcular período: '+err);}).calcularCMVPersonalizadoTodas(SENHA_ATUAL, dataIniBR, dataFimBR);
 }
 
 function limparPeriodoCustomCMV(){
@@ -1846,7 +1888,16 @@ function rSemCalPintar_(semanas){
 // bloco de Semana/Quinzena.
 function extrairCMVCustom_(){
   var resultado=CUSTOM_CMV_CACHE[periodoAtualCMV.key];
-  if(!resultado||!resultado.cmvDetalhado)return null;
+  if(!resultado)return null;
+  if(!resultado.cmvDetalhado){
+    // "Todas as unidades": resultado já vem consolidado no nível raiz, sem
+    // detalhe por unidade/grupo (ver calcularCMVPersonalizadoTodas).
+    return {ei:resultado.ei,ef:resultado.ef,compras:resultado.compras,cmv:resultado.cmv,
+      pct:resultado.cmv_pct,fat:resultado.faturamento||0,
+      data_ei:resultado.dataInicio||null,data_ef:resultado.dataFim||null,grupos:null,
+      transfEntrada:0,transfSaida:0,transfSaldo:0,
+      cmvAjustado:resultado.cmv,pctAjustado:resultado.cmv_pct};
+  }
   var f=resultado.cmvDetalhado;
   var fatFil=resultado.faturamento||0;
   var pct=(fatFil>0)?Math.round(f.cmv/fatFil*10000)/100:null;

@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-09-18.2';
+var VERSAO_APP = '2026-09-18.3';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -1700,6 +1700,102 @@ function calcularCMVPersonalizado(senha, unidade, inventarioInicialId, inventari
     return JSON.stringify({ ok: true, dados: resultado, avisos: avisos });
   } catch (err) {
     Logger.log('calcularCMVPersonalizado ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
+// Mesma ideia de calcularCMVPersonalizado, mas pra "Todas as unidades" --
+// não dá pra escolher UMA contagem salva que sirva pras 3 unidades ao
+// mesmo tempo (cada contagem salva é de uma unidade só), então aqui a
+// pessoa escolhe só duas DATAS e cada unidade usa, automaticamente, a
+// contagem real mais próxima de cada uma (mesma lógica/janela de
+// calcularSemanaCalendario, reaproveitando seus helpers). Sem detalhe por
+// grupo nem ajuste de transferência (só fazem sentido calculados por
+// unidade) -- devolve só os totais consolidados, como o "Todas" de
+// qualquer outra tela do painel.
+function calcularCMVPersonalizadoTodas(senha, dataIniStr, dataFimStr) {
+  if (!validarSenha(senha)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var dataIni = parseDataCompleta(dataIniStr);
+    var dataFim = parseDataCompleta(dataFimStr);
+    if (!dataIni || !dataFim) {
+      return JSON.stringify({ ok: false, erro: 'Data do período inválida.' });
+    }
+    if (dataFim.ts <= dataIni.ts) {
+      return JSON.stringify({ ok: false, erro: 'A data final do período precisa ser depois da inicial.' });
+    }
+
+    var unidades = ['MARCO', 'PORTO FUTURO', 'UMARIZAL'];
+    var ss = SpreadsheetApp.openById(CONTAGEM_SHEET_ID);
+    var aba = ss.getSheetByName('CONTAGENS');
+    var rows = aba ? aba.getDataRange().getValues() : [];
+    var contagensPorUnidade = {};
+    for (var i = 1; i < rows.length; i++) {
+      var r = rows[i];
+      if (!r[0]) continue;
+      var uni = String(r[2]).trim();
+      if (!contagensPorUnidade[uni]) contagensPorUnidade[uni] = [];
+      contagensPorUnidade[uni].push({ id: String(r[0]).trim(), data: String(r[1]).trim() });
+    }
+
+    var rowsCompras = lerTodosCSVs('compras');
+    var rowsVendas  = lerTodosCSVs('vendas');
+    var rowsFichas  = lerFichaTecnica();
+    var fichasMap   = processarFichas(rowsFichas);
+    var historicoPorInsumo = preAgregarCustoMedioPorInsumo(rowsCompras);
+    var catalogo    = preAgregarCatalogoProdutos(rowsCompras, rowsVendas);
+    var catalogoPorCodigo = preAgregarCatalogoPorCodigo(rowsCompras);
+    var fichaPorCodigo = preAgregarFichaPorCodigo(rowsFichas);
+    var porDiaCompras = preAgregarComprasPorDia(rowsCompras);
+    var porDiaVendas  = preAgregarVendasPorDia(rowsVendas);
+
+    var anterior = diaAnterior_(dataIni);
+    var compras = somarPeriodoPreAgregadoCross_(porDiaCompras, anterior.mes, anterior.ano, anterior.dia, dataFim.mes, dataFim.ano, dataFim.dia);
+    var vendas  = somarPeriodoPreAgregadoCross_(porDiaVendas, anterior.mes, anterior.ano, anterior.dia, dataFim.mes, dataFim.ano, dataFim.dia);
+
+    var somaEi = 0, somaEf = 0, somaCompras = 0, somaFat = 0, todasDisponivel = true;
+    var detalheUnidades = {};
+    unidades.forEach(function(u) {
+      var pd = agruparContagensPorDia_(contagensPorUnidade[u] || []);
+      var eiInfo = contagemMaisProxima_(pd, dataIni, JANELA_MAX_DIAS_CONTAGEM_PROXIMA);
+      var efInfo = contagemMaisProxima_(pd, dataFim, JANELA_MAX_DIAS_CONTAGEM_PROXIMA);
+      var compraUni = compras.filiais[u] || 0;
+      var vendaUni  = vendas.filiais[u] || 0;
+      somaCompras += compraUni; somaFat += vendaUni;
+      if (eiInfo && efInfo) {
+        var rotulo = 'Periodo personalizado (Todas), ' + u;
+        var itensEi = buscarItensDeContagens_(eiInfo.ids);
+        var itensEf = buscarItensDeContagens_(efInfo.ids);
+        var valEi = valorizarItensInventario_(itensEi, NOMES_MESES[eiInfo.mes], eiInfo.ano, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (inicial)', catalogoPorCodigo, fichaPorCodigo);
+        var valEf = valorizarItensInventario_(itensEf, NOMES_MESES[efInfo.mes], efInfo.ano, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (final)', catalogoPorCodigo, fichaPorCodigo);
+        somaEi += valEi.total; somaEf += valEf.total;
+        detalheUnidades[u] = {
+          eiData: pad2(eiInfo.dia) + '/' + pad2(eiInfo.mes) + '/' + eiInfo.ano,
+          efData: pad2(efInfo.dia) + '/' + pad2(efInfo.mes) + '/' + efInfo.ano,
+          eiDesvioDias: eiInfo.desvioDias, efDesvioDias: efInfo.desvioDias
+        };
+      } else {
+        todasDisponivel = false;
+        detalheUnidades[u] = { eiData: null, efData: null, eiDesvioDias: null, efDesvioDias: null };
+      }
+    });
+
+    var cmv = r2(somaEi + somaCompras - somaEf);
+    var dataIniFmt = pad2(dataIni.dia) + '/' + pad2(dataIni.mes) + '/' + dataIni.ano;
+    var dataFimFmt = pad2(dataFim.dia) + '/' + pad2(dataFim.mes) + '/' + dataFim.ano;
+    var resultado = {
+      ei: r2(somaEi), ef: r2(somaEf), compras: r2(somaCompras), faturamento: r2(somaFat), cmv: cmv,
+      cmc_pct: calcularPct(somaCompras, somaFat), cmv_pct: calcularPct(cmv, somaFat),
+      disponivel: todasDisponivel, detalheUnidades: detalheUnidades,
+      dataInicio: dataIniFmt, dataFim: dataFimFmt,
+      dataContagemInicial: dataIniFmt, dataContagemFinal: dataFimFmt,
+      labelInicial: 'Todas as unidades', labelFinal: 'Todas as unidades'
+    };
+    return JSON.stringify({ ok: true, dados: resultado, avisos: [] });
+  } catch (err) {
+    Logger.log('calcularCMVPersonalizadoTodas ERROR: ' + err.message + '\n' + err.stack);
     return JSON.stringify({ ok: false, erro: err.message });
   }
 }
