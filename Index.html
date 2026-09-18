@@ -533,28 +533,12 @@ td.hi{font-weight:600;}
         <div class="mseg" id="cmv-granseg" style="display:none;"></div>
         <div style="display:flex;gap:8px;align-items:center;">
           <button type="button" class="gd-close" id="cmv-custom-toggle" onclick="toggleCustomCMV()">Período personalizado</button>
-          <div id="cmv-custom-box" style="display:none;flex-direction:column;gap:6px;align-items:flex-end;">
-            <div id="cmv-custom-unidade-rows" style="display:none;flex-direction:column;gap:6px;align-items:flex-end;">
-              <div style="display:flex;align-items:center;gap:6px;">
-                <select id="cmv-custom-ini" onchange="sincronizarDataCustomCMV_()" style="font-size:12px;padding:5px 7px;border:1px solid var(--ln2);border-radius:7px;background:var(--bg3);color:var(--fg);font-family:inherit;max-width:220px;"></select>
-                <span style="font-size:12px;color:var(--fg2);">até</span>
-                <select id="cmv-custom-fim" onchange="sincronizarDataCustomCMV_()" style="font-size:12px;padding:5px 7px;border:1px solid var(--ln2);border-radius:7px;background:var(--bg3);color:var(--fg);font-family:inherit;max-width:220px;"></select>
-              </div>
-              <div style="display:flex;align-items:center;gap:6px;">
-                <span style="font-size:11px;color:var(--fg2);white-space:nowrap;" title="Por padrão usa a data da contagem -- corrija aqui se a contagem foi feita num dia mas lançada no sistema em outro.">período p/ compras e vendas:</span>
-                <input type="date" id="cmv-custom-data-ini" style="font-size:12px;padding:5px 7px;border:1px solid var(--ln2);border-radius:7px;background:var(--bg3);color:var(--fg);font-family:inherit;">
-                <span style="font-size:12px;color:var(--fg2);">até</span>
-                <input type="date" id="cmv-custom-data-fim" style="font-size:12px;padding:5px 7px;border:1px solid var(--ln2);border-radius:7px;background:var(--bg3);color:var(--fg);font-family:inherit;">
-                <button type="button" class="gd-close" onclick="aplicarPeriodoCustomCMV()">Aplicar</button>
-              </div>
-            </div>
-            <div id="cmv-custom-todas-row" style="display:none;align-items:center;gap:6px;">
-              <span style="font-size:11px;color:var(--fg2);white-space:nowrap;" title="Cada unidade usa a contagem real mais próxima dessas datas (até 10 dias) -- não dá pra escolher uma contagem específica que sirva pras 3 unidades juntas.">período (Todas as unidades):</span>
-              <input type="date" id="cmv-custom-todas-ini" style="font-size:12px;padding:5px 7px;border:1px solid var(--ln2);border-radius:7px;background:var(--bg3);color:var(--fg);font-family:inherit;">
-              <span style="font-size:12px;color:var(--fg2);">até</span>
-              <input type="date" id="cmv-custom-todas-fim" style="font-size:12px;padding:5px 7px;border:1px solid var(--ln2);border-radius:7px;background:var(--bg3);color:var(--fg);font-family:inherit;">
-              <button type="button" class="gd-close" onclick="aplicarPeriodoCustomCMVTodas()">Aplicar</button>
-            </div>
+          <div id="cmv-custom-box" style="display:none;align-items:center;gap:6px;">
+            <span style="font-size:11px;color:var(--fg2);white-space:nowrap;" title="Cada unidade usa, automaticamente, a contagem real mais próxima dessas datas (até 10 dias) -- prioriza um inventário salvo em Ajustes se existir um perto o suficiente.">período:</span>
+            <input type="date" id="cmv-custom-ini" style="font-size:12px;padding:5px 7px;border:1px solid var(--ln2);border-radius:7px;background:var(--bg3);color:var(--fg);font-family:inherit;">
+            <span style="font-size:12px;color:var(--fg2);">até</span>
+            <input type="date" id="cmv-custom-fim" style="font-size:12px;padding:5px 7px;border:1px solid var(--ln2);border-radius:7px;background:var(--bg3);color:var(--fg);font-family:inherit;">
+            <button type="button" class="gd-close" onclick="aplicarPeriodoCustomCMV()">Aplicar</button>
           </div>
         </div>
         <div id="cmv-custom-label" style="display:none;font-size:12px;color:var(--ac);font-weight:600;"></div>
@@ -1684,116 +1668,41 @@ var mesCMV='', uniCMV='TODAS', cmvGrupoOrder='cmv';
    Mês, sem estar preso aos 4 slots fixos. Só funciona com uma unidade
    específica selecionada (inventário é por unidade, não dá pra
    combinar "Todas"). */
+// Uma chamada só traz TODAS as unidades (porUnidade) + o total (Todas) --
+// trocar de unidade com o período personalizado ativo é só reler o cache,
+// sem chamar o servidor de novo nem pedir a data outra vez (ver setUniCMV).
 var CUSTOM_CMV_CACHE={};
 var periodoCustomCMVBoxAberto=false;
-var INVENTARIOS_SALVOS_CACHE=null;
 
 function toggleCustomCMV(){
   periodoCustomCMVBoxAberto=!periodoCustomCMVBoxAberto;
   document.getElementById('cmv-custom-box').style.display=periodoCustomCMVBoxAberto?'flex':'none';
-  var ehTodas=(uniCMV==='TODAS');
-  document.getElementById('cmv-custom-unidade-rows').style.display=(periodoCustomCMVBoxAberto&&!ehTodas)?'flex':'none';
-  document.getElementById('cmv-custom-todas-row').style.display=(periodoCustomCMVBoxAberto&&ehTodas)?'flex':'none';
-  if(periodoCustomCMVBoxAberto&&!ehTodas)carregarInventariosParaCustomCMV_();
-}
-
-function carregarInventariosParaCustomCMV_(){
-  // Mostra a DATA real de cada contagem (não só o rótulo que foi digitado
-  // ao salvar) e ordena cronologicamente -- escolher "por data" só faz
-  // sentido enxergando a data de cada opção, não um nome arbitrário tipo
-  // "1ª semana setembro" que não deixa óbvio o dia exato.
-  function popular(lista){
-    var doUniCMV=lista.filter(function(i){return i.unidade===uniCMV;});
-    var opts='<option value="">Selecione…</option>'+doUniCMV.map(function(i){
-      var rotulo=(i.data?i.data+' — ':'')+i.label;
-      return '<option value="'+i.id+'">'+rotulo+'</option>';
-    }).join('');
-    document.getElementById('cmv-custom-ini').innerHTML=opts;
-    document.getElementById('cmv-custom-fim').innerHTML=opts;
-    if(!doUniCMV.length){
-      document.getElementById('cmv-custom-ini').innerHTML='<option value="">Nenhum inventário salvo pra '+nomeUni(uniCMV)+'</option>';
+  // Reabrir com o período já ativo pré-preenche as datas, pra ajustar em
+  // vez de digitar tudo de novo.
+  if(periodoCustomCMVBoxAberto&&periodoAtualCMV.tipo==='custom'){
+    var res=CUSTOM_CMV_CACHE[periodoAtualCMV.key];
+    if(res){
+      function paraISO(dataBR){ var p=dataBR.split('/'); return p[2]+'-'+p[1]+'-'+p[0]; }
+      document.getElementById('cmv-custom-ini').value=paraISO(res.dataInicio);
+      document.getElementById('cmv-custom-fim').value=paraISO(res.dataFim);
     }
   }
-  if(INVENTARIOS_SALVOS_CACHE){popular(INVENTARIOS_SALVOS_CACHE);return;}
-  google.script.run.withSuccessHandler(function(json){
-    var res;try{res=JSON.parse(json);}catch(e){res=null;}
-    INVENTARIOS_SALVOS_CACHE=(res&&res.ok)?res.inventarios:[];
-    popular(INVENTARIOS_SALVOS_CACHE);
-  }).withFailureHandler(function(){
-    document.getElementById('cmv-custom-ini').innerHTML='<option value="">Erro ao carregar inventários</option>';
-  }).listarInventariosSalvosComData(SENHA_ATUAL);
-}
-
-// Pré-preenche os campos de data (compras/vendas) com a data da contagem
-// escolhida em cada dropdown -- ponto de partida razoável, mas editável:
-// às vezes a contagem foi feita num dia e só lançada no sistema em outro,
-// e nesse caso a data da contagem fica errada pra saber até onde somar
-// compras/vendas (mesmo estando certa pra saber qual mês reprecificar o
-// estoque, que não muda).
-function sincronizarDataCustomCMV_(){
-  function paraISO(dataBR){ if(!dataBR)return ''; var p=dataBR.split('/'); return p[2]+'-'+p[1]+'-'+p[0]; }
-  var lista=INVENTARIOS_SALVOS_CACHE||[];
-  var idIni=document.getElementById('cmv-custom-ini').value;
-  var idFim=document.getElementById('cmv-custom-fim').value;
-  var invIni=lista.filter(function(i){return i.id===idIni;})[0];
-  var invFim=lista.filter(function(i){return i.id===idFim;})[0];
-  if(invIni&&invIni.data)document.getElementById('cmv-custom-data-ini').value=paraISO(invIni.data);
-  if(invFim&&invFim.data)document.getElementById('cmv-custom-data-fim').value=paraISO(invFim.data);
 }
 
 function aplicarPeriodoCustomCMV(){
-  var idIni=document.getElementById('cmv-custom-ini').value;
-  var idFim=document.getElementById('cmv-custom-fim').value;
-  if(!idIni||!idFim){alert('Escolha os dois inventários.');return;}
-  if(idIni===idFim){alert('Escolha dois inventários diferentes.');return;}
-  var dataIniISO=document.getElementById('cmv-custom-data-ini').value;
-  var dataFimISO=document.getElementById('cmv-custom-data-fim').value;
-  if(!dataIniISO||!dataFimISO){alert('Confirme o período de compras/vendas (preenchido automático ao escolher os inventários).');return;}
-  if(dataFimISO<dataIniISO){alert('A data final do período não pode ser antes da inicial.');return;}
-  var dataIniBR=dataIniISO.split('-').reverse().join('/');
-  var dataFimBR=dataFimISO.split('-').reverse().join('/');
-  var chave=uniCMV+'|'+idIni+'|'+idFim+'|'+dataIniBR+'|'+dataFimBR;
-  function aplicar(dados){
-    CUSTOM_CMV_CACHE[chave]=dados;
-    periodoAtualCMV={tipo:'custom',key:chave};
-    document.getElementById('cmv-granseg').style.display='none';
-    document.querySelectorAll('#cmv-mseg button').forEach(function(b){b.classList.remove('on');});
-    var lbl=document.getElementById('cmv-custom-label');
-    var ajustado=(dados.dataInicio!==dados.dataContagemInicial||dados.dataFim!==dados.dataContagemFinal);
-    lbl.style.display='block';
-    lbl.textContent='Período personalizado: '+dados.labelInicial+' → '+dados.labelFinal+' — compras/vendas de '+dados.dataInicio+' a '+dados.dataFim+
-      (ajustado?' (ajustado manualmente da data da contagem)':'');
-    rCMV();
-  }
-  if(CUSTOM_CMV_CACHE[chave]){aplicar(CUSTOM_CMV_CACHE[chave]);return;}
-  google.script.run.withSuccessHandler(function(json){
-    var res;try{res=JSON.parse(json);}catch(e){res=null;}
-    if(!res||!res.ok){alert('Não foi possível calcular esse período: '+(res&&res.erro||'erro desconhecido'));return;}
-    aplicar(res.dados);
-  }).withFailureHandler(function(err){alert('Erro ao calcular período: '+err);}).calcularCMVPersonalizado(SENHA_ATUAL, uniCMV, idIni, idFim, dataIniBR, dataFimBR);
-}
-
-// Mesma ideia de aplicarPeriodoCustomCMV, mas pra "Todas as unidades" --
-// aqui não tem inventário salvo pra escolher (cada um é de uma unidade só),
-// só as duas datas; cada unidade resolve sozinha a contagem mais próxima
-// no servidor (ver calcularCMVPersonalizadoTodas).
-function aplicarPeriodoCustomCMVTodas(){
-  var dataIniISO=document.getElementById('cmv-custom-todas-ini').value;
-  var dataFimISO=document.getElementById('cmv-custom-todas-fim').value;
+  var dataIniISO=document.getElementById('cmv-custom-ini').value;
+  var dataFimISO=document.getElementById('cmv-custom-fim').value;
   if(!dataIniISO||!dataFimISO){alert('Escolha as duas datas.');return;}
   if(dataFimISO<=dataIniISO){alert('A data final precisa ser depois da inicial.');return;}
   var dataIniBR=dataIniISO.split('-').reverse().join('/');
   var dataFimBR=dataFimISO.split('-').reverse().join('/');
-  var chave='TODAS|'+dataIniBR+'|'+dataFimBR;
+  var chave=dataIniBR+'_'+dataFimBR;
   function aplicar(dados){
     CUSTOM_CMV_CACHE[chave]=dados;
     periodoAtualCMV={tipo:'custom',key:chave};
     document.getElementById('cmv-granseg').style.display='none';
     document.querySelectorAll('#cmv-mseg button').forEach(function(b){b.classList.remove('on');});
-    var lbl=document.getElementById('cmv-custom-label');
-    lbl.style.display='block';
-    lbl.textContent='Período personalizado (Todas as unidades): '+dados.dataInicio+' a '+dados.dataFim+
-      (dados.disponivel===false?' — CMV aproximado: alguma unidade não tem contagem próxima o suficiente dessas datas':'');
+    atualizarLabelCustomCMV_();
     rCMV();
   }
   if(CUSTOM_CMV_CACHE[chave]){aplicar(CUSTOM_CMV_CACHE[chave]);return;}
@@ -1802,6 +1711,20 @@ function aplicarPeriodoCustomCMVTodas(){
     if(!res||!res.ok){alert('Não foi possível calcular esse período: '+(res&&res.erro||'erro desconhecido'));return;}
     aplicar(res.dados);
   }).withFailureHandler(function(err){alert('Erro ao calcular período: '+err);}).calcularCMVPersonalizadoTodas(SENHA_ATUAL, dataIniBR, dataFimBR);
+}
+
+// Rótulo verde abaixo do cabeçalho -- refeito a cada troca de unidade
+// (chamado por setUniCMV) porque o aviso de "CMV aproximado" é por
+// unidade (vem de porUnidade[u].disponivel), não do período como um todo.
+function atualizarLabelCustomCMV_(){
+  var lbl=document.getElementById('cmv-custom-label');
+  if(periodoAtualCMV.tipo!=='custom'){lbl.style.display='none';return;}
+  var dados=CUSTOM_CMV_CACHE[periodoAtualCMV.key];
+  if(!dados){lbl.style.display='none';return;}
+  var indisponivel=uniCMV==='TODAS'?!dados.disponivel:(dados.porUnidade&&dados.porUnidade[uniCMV]&&!dados.porUnidade[uniCMV].disponivel);
+  lbl.style.display='block';
+  lbl.textContent='Período personalizado: '+dados.dataInicio+' a '+dados.dataFim+
+    (indisponivel?' — CMV indisponível: sem contagem próxima o suficiente dessas datas pra esta unidade':'');
 }
 
 function limparPeriodoCustomCMV(){
@@ -1893,22 +1816,28 @@ function rSemCalPintar_(semanas){
 function extrairCMVCustom_(){
   var resultado=CUSTOM_CMV_CACHE[periodoAtualCMV.key];
   if(!resultado)return null;
-  if(!resultado.cmvDetalhado){
-    // "Todas as unidades": resultado já vem consolidado no nível raiz, sem
-    // detalhe por unidade/grupo (ver calcularCMVPersonalizadoTodas).
+  if(uniCMV==='TODAS'){
+    // "Todas as unidades": total consolidado no nível raiz, sem detalhe
+    // por grupo (não dá pra somar grupo a grupo entre unidades com datas
+    // de contagem diferentes -- mesmo motivo de dadosPeriodoCMC).
     return {ei:resultado.ei,ef:resultado.ef,compras:resultado.compras,cmv:resultado.cmv,
       pct:resultado.cmv_pct,fat:resultado.faturamento||0,
       data_ei:resultado.dataInicio||null,data_ef:resultado.dataFim||null,grupos:null,
       transfEntrada:0,transfSaida:0,transfSaldo:0,
       cmvAjustado:resultado.cmv,pctAjustado:resultado.cmv_pct};
   }
-  var f=resultado.cmvDetalhado;
-  var fatFil=resultado.faturamento||0;
+  var f=resultado.porUnidade&&resultado.porUnidade[uniCMV];
+  if(!f||!f.disponivel){
+    return {ei:null,ef:null,compras:(f?f.compras:0),cmv:null,pct:null,fat:(f?f.faturamento:0),
+      data_ei:resultado.dataInicio||null,data_ef:resultado.dataFim||null,grupos:null,
+      transfEntrada:0,transfSaida:0,transfSaldo:0,cmvAjustado:null,pctAjustado:null};
+  }
+  var fatFil=f.faturamento||0;
   var pct=(fatFil>0)?Math.round(f.cmv/fatFil*10000)/100:null;
   var pctPuro=(fatFil>0&&f.cmv_puro!==undefined)?Math.round(f.cmv_puro/fatFil*10000)/100:null;
   var pctSemAjuste=(fatFil>0&&f.cmv_sem_ajuste!==undefined)?Math.round(f.cmv_sem_ajuste/fatFil*10000)/100:null;
   return {ei:f.ei,ef:f.ef,compras:f.compras,cmv:f.cmv,pct:pct,fat:fatFil,
-    data_ei:resultado.dataInicio||null,data_ef:resultado.dataFim||null,grupos:(f.grupos||null),
+    data_ei:f.eiData||resultado.dataInicio||null,data_ef:f.efData||resultado.dataFim||null,grupos:(f.grupos||null),
     transfEntrada:f.transf_entrada||0,transfSaida:f.transf_saida||0,transfSaldo:f.transf_saldo||0,
     cmvAjustado:f.cmv,pctAjustado:pct,
     cmvSemAjuste:(f.cmv_sem_ajuste!==undefined?f.cmv_sem_ajuste:f.cmv),pctSemAjuste:pctSemAjuste,
@@ -1945,7 +1874,10 @@ function cmvDados(mes){
 }
 
 function setMesCMV(m){mesCMV=m;periodoAtualCMV={tipo:'mes'};limparPeriodoCustomCMV();document.querySelectorAll('#cmv-mseg button').forEach(function(b){b.classList.toggle('on',b.dataset.m===m);});rCMV();}
-function setUniCMV(u){uniCMV=u;periodoAtualCMV={tipo:'mes'};limparPeriodoCustomCMV();document.querySelectorAll('#cmv-useg button').forEach(function(b){b.classList.toggle('on',b.textContent===(u==='TODAS'?'Todas':nomeUni(u)));});rCMV();}
+// Trocar de unidade NÃO derruba o período personalizado -- a mesma
+// resposta já tem todas as unidades (porUnidade + Todas), então só troca
+// o que é exibido, sem re-perguntar as datas (ver aplicarPeriodoCustomCMV).
+function setUniCMV(u){uniCMV=u;document.querySelectorAll('#cmv-useg button').forEach(function(b){b.classList.toggle('on',b.textContent===(u==='TODAS'?'Todas':nomeUni(u)));});atualizarLabelCustomCMV_();rCMV();}
 
 // Desativado -- ver comentário em atualizarGranularidadeCMC().
 function atualizarGranularidadeCMV(){}

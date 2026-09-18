@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-09-18.6';
+var VERSAO_APP = '2026-09-18.7';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -1767,7 +1767,12 @@ function calcularCMVPersonalizadoTodas_(dataIniStr, dataFimStr) {
     var vendas  = somarPeriodoPreAgregadoCross_(porDiaVendas, anterior.mes, anterior.ano, anterior.dia, dataFim.mes, dataFim.ano, dataFim.dia);
 
     var somaEi = 0, somaEf = 0, somaCompras = 0, somaFat = 0, todasDisponivel = true;
-    var detalheUnidades = {};
+    // porUnidade: mesmo formato de montarCMVDetalhadoUnidade_ (ei, ef,
+    // compras, cmv, grupos, transf_*, cmv_puro...) -- permite trocar de
+    // unidade no mesmo período personalizado sem precisar escolher
+    // inventário de novo nem recalcular no servidor (o frontend já tem
+    // tudo, de todas as unidades, numa chamada só).
+    var porUnidade = {};
     unidades.forEach(function(u) {
       var pd = agruparContagensPorDia_(contagensPorUnidade[u] || []);
       var eiInfo = contagemOuInventarioMaisProximo_(pd, inventariosSalvos, u, dataIni, dataPorContagemId, JANELA_MAX_DIAS_CONTAGEM_PROXIMA);
@@ -1776,23 +1781,26 @@ function calcularCMVPersonalizadoTodas_(dataIniStr, dataFimStr) {
       var vendaUni  = vendas.filiais[u] || 0;
       somaCompras += compraUni; somaFat += vendaUni;
       if (eiInfo && efInfo) {
-        var rotulo = 'Periodo personalizado (Todas), ' + u;
+        var rotulo = 'Periodo personalizado, ' + u;
         var itensEi = buscarItensDeContagens_(eiInfo.ids);
         var itensEf = buscarItensDeContagens_(efInfo.ids);
         var valEi = valorizarItensInventario_(itensEi, NOMES_MESES[eiInfo.mes], eiInfo.ano, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (inicial)', catalogoPorCodigo, fichaPorCodigo);
         var valEf = valorizarItensInventario_(itensEf, NOMES_MESES[efInfo.mes], efInfo.ano, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (final)', catalogoPorCodigo, fichaPorCodigo);
         somaEi += valEi.total; somaEf += valEf.total;
-        detalheUnidades[u] = {
-          eiData: pad2(eiInfo.dia) + '/' + pad2(eiInfo.mes) + '/' + eiInfo.ano,
-          efData: pad2(efInfo.dia) + '/' + pad2(efInfo.mes) + '/' + efInfo.ano,
-          eiDesvioDias: eiInfo.desvioDias, efDesvioDias: efInfo.desvioDias,
-          ei: r2(valEi.total), ef: r2(valEf.total),
-          eiIds: eiInfo.ids, efIds: efInfo.ids,
-          eiItens: itensEi.length, efItens: itensEf.length
-        };
+        var detUni = montarCMVDetalhadoUnidade_(valEi.porProduto, valEf.porProduto, rowsCompras,
+          dataIni.mes, dataIni.ano, dataIni.dia, dataFim.mes, dataFim.ano, dataFim.dia, u);
+        detUni.faturamento = r2(vendaUni);
+        detUni.cmv_pct = calcularPct(detUni.cmv, vendaUni);
+        detUni.eiData = pad2(eiInfo.dia) + '/' + pad2(eiInfo.mes) + '/' + eiInfo.ano;
+        detUni.efData = pad2(efInfo.dia) + '/' + pad2(efInfo.mes) + '/' + efInfo.ano;
+        detUni.eiDesvioDias = eiInfo.desvioDias; detUni.efDesvioDias = efInfo.desvioDias;
+        detUni.disponivel = true;
+        porUnidade[u] = detUni;
       } else {
         todasDisponivel = false;
-        detalheUnidades[u] = { eiData: null, efData: null, eiDesvioDias: null, efDesvioDias: null };
+        porUnidade[u] = { ei: null, ef: null, compras: r2(compraUni), faturamento: r2(vendaUni),
+          cmv: null, cmv_pct: null, grupos: null, disponivel: false,
+          eiData: null, efData: null, eiDesvioDias: null, efDesvioDias: null };
       }
     });
 
@@ -1802,10 +1810,8 @@ function calcularCMVPersonalizadoTodas_(dataIniStr, dataFimStr) {
     var resultado = {
       ei: r2(somaEi), ef: r2(somaEf), compras: r2(somaCompras), faturamento: r2(somaFat), cmv: cmv,
       cmc_pct: calcularPct(somaCompras, somaFat), cmv_pct: calcularPct(cmv, somaFat),
-      disponivel: todasDisponivel, detalheUnidades: detalheUnidades,
-      dataInicio: dataIniFmt, dataFim: dataFimFmt,
-      dataContagemInicial: dataIniFmt, dataContagemFinal: dataFimFmt,
-      labelInicial: 'Todas as unidades', labelFinal: 'Todas as unidades'
+      disponivel: todasDisponivel, porUnidade: porUnidade,
+      dataInicio: dataIniFmt, dataFim: dataFimFmt
     };
     return resultado;
 }
