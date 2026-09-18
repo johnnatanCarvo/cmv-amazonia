@@ -1326,11 +1326,15 @@ function setPeriodoCMC(key){
 // MESES (como sempre); uma semana/quinzena selecionada percorre as
 // semanas/quinzenas salvas do MESMO mês, não os outros meses do ano.
 function listaEvolucaoCMC(){
-  if(periodoAtualCMC.tipo==='mes')return MESES.map(function(m){return {key:m,label:ML_MAP[m]||m};});
+  // "custom" (período personalizado) mostra a evolução por mês, igual ao
+  // "mês inteiro" -- não tem uma série natural de "períodos anteriores"
+  // pra uma data escolhida à mão, então usa o mês como contexto (o mês
+  // atual entra com o valor já filtrado pelo período, via dadosMes).
+  if(periodoAtualCMC.tipo==='mes'||periodoAtualCMC.tipo==='custom')return MESES.map(function(m){return {key:m,label:ML_MAP[m]||m};});
   return periodosDisponiveis_(mesAtual).map(function(d){return {key:d.key,label:d.label};});
 }
 function valorEvolucaoCMC(key){
-  if(periodoAtualCMC.tipo==='mes')return dadosMes(key);
+  if(periodoAtualCMC.tipo==='mes'||periodoAtualCMC.tipo==='custom')return dadosMes(key);
   return dadosPeriodoCMC(mesAtual, chaveParaPeriodo_(key));
 }
 
@@ -1389,7 +1393,7 @@ function rMes(){
   }
 
   var evoLista=listaEvolucaoCMC();
-  var chaveAtualEvo=periodoAtualCMC.tipo==='mes'?mesAtual:periodoParaChave_(periodoAtualCMC);
+  var chaveAtualEvo=(periodoAtualCMC.tipo==='mes'||periodoAtualCMC.tipo==='custom')?mesAtual:periodoParaChave_(periodoAtualCMC);
   var idx=evoLista.map(function(e){return e.key;}).indexOf(chaveAtualEvo);
   var prev=idx>0?valorEvolucaoCMC(evoLista[idx-1].key):null;
   var labelAtual=evoLista[idx]?evoLista[idx].label:(ML_MAP[mesAtual]||mesAtual);
@@ -1410,7 +1414,7 @@ function rMes(){
       '<span style="color:var(--fg3)">vs '+labelAnterior+'</span>';
   }
   var html='';
-  html+='<div class="metric lead"><div class="metric-l">CMC Total · '+labelAtual+(periodoAtualCMC.tipo==='mes'?' 2026':' · '+(ML_MAP[mesAtual]||mesAtual))+sufUni+'</div>'+
+  html+='<div class="metric lead"><div class="metric-l">CMC Total · '+labelAtual+((periodoAtualCMC.tipo==='mes'||periodoAtualCMC.tipo==='custom')?' 2026':' · '+(ML_MAP[mesAtual]||mesAtual))+sufUni+'</div>'+
     '<div class="metric-v">'+fR2(d.cmc_total)+'</div><div class="metric-sub">'+trendHtml+'</div></div>';
   if(fat>0){
     html+='<div class="metric"><div class="metric-l">Faturamento</div><div class="metric-v ac">'+fR(fat)+'</div>'+
@@ -1571,7 +1575,7 @@ function abrirGrupo(nome, manter){
 
   var g=d.grupos[nome];
   var evoLista=listaEvolucaoCMC();
-  var chaveAtualEvo=periodoAtualCMC.tipo==='mes'?mesAtual:periodoParaChave_(periodoAtualCMC);
+  var chaveAtualEvo=(periodoAtualCMC.tipo==='mes'||periodoAtualCMC.tipo==='custom')?mesAtual:periodoParaChave_(periodoAtualCMC);
   var idx=evoLista.map(function(e){return e.key;}).indexOf(chaveAtualEvo);
   var prevD=idx>0?valorEvolucaoCMC(evoLista[idx-1].key):null;
   var gPrev=prevD&&prevD.grupos&&prevD.grupos[nome]?prevD.grupos[nome]:null;
@@ -1913,7 +1917,7 @@ function extrairCMVCustom_(){
 }
 
 function cmvDados(mes){
-  if(periodoAtualCMV.tipo==='custom'){
+  if(mes===mesCMV&&periodoAtualCMV.tipo==='custom'){
     var dcustom=extrairCMVCustom_();
     if(dcustom)return dcustom;
   }
@@ -1953,11 +1957,12 @@ function setPeriodoCMV(key){
 }
 // Mesma ideia de listaEvolucaoCMC/valorEvolucaoCMC, pro CMV.
 function listaEvolucaoCMV(mesesComCMV){
-  if(periodoAtualCMV.tipo==='mes')return mesesComCMV.map(function(m){return {key:m,label:ML_MAP[m]||m};});
+  // Mesma ideia de listaEvolucaoCMC: "custom" mostra evolução por mês.
+  if(periodoAtualCMV.tipo==='mes'||periodoAtualCMV.tipo==='custom')return mesesComCMV.map(function(m){return {key:m,label:ML_MAP[m]||m};});
   return periodosDisponiveis_(mesCMV).map(function(d){return {key:d.key,label:d.label};});
 }
 function valorEvolucaoCMV(key){
-  if(periodoAtualCMV.tipo==='mes')return cmvDados(key);
+  if(periodoAtualCMV.tipo==='mes'||periodoAtualCMV.tipo==='custom')return cmvDados(key);
   return dadosPeriodoCMV(mesCMV, chaveParaPeriodo_(key));
 }
 
@@ -2000,7 +2005,7 @@ function rCMV(){
   if(!d){cont.innerHTML='<div class="card"><div class="empty">Sem dados de CMV para esta selecao.</div></div>';return;}
 
   var evoListaCMV=listaEvolucaoCMV(mesesCMV);
-  var chaveAtualEvoCMV=periodoAtualCMV.tipo==='mes'?mesCMV:periodoParaChave_(periodoAtualCMV);
+  var chaveAtualEvoCMV=(periodoAtualCMV.tipo==='mes'||periodoAtualCMV.tipo==='custom')?mesCMV:periodoParaChave_(periodoAtualCMV);
   var labelAtualCMV=(function(){var e=evoListaCMV.filter(function(x){return x.key===chaveAtualEvoCMV;})[0];return e?e.label:(ML_MAP[mesCMV]||mesCMV);})();
 
   var sufUni=uniCMV==='TODAS'?'':' · '+nomeUni(uniCMV);
@@ -2010,7 +2015,7 @@ function rCMV(){
   // ===== MÉTRICAS =====
   var cmvAtipico = d.cmv < 0;
   var html='<div class="metrics" style="grid-template-columns:1.4fr 1fr 1fr 1fr 1fr;">'+
-    '<div class="metric lead"><div class="metric-l">CMV Real · '+labelAtualCMV+(periodoAtualCMV.tipo!=='mes'?' · '+(ML_MAP[mesCMV]||mesCMV):'')+sufUni+'</div>'+
+    '<div class="metric lead"><div class="metric-l">CMV Real · '+labelAtualCMV+(periodoAtualCMV.tipo!=='mes'&&periodoAtualCMV.tipo!=='custom'?' · '+(ML_MAP[mesCMV]||mesCMV):'')+sufUni+'</div>'+
       '<div class="metric-v'+(cmvAtipico?' rd':'')+'">'+fR2(d.cmv)+'</div>'+
       '<div class="metric-sub" style="color:'+(cmvAtipico?'var(--rd)':'var(--fg3)')+'">'+
         (cmvAtipico?'&#9888; CMV negativo — confira as contagens de estoque':(d.data_ei||'')+' a '+(d.data_ef||''))+
@@ -2027,7 +2032,7 @@ function rCMV(){
     var pctPuroTxt=(d.pctPuro!==null&&d.pctPuro!==undefined)?fP(d.pctPuro):'--';
     var pctPuroCls=(d.pctPuro>35)?'rd':(d.pctPuro>30)?'am':'ac';
     html+='<div class="metrics" style="grid-template-columns:1.4fr 1fr 1fr 1fr 1fr;margin-top:10px;opacity:.82;">'+
-      '<div class="metric lead"><div class="metric-l">CMV Sem Transferencia · '+labelAtualCMV+(periodoAtualCMV.tipo!=='mes'?' · '+(ML_MAP[mesCMV]||mesCMV):'')+sufUni+'</div>'+
+      '<div class="metric lead"><div class="metric-l">CMV Sem Transferencia · '+labelAtualCMV+(periodoAtualCMV.tipo!=='mes'&&periodoAtualCMV.tipo!=='custom'?' · '+(ML_MAP[mesCMV]||mesCMV):'')+sufUni+'</div>'+
         '<div class="metric-v">'+fR2(d.cmvPuro)+'</div>'+
         '<div class="metric-sub" style="color:var(--fg3)">compra externa pura, sem entrada nem saida</div></div>'+
       '<div class="metric"><div class="metric-l">Estoque Inicial</div><div class="metric-v az">'+fR(d.ei)+'</div></div>'+
@@ -2188,7 +2193,7 @@ function abrirCMVGrupo(gi){
   // quinzenas do mês quando uma granularidade especifica esta ativa)
   var mesesComCMV=MESES.filter(function(m){return CMV[m];});
   var evoListaGrupo=periodoAtualCMV.tipo==='mes'?mesesComCMV.map(function(m){return {key:m,label:ML_MAP[m]||m};}):listaEvolucaoCMV(mesesComCMV);
-  var chaveAtualEvoGrupo=periodoAtualCMV.tipo==='mes'?mesCMV:periodoParaChave_(periodoAtualCMV);
+  var chaveAtualEvoGrupo=(periodoAtualCMV.tipo==='mes'||periodoAtualCMV.tipo==='custom')?mesCMV:periodoParaChave_(periodoAtualCMV);
   var serieGrupo=evoListaGrupo.map(function(e){
     var dm=valorEvolucaoCMV(e.key);if(!dm||!dm.grupos)return 0;
     var gg=dm.grupos.filter(function(x){return x.grupo===g.grupo;})[0];
