@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-09-18.8';
+var VERSAO_APP = '2026-10-01.1';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -546,10 +546,26 @@ function lerTodosCSVs(tipo) {
 // Diferente de compras/vendas/estoque, ficha técnica NÃO acumula por mês —
 // é uma foto do momento do envio, então só lemos o arquivo mais recente,
 // sem concatenar. Retorna [] se ainda não houver nenhuma (recurso opcional).
-// Lê só o arquivo exportado do Cloudfy (mais recente cujo nome bate
-// PADROES.fichas) -- NUNCA chamar direto fora de lerFichaTecnica() (abaixo),
-// que já aplica as fichas cadastradas/editadas manualmente por cima.
+// Lê só o arquivo exportado do Cloudfy -- NUNCA chamar direto fora de
+// lerFichaTecnica() (abaixo), que já aplica as fichas cadastradas/editadas
+// manualmente por cima.
+//
+// Fonte preferida: cache da API do Cloudfy (CFYCC880), atualizado por gatilho
+// diário em CloudfyAPI.js. O CSV exportado à mão continua como reserva: se a
+// API nunca rodou, ou se a planilha de cache estiver fora do ar, o painel
+// segue funcionando com o arquivo do Drive, como antes.
 function lerFichaTecnicaCloudfy_() {
+  var cache = cfyLerCacheFichas_();
+  if (cache && cache.length > 1) {
+    Logger.log('Ficha técnica: cache da API (' + (cache.length - 1) + ' linhas, atualizado ' + (cfyFichasAtualizadoEm() || 'data desconhecida') + ')');
+    return cache;
+  }
+  Logger.log('Ficha técnica: cache da API vazio — usando o CSV do Drive.');
+  return lerFichaTecnicaCSV_();
+}
+
+// Reserva: arquivo exportado à mão (mais recente cujo nome bate PADROES.fichas).
+function lerFichaTecnicaCSV_() {
   var pasta = DriveApp.getFolderById(PASTA_ID);
   var files = pasta.getFiles();
   var maisRecente = null;
