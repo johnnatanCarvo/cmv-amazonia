@@ -132,6 +132,16 @@ function cfyFichaTecnicaLinhas_(codFilial) {
   return linhas;
 }
 
+// ── Teste de conexão: usa a consulta mais barata (lista de filiais) e
+// ESTOURA o erro em vez de engolir, pra diagnóstico no editor. ──
+function testarConexaoCloudfy() {
+  var rs = cfyChamar_('CFYCC882', null);
+  var filiais = (rs.Filiais || []).map(function(f) { return f.NrFilial + ' = ' + f.Filial; });
+  var msg = 'Conexão OK. ' + filiais.length + ' filiais: ' + filiais.join(' | ');
+  Logger.log(msg);
+  return msg;
+}
+
 // ── Gatilho diário: busca na API e grava no cache ──
 function atualizarCacheFichas() {
   var hora = Number(Utilities.formatDate(new Date(), 'America/Belem', 'H'));
