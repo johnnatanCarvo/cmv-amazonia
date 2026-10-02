@@ -191,6 +191,158 @@ function cfyFichasAtualizadoEm() {
   return PropertiesService.getScriptProperties().getProperty('CFY_FICHAS_ATUALIZADO') || '';
 }
 
+// ============================================================
+// COMPRAS (CFYCC892)
+// ============================================================
+// Só o MÊS CORRENTE vem da API. Janeiro..mês anterior continuam nos CSVs
+// exportados à mão, que já estão fechados e completos -- reimportar o passado
+// seria risco sem ganho. O problema que isso resolve é só do mês em aberto,
+// onde a exportação manual atrasa (em setembro/2026 o CSV parou no dia 18 e
+// ainda tinha dias parciais antes disso).
+var CFY_ABA_COMPRAS = 'COMPRAS_CLOUDFY';
+var CFY_FILIAIS_COMPRA = [
+  { nr: 1, nome: 'UMARIZAL' },
+  { nr: 2, nome: 'MARCO' },
+  { nr: 3, nome: 'PORTO FUTURO' }
+  // filial 4 (ACAI NA CUIA) não registra compras -- conferido na API
+];
+
+// Mapa código -> grupo do produto. A consulta de compras NÃO devolve o grupo,
+// e ele alimenta CMC por grupo e Curva ABC. Montado a partir do cache de
+// fichas (produtos e insumos) e completado pelo histórico de compras dos CSVs.
+// Cobertura medida em setembro/2026: 99,98% do valor comprado.
+function cfyMapaGrupos_(rowsComprasCSV) {
+  var mapa = {};
+  var fichas = cfyLerCacheFichas_();
+  if (fichas) {
+    for (var i = 1; i < fichas.length; i++) {
+      var codProd = String(fichas[i][0] || '').trim();
+      var grpProd = String(fichas[i][4] || '').trim();
+      if (codProd && grpProd && !mapa[codProd]) mapa[codProd] = grpProd;
+    }
+  }
+  if (rowsComprasCSV) {
+    for (var j = 1; j < rowsComprasCSV.length; j++) {
+      var r = rowsComprasCSV[j];
+      var cod = String(r[C_COMPRAS.cod] || '').trim();
+      var grp = String(r[C_COMPRAS.grupo] || '').trim();
+      if (cod && grp && !mapa[cod]) mapa[cod] = grp;
+    }
+  }
+  return mapa;
+}
+
+// CFYCC892 -> linhas no layout C_COMPRAS.
+// Sem filtro de situação/integração: conferido contra o CSV, filtrar por
+// IntegCompra descartava compra real (R$ 10 mil só em Umarizal, setembro).
+function cfyComprasLinhas_(codFilial, nomeFilial, dataIni, dataFim, mapaGrupos) {
+  var rs = cfyChamar_('CFYCC892', {
+    DataInicio: dataIni, DataFim: dataFim,
+    CodFornecedor: null, CPFCNPJFornecedor: null, NrDoc: null, ChaveNF: null,
+    IdentifConsultaItens: 1, IdentifConsultaCobrancas: 2
+  }, codFilial);
+
+  var linhas = [];
+  (rs.Compras || []).forEach(function(c) {
+    var s = String(c.DataCompra);
+    var dataBR = s.slice(6, 8) + '/' + s.slice(4, 6) + '/' + s.slice(0, 4);
+    (c.Itens || []).forEach(function(i) {
+      // Os campos "Integrado" são os do catálogo interno. ItemCompra traz o
+      // nome que veio na nota do fornecedor ("OLEO DE ALGODAO; BALDE 1" em vez
+      // de "MP OLEO DE ALGODAO") e não casa com ficha técnica nem com estoque.
+      var cod     = cfyTexto_(i.CodRefIntegrado);
+      var produto = cfyTexto_(i.ProdutoIntegrado || i.ItemCompra);
+      var qtd     = Number(i.QtdIntegrada) || 0;
+      var unit    = Number(i.VlrUnitIntegrado) || 0;
+      if (!produto) return;
+      var linha = new Array(18);
+      for (var k = 0; k < 18; k++) linha[k] = '';
+      linha[C_COMPRAS.filial]      = nomeFilial;
+      linha[C_COMPRAS.data]        = dataBR;
+      linha[C_COMPRAS_FORNECEDOR]  = cfyTexto_(c.Fornecedor);
+      linha[C_COMPRAS.cod]         = cod;
+      linha[C_COMPRAS.produto]     = produto;
+      linha[C_COMPRAS.grupo]       = mapaGrupos[cod] || '';
+      linha[C_COMPRAS.qtd]         = qtd;
+      linha[C_COMPRAS.unid]        = cfyTexto_(i.UndMedidaIntegrado || i.UndMedidaCompra);
+      linha[C_COMPRAS.custo_atual] = unit;
+      linha[C_COMPRAS.total]       = qtd * unit;
+      linhas.push(linha);
+    });
+  });
+  return linhas;
+}
+
+// Gatilho diário: puxa o mês corrente das 3 filiais e grava no cache.
+function atualizarCacheCompras() {
+  var hora = Number(Utilities.formatDate(new Date(), 'America/Belem', 'H'));
+  if (CFY_HORAS_PERMITIDAS.indexOf(hora) === -1) {
+    Logger.log('Fora da janela permitida pela API (hora ' + hora + '). Nada feito.');
+    return { ok: false, erro: 'Fora da janela permitida pela API do Cloudfy.' };
+  }
+  try {
+    var hoje = new Date();
+    var ano  = Number(Utilities.formatDate(hoje, 'America/Belem', 'yyyy'));
+    var mes  = Number(Utilities.formatDate(hoje, 'America/Belem', 'MM'));
+    var dia  = Number(Utilities.formatDate(hoje, 'America/Belem', 'dd'));
+    var ini  = ano * 10000 + mes * 100 + 1;
+    var fim  = ano * 10000 + mes * 100 + dia;
+
+    var mapaGrupos = cfyMapaGrupos_(lerTodosCSVs('compras'));
+    var todas = [];
+    CFY_FILIAIS_COMPRA.forEach(function(f) {
+      todas = todas.concat(cfyComprasLinhas_(f.nr, f.nome, ini, fim, mapaGrupos));
+    });
+    if (!todas.length) throw new Error('A API não devolveu nenhuma compra do mês corrente.');
+
+    var cab = new Array(18);
+    for (var k = 0; k < 18; k++) cab[k] = 'C' + k;
+    cab[C_COMPRAS.filial] = 'FILIAL'; cab[C_COMPRAS.data] = 'DATA';
+    cab[C_COMPRAS_FORNECEDOR] = 'FORNECEDOR'; cab[C_COMPRAS.cod] = 'COD';
+    cab[C_COMPRAS.produto] = 'PRODUTO'; cab[C_COMPRAS.grupo] = 'GRUPO';
+    cab[C_COMPRAS.qtd] = 'QTD'; cab[C_COMPRAS.unid] = 'UND';
+    cab[C_COMPRAS.custo_atual] = 'CUSTO_UNIT'; cab[C_COMPRAS.total] = 'TOTAL';
+
+    var ss  = obterFichasManuaisSheet_();
+    var aba = ss.getSheetByName(CFY_ABA_COMPRAS);
+    if (!aba) aba = ss.insertSheet(CFY_ABA_COMPRAS);
+    aba.clearContents();
+    var dados = [cab].concat(todas);
+    aba.getRange(1, 1, dados.length, 18).setValues(dados);
+    aba.getRange(1, 1, 1, 18).setFontWeight('bold');
+
+    PropertiesService.getScriptProperties().setProperties({
+      CFY_COMPRAS_MES: pad2(mes) + '/' + ano,
+      CFY_COMPRAS_ATUALIZADO: Utilities.formatDate(hoje, 'America/Belem', 'dd/MM/yyyy HH:mm')
+    });
+    SpreadsheetApp.flush();
+    Logger.log('Cache de compras atualizado: ' + todas.length + ' linhas (' + pad2(mes) + '/' + ano + ').');
+    return { ok: true, linhas: todas.length };
+  } catch (err) {
+    Logger.log('Falha ao atualizar cache de compras: ' + err.message);
+    return { ok: false, erro: err.message };
+  }
+}
+
+function cfyLerCacheCompras_() {
+  try {
+    var ss  = obterFichasManuaisSheet_();
+    var aba = ss.getSheetByName(CFY_ABA_COMPRAS);
+    if (!aba || aba.getLastRow() < 2) return null;
+    return {
+      linhas: aba.getRange(2, 1, aba.getLastRow() - 1, 18).getValues(),
+      mesRef: PropertiesService.getScriptProperties().getProperty('CFY_COMPRAS_MES') || ''
+    };
+  } catch (err) {
+    Logger.log('Cache de compras indisponível: ' + err.message);
+    return null;
+  }
+}
+
+function cfyComprasAtualizadoEm() {
+  return PropertiesService.getScriptProperties().getProperty('CFY_COMPRAS_ATUALIZADO') || '';
+}
+
 // ── Gatilho: roda todo dia às 8h (dentro da janela permitida) ──
 function instalarGatilhoFichas() {
   ScriptApp.getProjectTriggers().forEach(function(t) {
@@ -198,4 +350,14 @@ function instalarGatilhoFichas() {
   });
   ScriptApp.newTrigger('atualizarCacheFichas').timeBased().atHour(8).everyDays(1).create();
   return 'Gatilho diário criado (8h).';
+}
+
+// Compras roda às 9h, uma hora depois das fichas: o mapa de grupos usa o cache
+// de fichas, então ele precisa estar atualizado antes.
+function instalarGatilhoCompras() {
+  ScriptApp.getProjectTriggers().forEach(function(t) {
+    if (t.getHandlerFunction() === 'atualizarCacheCompras') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('atualizarCacheCompras').timeBased().atHour(9).everyDays(1).create();
+  return 'Gatilho diário de compras criado (9h).';
 }

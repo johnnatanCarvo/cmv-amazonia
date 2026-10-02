@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-10-01.2';
+var VERSAO_APP = '2026-10-02.1';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -75,7 +75,7 @@ function getPayload(senha) {
     return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
   }
   try {
-    var rowsCompras = lerTodosCSVs('compras');
+    var rowsCompras = lerComprasCompleto_();
     var rowsVendas  = lerTodosCSVs('vendas');
     var rowsEstoque = lerTodosCSVs('estoque');
     var rowsFichas  = lerFichaTecnica(); // opcional — [] se ainda nao foi enviada
@@ -275,7 +275,7 @@ function gerarPlanilhaItensSemPreco(senha) {
     return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
   }
   try {
-    var rowsCompras = lerTodosCSVs('compras');
+    var rowsCompras = lerComprasCompleto_();
     var rowsVendas  = lerTodosCSVs('vendas');
     var rowsEstoque = lerTodosCSVs('estoque');
     var rowsFichas  = lerFichaTecnica();
@@ -477,6 +477,50 @@ function gerarPlanilhaItensSemGrupo(senha) {
     Logger.log('gerarPlanilhaItensSemGrupo ERROR: ' + err.message + '\n' + err.stack);
     return JSON.stringify({ ok: false, erro: err.message });
   }
+}
+
+// Ponto único de leitura de COMPRAS pro resto do sistema.
+//
+// Histórico (meses fechados) vem dos CSVs exportados à mão; o MÊS CORRENTE vem
+// do cache da API do Cloudfy, porque é nele que a exportação manual atrasa --
+// em setembro/2026 o CSV parou no dia 18 e ainda tinha dias parciais antes
+// disso, o que subestimava o CMC sem nenhum aviso.
+//
+// Se o cache estiver vazio (API nunca rodou, falhou, ou fora da janela
+// permitida), devolve o CSV puro e o painel segue funcionando como antes.
+// Produtos renomeados no Cloudfy: os CSVs antigos guardam o nome velho e a API
+// devolve o novo. Sem isso o histórico de custo do insumo racha em dois
+// produtos diferentes -- e no caso do açaí, que é o insumo principal da casa,
+// o custo médio ponderado sairia errado em todo cálculo que usa ficha técnica.
+var RENOMEADOS_COMPRAS = {
+  'MP ACAI L': 'MP ACAI (LT)'
+};
+
+function lerComprasCompleto_() {
+  var rowsCSV = lerTodosCSVs('compras');
+  for (var n = 1; n < rowsCSV.length; n++) {
+    var nomeAntigo = String(rowsCSV[n][C_COMPRAS.produto] || '').trim().toUpperCase();
+    if (RENOMEADOS_COMPRAS[nomeAntigo]) rowsCSV[n][C_COMPRAS.produto] = RENOMEADOS_COMPRAS[nomeAntigo];
+  }
+
+  var cache = cfyLerCacheCompras_();
+  if (!cache || !cache.linhas.length || !cache.mesRef) return rowsCSV;
+
+  var partes = cache.mesRef.split('/');
+  var mesRef = partes[0], anoRef = partes[1];
+
+  // Tira do CSV as linhas do mês que o cache cobre, pra não somar duas vezes.
+  var filtrado = [rowsCSV[0]];
+  for (var i = 1; i < rowsCSV.length; i++) {
+    var d = String(rowsCSV[i][C_COMPRAS.data] || '').trim();
+    if (d.length >= 10 && d.slice(3, 5) === mesRef && d.slice(6, 10) === anoRef) continue;
+    filtrado.push(rowsCSV[i]);
+  }
+  Logger.log('Compras: CSV ' + (rowsCSV.length - 1) + ' linhas, ' +
+             (rowsCSV.length - filtrado.length) + ' substituídas pelo cache da API (' +
+             cache.mesRef + ', ' + cache.linhas.length + ' linhas, atualizado ' +
+             (cfyComprasAtualizadoEm() || 'data desconhecida') + ')');
+  return filtrado.concat(cache.linhas);
 }
 
 // ── LEITURA DE CSVs ──────────────────────────────────────────
@@ -721,7 +765,7 @@ function listarCatalogoInsumos(senhaFichas) {
     return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
   }
   try {
-    var rowsCompras = lerTodosCSVs('compras');
+    var rowsCompras = lerComprasCompleto_();
     var rowsVendas  = lerTodosCSVs('vendas');
     var catalogo = preAgregarCatalogoProdutos(rowsCompras, rowsVendas);
     var manual = lerFichasManuais_();
@@ -1381,7 +1425,7 @@ function calcularAnaliseSemanal(senha, mes, ano) {
     }
 
     var avisos = [];
-    var rowsCompras = lerTodosCSVs('compras');
+    var rowsCompras = lerComprasCompleto_();
     var rowsVendas  = lerTodosCSVs('vendas');
     var rowsFichas  = lerFichaTecnica();
     var fichasMap   = processarFichas(rowsFichas);
@@ -1604,7 +1648,7 @@ function calcularPeriodoPersonalizado(senha, dataIniStr, dataFimStr) {
       return JSON.stringify({ ok: false, erro: 'A data final não pode ser antes da data inicial.' });
     }
 
-    var rowsCompras = lerTodosCSVs('compras');
+    var rowsCompras = lerComprasCompleto_();
     var rowsVendas  = lerTodosCSVs('vendas');
     var porDiaVendas = preAgregarVendasPorDia(rowsVendas);
 
@@ -1672,7 +1716,7 @@ function calcularCMVPersonalizado(senha, unidade, inventarioInicialId, inventari
       return JSON.stringify({ ok: false, erro: 'A data final do período precisa ser depois da inicial.' });
     }
 
-    var rowsCompras = lerTodosCSVs('compras');
+    var rowsCompras = lerComprasCompleto_();
     var rowsVendas  = lerTodosCSVs('vendas');
     var rowsFichas  = lerFichaTecnica();
     var fichasMap   = processarFichas(rowsFichas);
@@ -1767,7 +1811,7 @@ function calcularCMVPersonalizadoTodas_(dataIniStr, dataFimStr) {
     var inventariosSalvos = obterInventariosSalvos_();
     var dataPorContagemId = lerDataPorContagemId_();
 
-    var rowsCompras = lerTodosCSVs('compras');
+    var rowsCompras = lerComprasCompleto_();
     var rowsVendas  = lerTodosCSVs('vendas');
     var rowsFichas  = lerFichaTecnica();
     var fichasMap   = processarFichas(rowsFichas);
@@ -1981,7 +2025,7 @@ function calcularSemanaCalendario(senha, mes, ano) {
     var inventariosSalvos = obterInventariosSalvos_();
     var dataPorContagemId = lerDataPorContagemId_();
 
-    var rowsCompras = lerTodosCSVs('compras');
+    var rowsCompras = lerComprasCompleto_();
     var rowsVendas  = lerTodosCSVs('vendas');
     var rowsFichas  = lerFichaTecnica();
     var fichasMap   = processarFichas(rowsFichas);
@@ -2132,7 +2176,7 @@ function buscarItensDeContagens_(contagemIds) {
 // mensal/semanal). Reaproveitado sempre que precisar valorizar itens fora
 // desses fluxos principais (lista de contagens, tela de correção).
 function construirContextoPrecificacao_() {
-  var rowsCompras = lerTodosCSVs('compras');
+  var rowsCompras = lerComprasCompleto_();
   var rowsVendas  = lerTodosCSVs('vendas');
   var rowsFichas  = lerFichaTecnica();
   var fichasMap   = processarFichas(rowsFichas);
