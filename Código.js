@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-10-02.13';
+var VERSAO_APP = '2026-10-02.14';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -1852,8 +1852,12 @@ function calcularCMVPersonalizadoTodas_(dataIniStr, dataFimStr) {
     var porDiaVendas  = preAgregarVendasPorDia(rowsVendas);
 
     var anterior = diaAnterior_(dataIni);
+    // Compras começam no dia ANTERIOR de propósito: a contagem que vira estoque
+    // inicial é feita no fim daquele dia, então o que entrou depois dela já
+    // pertence a este período. Vendas não têm esse deslocamento -- faturamento
+    // é do dia em que aconteceu, e começar um dia antes inflava o período.
     var compras = somarPeriodoPreAgregadoCross_(porDiaCompras, anterior.mes, anterior.ano, anterior.dia, dataFim.mes, dataFim.ano, dataFim.dia);
-    var vendas  = somarPeriodoPreAgregadoCross_(porDiaVendas, anterior.mes, anterior.ano, anterior.dia, dataFim.mes, dataFim.ano, dataFim.dia);
+    var vendas  = somarPeriodoPreAgregadoCross_(porDiaVendas, dataIni.mes, dataIni.ano, dataIni.dia, dataFim.mes, dataFim.ano, dataFim.dia);
 
     var somaEi = 0, somaEf = 0, somaCompras = 0, somaFat = 0, todasDisponivel = true;
     // porUnidade: mesmo formato de montarCMVDetalhadoUnidade_ (ei, ef,
@@ -2068,7 +2072,10 @@ function calcularSemanaCalendario(senha, mes, ano) {
     var resultado = semanas.map(function(sem) {
       var anterior = diaAnterior_(sem.segunda); // sentinela: torna a soma inclusive na segunda
       var compras = somarPeriodoPreAgregadoCross_(porDiaCompras, anterior.mes, anterior.ano, anterior.dia, sem.domingo.mes, sem.domingo.ano, sem.domingo.dia);
-      var vendas  = somarPeriodoPreAgregadoCross_(porDiaVendas,  anterior.mes, anterior.ano, anterior.dia, sem.domingo.mes, sem.domingo.ano, sem.domingo.dia);
+      // Vendas começam na própria segunda: o deslocamento de um dia vale só pras
+      // compras, por causa da contagem de estoque inicial (ver comentário em
+      // calcularCMVPersonalizadoTodas_). Aqui ele somava o domingo anterior.
+      var vendas  = somarPeriodoPreAgregadoCross_(porDiaVendas,  sem.segunda.mes, sem.segunda.ano, sem.segunda.dia, sem.domingo.mes, sem.domingo.ano, sem.domingo.dia);
 
       var porUnidade = {};
       var somaEi = 0, somaEf = 0, somaCompras = 0, somaFat = 0, todasDisponivel = true, algumaDisponivel = false;
