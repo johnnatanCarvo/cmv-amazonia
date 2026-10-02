@@ -424,6 +424,198 @@ function cfyComprasAtualizadoEm() {
   return PropertiesService.getScriptProperties().getProperty('CFY_COMPRAS_ATUALIZADO') || '';
 }
 
+// ============================================================
+// VENDAS (CFYCC870 — cupons)
+// ============================================================
+// Não existe consulta de vendas por produto na API: o resumo (CFYCC891) é por
+// forma de pagamento. A fonte é o cupom, agregado por dia+produto, que é o
+// formato que o painel já consome (C_VENDAS).
+//
+// A consulta aceita no máximo 3 DIAS por chamada, então o gatilho busca uma
+// janela curta todo dia e o cache vai se formando. Conferido contra o CSV em
+// 01-03/09 (Umarizal): bate ao centavo, R$ 75.698,37 dos dois lados.
+var CFY_ABA_VENDAS = 'VENDAS_CLOUDFY';
+var CFY_DIAS_VENDAS = 3;   // limite da própria consulta
+
+function cfyVendasLinhas_(codFilial, nomeFilial, dataIni, dataFim) {
+  var rs = cfyChamar_('CFYCC870', {
+    DataInicio: dataIni, DataFim: dataFim,
+    SituacaoCupom: 1, IdentifDesconto: 1, IdentifTaxaServico: 1,
+    IdentifConsultaProd: 1, IdentifConsultaFormaPagto: 1,
+    IdentifConsultaProdCancelados: 2
+  }, codFilial);
+
+  // agrega cupom -> dia + produto
+  var mapa = {};
+  (rs.CuponsVenda || []).forEach(function(c) {
+    if (String(c.DescSituacao || '') !== 'Finalizado') return;
+    var s = String(c.DataMovimento);
+    var dataBR = s.slice(6, 8) + '/' + s.slice(4, 6) + '/' + s.slice(0, 4);
+    (c.Produtos || []).forEach(function(p) {
+      if (String(p.DescSituacaoItem || '') !== 'Finalizado') return;
+      var nome = cfyTexto_(p.DescProduto);
+      if (!nome) return;
+      var chave = dataBR + '|' + nome;
+      if (!mapa[chave]) {
+        mapa[chave] = { data: dataBR, produto: nome, grupo: cfyTexto_(p.DescGrupo), qtd: 0, valor: 0 };
+      }
+      mapa[chave].qtd   += Number(p.Qtde) || 0;
+      // VlrTotalLiq já é líquido de desconto; é o que o CSV traz na coluna Total.
+      mapa[chave].valor += Number(p.VlrTotalLiq || p.VlrTotal) || 0;
+    });
+  });
+
+  return Object.keys(mapa).map(function(k) {
+    var v = mapa[k];
+    var linha = new Array(15);
+    for (var i = 0; i < 15; i++) linha[i] = '';
+    linha[C_VENDAS.filial]  = nomeFilial;
+    linha[C_VENDAS.data]    = v.data;
+    linha[C_VENDAS.produto] = v.produto;
+    linha[C_VENDAS.grupo]   = v.grupo;
+    linha[C_VENDAS.qtd]     = v.qtd;
+    linha[C_VENDAS.valor]   = v.valor;
+    return linha;
+  });
+}
+
+// Gatilho diário: busca os últimos dias e acumula no cache.
+// A janela recua CFY_DIAS_VENDAS dias para pegar cupom reaberto ou ajustado
+// depois do fechamento do caixa.
+function atualizarCacheVendas() {
+  var hora = Number(Utilities.formatDate(new Date(), 'America/Belem', 'H'));
+  if (CFY_HORAS_PERMITIDAS.indexOf(hora) === -1) {
+    Logger.log('Fora da janela permitida pela API (hora ' + hora + '). Nada feito.');
+    return { ok: false, erro: 'Fora da janela permitida pela API do Cloudfy.' };
+  }
+  try {
+    var hoje = new Date();
+    var ini  = new Date(hoje.getTime() - (CFY_DIAS_VENDAS - 1) * 86400000);
+    var fmt  = function(d) { return Number(Utilities.formatDate(d, 'America/Belem', 'yyyyMMdd')); };
+    var fmtBR = function(d) { return Utilities.formatDate(d, 'America/Belem', 'dd/MM/yyyy'); };
+
+    var diasBuscados = {};
+    for (var k = 0; k < CFY_DIAS_VENDAS; k++) {
+      diasBuscados[fmtBR(new Date(ini.getTime() + k * 86400000))] = true;
+    }
+
+    var todas = [];
+    CFY_FILIAIS_COMPRA.forEach(function(f) {
+      todas = todas.concat(cfyVendasLinhas_(f.nr, f.nome, fmt(ini), fmt(hoje)));
+    });
+
+    var ss  = obterFichasManuaisSheet_();
+    var aba = ss.getSheetByName(CFY_ABA_VENDAS);
+    if (!aba) aba = ss.insertSheet(CFY_ABA_VENDAS);
+
+    // Acumula: preserva os dias que não foram buscados agora.
+    var preservadas = [];
+    if (aba.getLastRow() > 1) {
+      aba.getRange(2, 1, aba.getLastRow() - 1, 15).getValues().forEach(function(r) {
+        var d = String(r[C_VENDAS.data] || '').trim();
+        if (d && !diasBuscados[d]) preservadas.push(r);
+      });
+    }
+
+    var cab = new Array(15);
+    for (var i = 0; i < 15; i++) cab[i] = 'C' + i;
+    cab[C_VENDAS.filial] = 'FILIAL'; cab[C_VENDAS.data] = 'DATA';
+    cab[C_VENDAS.produto] = 'PRODUTO'; cab[C_VENDAS.grupo] = 'GRUPO';
+    cab[C_VENDAS.qtd] = 'QTD'; cab[C_VENDAS.valor] = 'VALOR';
+
+    var dados = [cab].concat(preservadas).concat(todas);
+    aba.clearContents();
+    aba.getRange(1, 1, dados.length, 15).setValues(dados);
+    aba.getRange(1, 1, 1, 15).setFontWeight('bold');
+
+    PropertiesService.getScriptProperties().setProperty(
+      'CFY_VENDAS_ATUALIZADO', Utilities.formatDate(hoje, 'America/Belem', 'dd/MM/yyyy HH:mm')
+    );
+    SpreadsheetApp.flush();
+    Logger.log('Cache de vendas atualizado: ' + todas.length + ' linhas em ' +
+               Object.keys(diasBuscados).join(', ') + ', ' + preservadas.length + ' preservadas.');
+    return { ok: true, linhas: todas.length, preservadas: preservadas.length };
+  } catch (err) {
+    Logger.log('Falha ao atualizar cache de vendas: ' + err.message);
+    return { ok: false, erro: err.message };
+  }
+}
+
+// Preenche dias que o gatilho ainda não cobriu (ex: começo do mês corrente).
+// Roda de trás pra frente a partir de hoje, em blocos de 3 dias, respeitando o
+// limite de 7 consultas/hora por filial -- por isso no máximo 2 blocos por vez.
+function backfillVendas(blocos) {
+  var n = Number(blocos) || 2;
+  var hoje = new Date();
+  var feitos = [];
+  for (var b = 0; b < n; b++) {
+    var fim = new Date(hoje.getTime() - (b * CFY_DIAS_VENDAS + CFY_DIAS_VENDAS) * 86400000);
+    var ini = new Date(fim.getTime() - (CFY_DIAS_VENDAS - 1) * 86400000);
+    var r = cfyVendasPeriodo_(ini, fim);
+    feitos.push(r);
+  }
+  return feitos;
+}
+
+function cfyVendasPeriodo_(ini, fim) {
+  var fmt = function(d) { return Number(Utilities.formatDate(d, 'America/Belem', 'yyyyMMdd')); };
+  var fmtBR = function(d) { return Utilities.formatDate(d, 'America/Belem', 'dd/MM/yyyy'); };
+  var dias = {};
+  for (var d = new Date(ini); d <= fim; d = new Date(d.getTime() + 86400000)) dias[fmtBR(d)] = true;
+
+  var todas = [];
+  CFY_FILIAIS_COMPRA.forEach(function(f) {
+    todas = todas.concat(cfyVendasLinhas_(f.nr, f.nome, fmt(ini), fmt(fim)));
+  });
+
+  var ss  = obterFichasManuaisSheet_();
+  var aba = ss.getSheetByName(CFY_ABA_VENDAS);
+  if (!aba) { Logger.log('Rode atualizarCacheVendas() antes.'); return 'cache ainda não existe'; }
+  var preservadas = [];
+  aba.getRange(2, 1, Math.max(aba.getLastRow() - 1, 1), 15).getValues().forEach(function(r) {
+    var dd = String(r[C_VENDAS.data] || '').trim();
+    if (dd && !dias[dd]) preservadas.push(r);
+  });
+  var cab = aba.getRange(1, 1, 1, 15).getValues()[0];
+  var dados = [cab].concat(preservadas).concat(todas);
+  aba.clearContents();
+  aba.getRange(1, 1, dados.length, 15).setValues(dados);
+  SpreadsheetApp.flush();
+  var msg = fmtBR(ini) + ' a ' + fmtBR(fim) + ': ' + todas.length + ' linhas';
+  Logger.log('Backfill de vendas -> ' + msg);
+  return msg;
+}
+
+function cfyLerCacheVendas_() {
+  try {
+    var ss  = obterFichasManuaisSheet_();
+    var aba = ss.getSheetByName(CFY_ABA_VENDAS);
+    if (!aba || aba.getLastRow() < 2) return null;
+    var linhas = aba.getRange(2, 1, aba.getLastRow() - 1, 15).getValues();
+    var dias = {};
+    linhas.forEach(function(r) {
+      var d = String(r[C_VENDAS.data] || '').trim();
+      if (d) dias[d] = true;
+    });
+    return { linhas: linhas, dias: dias };
+  } catch (err) {
+    Logger.log('Cache de vendas indisponível: ' + err.message);
+    return null;
+  }
+}
+
+function cfyVendasAtualizadoEm() {
+  return PropertiesService.getScriptProperties().getProperty('CFY_VENDAS_ATUALIZADO') || '';
+}
+
+function instalarGatilhoVendas() {
+  ScriptApp.getProjectTriggers().forEach(function(t) {
+    if (t.getHandlerFunction() === 'atualizarCacheVendas') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('atualizarCacheVendas').timeBased().atHour(10).everyDays(1).create();
+  return 'Gatilho diário de vendas criado (10h).';
+}
+
 // ── Gatilho: roda todo dia às 8h (dentro da janela permitida) ──
 function instalarGatilhoFichas() {
   ScriptApp.getProjectTriggers().forEach(function(t) {

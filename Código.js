@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-10-02.6';
+var VERSAO_APP = '2026-10-02.7';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -76,7 +76,7 @@ function getPayload(senha) {
   }
   try {
     var rowsCompras = lerComprasCompleto_();
-    var rowsVendas  = lerTodosCSVs('vendas');
+    var rowsVendas  = lerVendasCompleto_();
     var rowsEstoque = lerTodosCSVs('estoque');
     var rowsFichas  = lerFichaTecnica(); // opcional — [] se ainda nao foi enviada
 
@@ -281,7 +281,7 @@ function gerarPlanilhaItensSemPreco(senha) {
   }
   try {
     var rowsCompras = lerComprasCompleto_();
-    var rowsVendas  = lerTodosCSVs('vendas');
+    var rowsVendas  = lerVendasCompleto_();
     var rowsEstoque = lerTodosCSVs('estoque');
     var rowsFichas  = lerFichaTecnica();
     var fichasMap   = processarFichas(rowsFichas);
@@ -523,6 +523,28 @@ function lerComprasCompleto_() {
              (rowsCSV.length - filtrado.length) + ' substituídas pelo cache da API (' +
              Object.keys(cache.meses).join(', ') + ' -- ' + cache.linhas.length + ' linhas, atualizado ' +
              (cfyComprasAtualizadoEm() || 'data desconhecida') + ')');
+  return filtrado.concat(cache.linhas);
+}
+
+// Ponto único de leitura de VENDAS. Mesma ideia das compras, mas a
+// substituição é por DIA, não por mês: a consulta de cupom só aceita 3 dias
+// por chamada, então o cache se forma dia a dia e nunca cobre um mês inteiro
+// de uma vez.
+function lerVendasCompleto_() {
+  var rowsCSV = lerTodosCSVs('vendas');
+  var cache = cfyLerCacheVendas_();
+  if (!cache || !cache.linhas.length) return rowsCSV;
+
+  var filtrado = [rowsCSV[0]];
+  for (var i = 1; i < rowsCSV.length; i++) {
+    var d = String(rowsCSV[i][C_VENDAS.data] || '').trim().slice(0, 10);
+    if (d && cache.dias[d]) continue;   // dia coberto pelo cache tem prioridade
+    filtrado.push(rowsCSV[i]);
+  }
+  Logger.log('Vendas: CSV ' + (rowsCSV.length - 1) + ' linhas, ' +
+             (rowsCSV.length - filtrado.length) + ' substituídas pelo cache da API (' +
+             Object.keys(cache.dias).length + ' dias, ' + cache.linhas.length + ' linhas, atualizado ' +
+             (cfyVendasAtualizadoEm() || 'data desconhecida') + ')');
   return filtrado.concat(cache.linhas);
 }
 
@@ -769,7 +791,7 @@ function listarCatalogoInsumos(senhaFichas) {
   }
   try {
     var rowsCompras = lerComprasCompleto_();
-    var rowsVendas  = lerTodosCSVs('vendas');
+    var rowsVendas  = lerVendasCompleto_();
     var catalogo = preAgregarCatalogoProdutos(rowsCompras, rowsVendas);
     var manual = lerFichasManuais_();
     var nomes = {};
@@ -1429,7 +1451,7 @@ function calcularAnaliseSemanal(senha, mes, ano) {
 
     var avisos = [];
     var rowsCompras = lerComprasCompleto_();
-    var rowsVendas  = lerTodosCSVs('vendas');
+    var rowsVendas  = lerVendasCompleto_();
     var rowsFichas  = lerFichaTecnica();
     var fichasMap   = processarFichas(rowsFichas);
     var historicoPorInsumo = preAgregarCustoMedioPorInsumo(rowsCompras);
@@ -1652,7 +1674,7 @@ function calcularPeriodoPersonalizado(senha, dataIniStr, dataFimStr) {
     }
 
     var rowsCompras = lerComprasCompleto_();
-    var rowsVendas  = lerTodosCSVs('vendas');
+    var rowsVendas  = lerVendasCompleto_();
     var porDiaVendas = preAgregarVendasPorDia(rowsVendas);
 
     var diaIniAjustado = ini.dia - 1; // sentinela: inclui o dia de inicio escolhido
@@ -1720,7 +1742,7 @@ function calcularCMVPersonalizado(senha, unidade, inventarioInicialId, inventari
     }
 
     var rowsCompras = lerComprasCompleto_();
-    var rowsVendas  = lerTodosCSVs('vendas');
+    var rowsVendas  = lerVendasCompleto_();
     var rowsFichas  = lerFichaTecnica();
     var fichasMap   = processarFichas(rowsFichas);
     var historicoPorInsumo = preAgregarCustoMedioPorInsumo(rowsCompras);
@@ -1815,7 +1837,7 @@ function calcularCMVPersonalizadoTodas_(dataIniStr, dataFimStr) {
     var dataPorContagemId = lerDataPorContagemId_();
 
     var rowsCompras = lerComprasCompleto_();
-    var rowsVendas  = lerTodosCSVs('vendas');
+    var rowsVendas  = lerVendasCompleto_();
     var rowsFichas  = lerFichaTecnica();
     var fichasMap   = processarFichas(rowsFichas);
     var historicoPorInsumo = preAgregarCustoMedioPorInsumo(rowsCompras);
@@ -2029,7 +2051,7 @@ function calcularSemanaCalendario(senha, mes, ano) {
     var dataPorContagemId = lerDataPorContagemId_();
 
     var rowsCompras = lerComprasCompleto_();
-    var rowsVendas  = lerTodosCSVs('vendas');
+    var rowsVendas  = lerVendasCompleto_();
     var rowsFichas  = lerFichaTecnica();
     var fichasMap   = processarFichas(rowsFichas);
     var historicoPorInsumo = preAgregarCustoMedioPorInsumo(rowsCompras);
@@ -2180,7 +2202,7 @@ function buscarItensDeContagens_(contagemIds) {
 // desses fluxos principais (lista de contagens, tela de correção).
 function construirContextoPrecificacao_() {
   var rowsCompras = lerComprasCompleto_();
-  var rowsVendas  = lerTodosCSVs('vendas');
+  var rowsVendas  = lerVendasCompleto_();
   var rowsFichas  = lerFichaTecnica();
   var fichasMap   = processarFichas(rowsFichas);
   return {
