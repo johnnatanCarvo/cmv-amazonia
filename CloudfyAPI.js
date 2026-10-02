@@ -235,7 +235,7 @@ function cfyMapaGrupos_(rowsComprasCSV) {
 // CFYCC892 -> linhas no layout C_COMPRAS.
 // Sem filtro de situação/integração: conferido contra o CSV, filtrar por
 // IntegCompra descartava compra real (R$ 10 mil só em Umarizal, setembro).
-function cfyComprasLinhas_(codFilial, nomeFilial, dataIni, dataFim, mapaGrupos) {
+function cfyComprasLinhas_(codFilial, nomeFilial, dataIni, dataFim, mapaGrupos, acumulador) {
   var rs = cfyChamar_('CFYCC892', {
     DataInicio: dataIni, DataFim: dataFim,
     CodFornecedor: null, CPFCNPJFornecedor: null, NrDoc: null, ChaveNF: null,
@@ -288,25 +288,25 @@ function cfyComprasLinhas_(codFilial, nomeFilial, dataIni, dataFim, mapaGrupos) 
   if (naoIntegrados) {
     Logger.log('  ' + nomeFilial + ': ' + naoIntegrados + ' itens fora (sem integração no Cloudfy), R$ ' + valorNaoIntegrado.toFixed(2));
   }
-  PropertiesService.getScriptProperties().setProperty(
-    'CFY_NAO_INTEGRADO_' + codFilial, naoIntegrados + '|' + valorNaoIntegrado.toFixed(2)
-  );
+  // Quem chamou acumula por mês -- o aviso no painel só aparece no mês a que
+  // pertence, senão quem está olhando setembro veria pendência de outubro.
+  if (acumulador && naoIntegrados) {
+    acumulador.push({ filial: nomeFilial, itens: naoIntegrados, valor: Number(valorNaoIntegrado.toFixed(2)) });
+  }
   return linhas;
 }
 
-// Quanto de compra está parado sem integração no Cloudfy, por filial.
+// Quanto de compra está parado sem integração no Cloudfy, por mês e filial.
 // Esse valor não entra no CMC de ninguém -- nem do painel, nem do Cloudfy --
 // até alguém conciliar a nota com o catálogo de produtos.
+// Formato: { 'OUTUBRO': [{filial, itens, valor}], ... }
 function cfyComprasNaoIntegradas() {
-  var props = PropertiesService.getScriptProperties();
-  var fora = [];
-  CFY_FILIAIS_COMPRA.forEach(function(f) {
-    var v = props.getProperty('CFY_NAO_INTEGRADO_' + f.nr);
-    if (!v) return;
-    var p = v.split('|');
-    if (Number(p[0]) > 0) fora.push({ filial: f.nome, itens: Number(p[0]), valor: Number(p[1]) });
-  });
-  return fora;
+  try {
+    var bruto = PropertiesService.getScriptProperties().getProperty('CFY_NAO_INTEGRADO');
+    return bruto ? JSON.parse(bruto) : {};
+  } catch (err) {
+    return {};
+  }
 }
 
 // Gatilho diário: puxa o mês corrente E o anterior das 3 filiais.
@@ -344,17 +344,21 @@ function atualizarCacheCompras() {
     // cache acumula, o que foi gravado até o dia 10 fica congelado lá.
     var janelas = [];
     if (dia <= 10) {
-      janelas.push({ ini: anoAnt * 10000 + mesAnt * 100 + 1, fim: anoAnt * 10000 + mesAnt * 100 + ultimoDiaAnt, ref: pad2(mesAnt) + '/' + anoAnt });
+      janelas.push({ ini: anoAnt * 10000 + mesAnt * 100 + 1, fim: anoAnt * 10000 + mesAnt * 100 + ultimoDiaAnt,
+                     ref: pad2(mesAnt) + '/' + anoAnt, nome: NOMES_MESES[mesAnt] });
     }
-    janelas.push({ ini: ano * 10000 + mes * 100 + 1, fim: ano * 10000 + mes * 100 + dia, ref: pad2(mes) + '/' + ano });
+    janelas.push({ ini: ano * 10000 + mes * 100 + 1, fim: ano * 10000 + mes * 100 + dia,
+                   ref: pad2(mes) + '/' + ano, nome: NOMES_MESES[mes] });
 
     var mapaGrupos = cfyMapaGrupos_(lerTodosCSVs('compras'));
-    var todas = [], mesesBuscados = {};
+    var todas = [], mesesBuscados = {}, naoIntegradoPorMes = {};
     janelas.forEach(function(j) {
       mesesBuscados[j.ref] = true;
+      var acum = [];
       CFY_FILIAIS_COMPRA.forEach(function(f) {
-        todas = todas.concat(cfyComprasLinhas_(f.nr, f.nome, j.ini, j.fim, mapaGrupos));
+        todas = todas.concat(cfyComprasLinhas_(f.nr, f.nome, j.ini, j.fim, mapaGrupos, acum));
       });
+      if (acum.length) naoIntegradoPorMes[j.nome] = acum;
     });
     if (!todas.length) throw new Error('A API não devolveu nenhuma compra nos dois meses buscados.');
 
@@ -386,9 +390,10 @@ function atualizarCacheCompras() {
     aba.getRange(1, 1, dados.length, 18).setValues(dados);
     aba.getRange(1, 1, 1, 18).setFontWeight('bold');
 
-    PropertiesService.getScriptProperties().setProperty(
-      'CFY_COMPRAS_ATUALIZADO', Utilities.formatDate(hoje, 'America/Belem', 'dd/MM/yyyy HH:mm')
-    );
+    PropertiesService.getScriptProperties().setProperties({
+      CFY_COMPRAS_ATUALIZADO: Utilities.formatDate(hoje, 'America/Belem', 'dd/MM/yyyy HH:mm'),
+      CFY_NAO_INTEGRADO: JSON.stringify(naoIntegradoPorMes)
+    });
     SpreadsheetApp.flush();
     Logger.log('Cache de compras atualizado: ' + todas.length + ' linhas novas em ' +
                Object.keys(mesesBuscados).join(' e ') + ', ' + preservadas.length + ' preservadas de meses anteriores.');

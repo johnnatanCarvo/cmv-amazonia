@@ -1011,7 +1011,11 @@ function recarregarApp(){
    nem dos relatórios do próprio Cloudfy -- então o mês corrente aparece melhor
    do que é. Sem aviso na tela, o número errado passa por certo. */
 function mostrarAvisoComprasNaoIntegradas(){
-  var lista=COMPRAS_NAO_INTEGRADAS||[];
+  var antigo=document.getElementById('aviso-nao-integradas');
+  if(antigo)antigo.remove();
+  // Só no mês a que a pendência pertence -- quem está olhando setembro não
+  // tem o que fazer com nota pendente de outubro.
+  var lista=(COMPRAS_NAO_INTEGRADAS||{})[mesAtual]||[];
   if(!lista.length)return;
   var total=lista.reduce(function(s,f){return s+(f.valor||0);},0);
   if(total<=0)return;
@@ -1021,9 +1025,9 @@ function mostrarAvisoComprasNaoIntegradas(){
   d.id='aviso-nao-integradas';
   d.style.cssText='margin:0 0 16px;padding:12px 16px;border-radius:10px;background:rgba(201,146,47,.12);'+
     'border:1px solid rgba(201,146,47,.45);color:var(--fg);font-size:13px;line-height:1.55;';
-  d.innerHTML='<b>'+brl(total)+' em notas ainda não conciliadas no Cloudfy.</b> '+
-    'Esse valor não entra no CMC deste mês — nem aqui, nem nos relatórios do Cloudfy — '+
-    'enquanto as notas não forem vinculadas aos produtos. O custo do mês em andamento '+
+  d.innerHTML='<b>'+brl(total)+' em notas de '+(ML_MAP[mesAtual]||mesAtual)+' ainda não conciliadas no Cloudfy.</b> '+
+    'Esse valor não entra no CMC — nem aqui, nem nos relatórios do Cloudfy — '+
+    'enquanto as notas não forem vinculadas aos produtos. O custo deste mês '+
     'está incompleto nessa medida.<br><span style="color:var(--fg2);font-size:12px;">'+detalhe+'</span>';
   var main=document.querySelector('main')||document.body;
   main.insertBefore(d,main.firstChild);
@@ -1315,7 +1319,7 @@ function dadosPeriodoCMV(mesNome, periodo){
 /* ============================================================
    ABA 1: ANÁLISE MÊS A MÊS
    ============================================================ */
-function setMes(m){mesAtual=m;periodoAtualCMC={tipo:'mes'};limparPeriodoCustomCMC();document.querySelectorAll('#mes-seg button').forEach(function(b){b.classList.toggle('on',b.textContent===(ML_MAP[m]||m));});rMes();}
+function setMes(m){mesAtual=m;periodoAtualCMC={tipo:'mes'};limparPeriodoCustomCMC();mostrarAvisoComprasNaoIntegradas();document.querySelectorAll('#mes-seg button').forEach(function(b){b.classList.toggle('on',b.textContent===(ML_MAP[m]||m));});rMes();}
 function setUni(u){uniAtual=u;document.querySelectorAll('#mes-useg button').forEach(function(b){b.classList.toggle('on',b.textContent===(u==='TODAS'?'Todas':nomeUni(u)));});rMes();}
 function nomeUni(f){var map={'MARCO':'Marco','PORTO FUTURO':'Porto Futuro','UMARIZAL':'Umarizal'};return map[f]||f.charAt(0)+f.slice(1).toLowerCase();}
 
