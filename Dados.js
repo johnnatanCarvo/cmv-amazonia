@@ -34,6 +34,13 @@ var C_VENDAS = {
 // Grupos excluídos da Curva ABC (taxas não compõem faturamento)
 var GRUPOS_EXCLUIR_ABC = ['TAXAS OPERACIONAIS'];
 
+// Rede de segurança: taxa cadastrada SEM grupo escapava da exclusão acima e
+// entrava como faturamento. Em setembro/2026 eram R$ 18.379,60 de uma segunda
+// "TAXA DE SERVIÇO" (com cedilha) sem grupo, enquanto a "TAXA DE SERVICO" sem
+// cedilha estava corretamente em TAXAS OPERACIONAIS -- dois cadastros do mesmo
+// serviço. Taxa não é venda de produto, então excluir por nome também.
+var PADRAO_PRODUTO_TAXA = /^\s*TAXA\s+DE\s+/i;
+
 // Transferências entre unidades: no relatório de compras, aparecem como
 // "fornecedor" que é a própria empresa. Identificadas pelo nome do fornecedor.
 // O índice da coluna fornecedor no CSV de compras é 2.
@@ -404,6 +411,8 @@ function processarVendas(rows) {
     if (GRUPOS_EXCLUIR_ABC.indexOf(grupo.toUpperCase()) >= 0) continue;
 
     var prod   = limpaCelula(r[C_VENDAS.produto]);
+    // Taxa sem grupo cadastrado não pode virar faturamento (ver PADRAO_PRODUTO_TAXA).
+    if (PADRAO_PRODUTO_TAXA.test(prod)) continue;
     var filial = limpaCelula(r[C_VENDAS.filial]) || 'OUTRA';
     var qtd    = numVal(r[C_VENDAS.qtd]);
     if (!prod) continue;
