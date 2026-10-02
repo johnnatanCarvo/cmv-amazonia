@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-10-02.4';
+var VERSAO_APP = '2026-10-02.5';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -509,21 +509,19 @@ function lerComprasCompleto_() {
   }
 
   var cache = cfyLerCacheCompras_();
-  if (!cache || !cache.linhas.length || !cache.mesRef) return rowsCSV;
+  if (!cache || !cache.linhas.length) return rowsCSV;
 
-  var partes = cache.mesRef.split('/');
-  var mesRef = partes[0], anoRef = partes[1];
-
-  // Tira do CSV as linhas do mês que o cache cobre, pra não somar duas vezes.
+  // Todo mês coberto pelo cache tem prioridade sobre o CSV: o cache vem da API
+  // e já inclui nota lançada em atraso, que a exportação manual perdia.
   var filtrado = [rowsCSV[0]];
   for (var i = 1; i < rowsCSV.length; i++) {
     var d = String(rowsCSV[i][C_COMPRAS.data] || '').trim();
-    if (d.length >= 10 && d.slice(3, 5) === mesRef && d.slice(6, 10) === anoRef) continue;
+    if (d.length >= 10 && cache.meses[d.slice(3, 5) + '/' + d.slice(6, 10)]) continue;
     filtrado.push(rowsCSV[i]);
   }
   Logger.log('Compras: CSV ' + (rowsCSV.length - 1) + ' linhas, ' +
              (rowsCSV.length - filtrado.length) + ' substituídas pelo cache da API (' +
-             cache.mesRef + ', ' + cache.linhas.length + ' linhas, atualizado ' +
+             Object.keys(cache.meses).join(', ') + ' -- ' + cache.linhas.length + ' linhas, atualizado ' +
              (cfyComprasAtualizadoEm() || 'data desconhecida') + ')');
   return filtrado.concat(cache.linhas);
 }

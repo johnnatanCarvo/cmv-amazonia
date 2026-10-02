@@ -309,7 +309,16 @@ function cfyComprasNaoIntegradas() {
   return fora;
 }
 
-// Gatilho diário: puxa o mês corrente das 3 filiais e grava no cache.
+// Gatilho diário: puxa o mês corrente E o anterior das 3 filiais.
+//
+// O cache ACUMULA: cada execução reescreve só as linhas dos meses buscados e
+// preserva as dos demais. É isso que permite parar de exportar CSV -- a partir
+// de outubro/2026 o cache é o registro definitivo de compras. Se ele apagasse
+// tudo a cada execução, na virada do mês o mês que acabou sumiria, já que não
+// haveria CSV dele.
+//
+// O mês anterior entra junto porque nota lançada com atraso continua chegando
+// depois da virada; buscar os dois cobre isso sem depender de ninguém.
 function atualizarCacheCompras() {
   var hora = Number(Utilities.formatDate(new Date(), 'America/Belem', 'H'));
   if (CFY_HORAS_PERMITIDAS.indexOf(hora) === -1) {
@@ -321,15 +330,27 @@ function atualizarCacheCompras() {
     var ano  = Number(Utilities.formatDate(hoje, 'America/Belem', 'yyyy'));
     var mes  = Number(Utilities.formatDate(hoje, 'America/Belem', 'MM'));
     var dia  = Number(Utilities.formatDate(hoje, 'America/Belem', 'dd'));
-    var ini  = ano * 10000 + mes * 100 + 1;
-    var fim  = ano * 10000 + mes * 100 + dia;
+
+    var anoAnt = mes === 1 ? ano - 1 : ano;
+    var mesAnt = mes === 1 ? 12 : mes - 1;
+    var ultimoDiaAnt = new Date(anoAnt, mesAnt, 0).getDate();
+
+    // [início, fim, rótulo MM/yyyy] -- o limite da consulta é 31 dias, então
+    // um mês inteiro cabe numa chamada.
+    var janelas = [
+      { ini: anoAnt * 10000 + mesAnt * 100 + 1, fim: anoAnt * 10000 + mesAnt * 100 + ultimoDiaAnt, ref: pad2(mesAnt) + '/' + anoAnt },
+      { ini: ano    * 10000 + mes    * 100 + 1, fim: ano    * 10000 + mes    * 100 + dia,          ref: pad2(mes)    + '/' + ano }
+    ];
 
     var mapaGrupos = cfyMapaGrupos_(lerTodosCSVs('compras'));
-    var todas = [];
-    CFY_FILIAIS_COMPRA.forEach(function(f) {
-      todas = todas.concat(cfyComprasLinhas_(f.nr, f.nome, ini, fim, mapaGrupos));
+    var todas = [], mesesBuscados = {};
+    janelas.forEach(function(j) {
+      mesesBuscados[j.ref] = true;
+      CFY_FILIAIS_COMPRA.forEach(function(f) {
+        todas = todas.concat(cfyComprasLinhas_(f.nr, f.nome, j.ini, j.fim, mapaGrupos));
+      });
     });
-    if (!todas.length) throw new Error('A API não devolveu nenhuma compra do mês corrente.');
+    if (!todas.length) throw new Error('A API não devolveu nenhuma compra nos dois meses buscados.');
 
     var cab = new Array(18);
     for (var k = 0; k < 18; k++) cab[k] = 'C' + k;
@@ -342,33 +363,51 @@ function atualizarCacheCompras() {
     var ss  = obterFichasManuaisSheet_();
     var aba = ss.getSheetByName(CFY_ABA_COMPRAS);
     if (!aba) aba = ss.insertSheet(CFY_ABA_COMPRAS);
+
+    // Preserva o que já está no cache de meses que não foram buscados agora.
+    var preservadas = [];
+    if (aba.getLastRow() > 1) {
+      aba.getRange(2, 1, aba.getLastRow() - 1, 18).getValues().forEach(function(r) {
+        var d = String(r[C_COMPRAS.data] || '').trim();
+        if (d.length < 10) return;
+        var ref = d.slice(3, 5) + '/' + d.slice(6, 10);
+        if (!mesesBuscados[ref]) preservadas.push(r);
+      });
+    }
+
+    var dados = [cab].concat(preservadas).concat(todas);
     aba.clearContents();
-    var dados = [cab].concat(todas);
     aba.getRange(1, 1, dados.length, 18).setValues(dados);
     aba.getRange(1, 1, 1, 18).setFontWeight('bold');
 
-    PropertiesService.getScriptProperties().setProperties({
-      CFY_COMPRAS_MES: pad2(mes) + '/' + ano,
-      CFY_COMPRAS_ATUALIZADO: Utilities.formatDate(hoje, 'America/Belem', 'dd/MM/yyyy HH:mm')
-    });
+    PropertiesService.getScriptProperties().setProperty(
+      'CFY_COMPRAS_ATUALIZADO', Utilities.formatDate(hoje, 'America/Belem', 'dd/MM/yyyy HH:mm')
+    );
     SpreadsheetApp.flush();
-    Logger.log('Cache de compras atualizado: ' + todas.length + ' linhas (' + pad2(mes) + '/' + ano + ').');
-    return { ok: true, linhas: todas.length };
+    Logger.log('Cache de compras atualizado: ' + todas.length + ' linhas novas em ' +
+               Object.keys(mesesBuscados).join(' e ') + ', ' + preservadas.length + ' preservadas de meses anteriores.');
+    return { ok: true, linhas: todas.length, preservadas: preservadas.length };
   } catch (err) {
     Logger.log('Falha ao atualizar cache de compras: ' + err.message);
     return { ok: false, erro: err.message };
   }
 }
 
+// Devolve as linhas do cache e QUAIS meses ele cobre, deduzidos das próprias
+// linhas -- não de uma propriedade à parte, que sairia do ar se alguém mexesse
+// na aba à mão.
 function cfyLerCacheCompras_() {
   try {
     var ss  = obterFichasManuaisSheet_();
     var aba = ss.getSheetByName(CFY_ABA_COMPRAS);
     if (!aba || aba.getLastRow() < 2) return null;
-    return {
-      linhas: aba.getRange(2, 1, aba.getLastRow() - 1, 18).getValues(),
-      mesRef: PropertiesService.getScriptProperties().getProperty('CFY_COMPRAS_MES') || ''
-    };
+    var linhas = aba.getRange(2, 1, aba.getLastRow() - 1, 18).getValues();
+    var meses = {};
+    linhas.forEach(function(r) {
+      var d = String(r[C_COMPRAS.data] || '').trim();
+      if (d.length >= 10) meses[d.slice(3, 5) + '/' + d.slice(6, 10)] = true;
+    });
+    return { linhas: linhas, meses: meses };
   } catch (err) {
     Logger.log('Cache de compras indisponível: ' + err.message);
     return null;
