@@ -400,16 +400,27 @@ function atualizarCacheCompras() {
     var rowsCSV     = lerTodosCSVs('compras');
     var mapaGrupos  = cfyMapaGrupos_(rowsCSV);
     var fornecedores = cfyFornecedoresConhecidos_(rowsCSV);
-    var todas = [], mesesBuscados = {}, naoIntegradoPorMes = {};
+    // Uma filial que falhar (limite de consultas por hora, instabilidade) não
+    // pode derrubar a gravação inteira: antes, qualquer erro abortava tudo e o
+    // cache ficava com os dados velhos sem nada na tela denunciando. Agora cada
+    // par mês+filial é independente -- quem veio é substituído, quem falhou
+    // mantém o que já estava gravado.
+    var todas = [], okMesFilial = {}, naoIntegradoPorMes = {}, falhas = [];
     janelas.forEach(function(j) {
-      mesesBuscados[j.ref] = true;
       var acum = [];
       CFY_FILIAIS_COMPRA.forEach(function(f) {
-        todas = todas.concat(cfyComprasLinhas_(f.nr, f.nome, j.ini, j.fim, mapaGrupos, acum, fornecedores));
+        try {
+          var linhasF = cfyComprasLinhas_(f.nr, f.nome, j.ini, j.fim, mapaGrupos, acum, fornecedores);
+          todas = todas.concat(linhasF);
+          okMesFilial[j.ref + '|' + f.nome] = true;
+        } catch (e) {
+          falhas.push(j.ref + ' / ' + f.nome + ': ' + e.message);
+          Logger.log('FALHA em ' + j.ref + ' / ' + f.nome + ' -- mantendo o que já estava no cache. ' + e.message);
+        }
       });
       if (acum.length) naoIntegradoPorMes[j.nome] = acum;
     });
-    if (!todas.length) throw new Error('A API não devolveu nenhuma compra nos dois meses buscados.');
+    if (!todas.length) throw new Error('Nenhuma filial respondeu. ' + falhas.join(' | '));
 
     var cab = new Array(18);
     for (var k = 0; k < 18; k++) cab[k] = 'C' + k;
@@ -431,7 +442,11 @@ function atualizarCacheCompras() {
         if (d.length < 10) return;
         r[C_COMPRAS.data] = d;   // regrava normalizado
         var ref = d.slice(3, 5) + '/' + d.slice(6, 10);
-        if (!mesesBuscados[ref]) preservadas.push(r);
+        var fil = String(r[C_COMPRAS.filial] || '').trim();
+        // Só descarta a linha antiga se a filial daquele mês foi rebuscada com
+        // sucesso agora. Senão ela sobrevive -- é o que impede uma falha
+        // pontual de apagar dado bom.
+        if (!okMesFilial[ref + '|' + fil]) preservadas.push(r);
       });
     }
 
@@ -446,9 +461,11 @@ function atualizarCacheCompras() {
       CFY_NAO_INTEGRADO: JSON.stringify(naoIntegradoPorMes)
     });
     SpreadsheetApp.flush();
-    Logger.log('Cache de compras atualizado: ' + todas.length + ' linhas novas em ' +
-               Object.keys(mesesBuscados).join(' e ') + ', ' + preservadas.length + ' preservadas de meses anteriores.');
-    return { ok: true, linhas: todas.length, preservadas: preservadas.length };
+    var resumo = 'Cache de compras: ' + todas.length + ' linhas novas (' +
+                 Object.keys(okMesFilial).join(', ') + '), ' + preservadas.length + ' preservadas.';
+    if (falhas.length) resumo += '  ATENÇÃO -- ' + falhas.length + ' falha(s), dado antigo mantido: ' + falhas.join(' | ');
+    Logger.log(resumo);
+    return { ok: true, linhas: todas.length, preservadas: preservadas.length, falhas: falhas };
   } catch (err) {
     Logger.log('Falha ao atualizar cache de compras: ' + err.message);
     return { ok: false, erro: err.message };
@@ -591,9 +608,16 @@ function atualizarCacheVendas() {
       diasBuscados[fmtBR(new Date(ini.getTime() + k * 86400000))] = true;
     }
 
-    var todas = [];
+    // Uma filial que falhar não derruba as outras nem apaga o que já existe.
+    var todas = [], okFilial = {}, falhas = [];
     CFY_FILIAIS_COMPRA.forEach(function(f) {
-      todas = todas.concat(cfyVendasLinhas_(f.nr, f.nome, fmt(ini), fmt(hoje)));
+      try {
+        todas = todas.concat(cfyVendasLinhas_(f.nr, f.nome, fmt(ini), fmt(hoje)));
+        okFilial[f.nome] = true;
+      } catch (e) {
+        falhas.push(f.nome + ': ' + e.message);
+        Logger.log('FALHA em vendas / ' + f.nome + ' -- mantendo o cache anterior. ' + e.message);
+      }
     });
 
     var ss  = obterFichasManuaisSheet_();
@@ -606,7 +630,9 @@ function atualizarCacheVendas() {
       aba.getRange(2, 1, aba.getLastRow() - 1, 15).getValues().forEach(function(r) {
         var d = cfyDataBR_(r[C_VENDAS.data]);
         r[C_VENDAS.data] = d;
-        if (d && !diasBuscados[d]) preservadas.push(r);
+        var fil = String(r[C_VENDAS.filial] || '').trim();
+        // Linha antiga só sai se a filial daquele dia foi rebuscada com sucesso.
+        if (d && !(diasBuscados[d] && okFilial[fil])) preservadas.push(r);
       });
     }
 
@@ -626,6 +652,7 @@ function atualizarCacheVendas() {
       'CFY_VENDAS_ATUALIZADO', Utilities.formatDate(hoje, 'America/Belem', 'dd/MM/yyyy HH:mm')
     );
     SpreadsheetApp.flush();
+    if (falhas.length) Logger.log('ATENÇÃO -- vendas com ' + falhas.length + ' falha(s), dado antigo mantido: ' + falhas.join(' | '));
     Logger.log('Cache de vendas atualizado: ' + todas.length + ' linhas em ' +
                Object.keys(diasBuscados).join(', ') + ', ' + preservadas.length + ' preservadas.');
     return { ok: true, linhas: todas.length, preservadas: preservadas.length };
