@@ -477,6 +477,41 @@ function cfyLerCacheCompras_() {
   }
 }
 
+// Diagnóstico: mostra o que está REALMENTE gravado no cache de compras, por
+// mês e filial. Serve pra separar "o dado não veio" de "o dado veio e o
+// cálculo está diferente" sem precisar abrir a planilha.
+function diagnosticarComprasCache() {
+  var cache = cfyLerCacheCompras_();
+  if (!cache || !cache.linhas.length) return 'Cache de compras VAZIO. Rode atualizarCacheCompras().';
+
+  var porMesFilial = {}, semData = 0;
+  cache.linhas.forEach(function(r) {
+    var d = cfyDataBR_(r[C_COMPRAS.data]);
+    if (d.length < 10) { semData++; return; }
+    var ref = d.slice(3, 5) + '/' + d.slice(6, 10);
+    var fil = String(r[C_COMPRAS.filial] || '?').trim();
+    var k = ref + ' | ' + fil;
+    if (!porMesFilial[k]) porMesFilial[k] = { linhas: 0, total: 0, transf: 0, dias: {} };
+    var o = porMesFilial[k];
+    var v = numVal(r[C_COMPRAS.total]);
+    o.linhas++; o.total += v;
+    o.dias[d.slice(0, 2)] = true;
+    if (String(r[C_COMPRAS_FORNECEDOR] || '').toUpperCase().indexOf(TRANSFERENCIA_MARCADOR) >= 0) o.transf += v;
+  });
+
+  var linhas = ['CACHE DE COMPRAS — atualizado em ' + (cfyComprasAtualizadoEm() || '?'),
+                'total de linhas: ' + cache.linhas.length + (semData ? '  (' + semData + ' SEM DATA VÁLIDA)' : ''), ''];
+  Object.keys(porMesFilial).sort().forEach(function(k) {
+    var o = porMesFilial[k];
+    linhas.push(k + ': ' + o.linhas + ' linhas, ' + Object.keys(o.dias).length + ' dias, ' +
+                'total R$ ' + o.total.toFixed(2) + ', transferência R$ ' + o.transf.toFixed(2) +
+                ', externa R$ ' + (o.total - o.transf).toFixed(2));
+  });
+  var txt = linhas.join('\n');
+  Logger.log(txt);
+  return txt;
+}
+
 function cfyComprasAtualizadoEm() {
   return PropertiesService.getScriptProperties().getProperty('CFY_COMPRAS_ATUALIZADO') || '';
 }
