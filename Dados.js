@@ -1771,6 +1771,11 @@ function preAgregarVendasPorDia(rowsVendas) {
     var valor = numVal(r[C_VENDAS.valor]);
     if (valor <= 0) continue;
     if (GRUPOS_EXCLUIR_ABC.indexOf(grupo.toUpperCase()) >= 0) continue;
+    // Mesma regra do cálculo mensal: taxa não é faturamento, mesmo que o
+    // cadastro esteja sem grupo. Sem isso, CMV e Período Personalizado (que
+    // usam esta agregação) contam a taxa como venda e o CMV% sai menor do
+    // que é -- a divergência que apareceu no Umarizal de setembro.
+    if (PADRAO_PRODUTO_TAXA.test(limpaCelula(r[C_VENDAS.produto]))) continue;
 
     var dataInfo = parseDataCompleta(r[C_VENDAS.data]);
     if (!dataInfo) continue;
