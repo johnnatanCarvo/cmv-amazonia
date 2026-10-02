@@ -245,6 +245,7 @@ function cfyComprasLinhas_(codFilial, nomeFilial, dataIni, dataFim, mapaGrupos) 
   }, codFilial);
 
   var linhas = [];
+  var naoIntegrados = 0, valorNaoIntegrado = 0;
   (rs.Compras || []).forEach(function(c) {
     var s = String(c.DataCompra);
     var dataBR = s.slice(6, 8) + '/' + s.slice(4, 6) + '/' + s.slice(0, 4);
@@ -252,8 +253,20 @@ function cfyComprasLinhas_(codFilial, nomeFilial, dataIni, dataFim, mapaGrupos) 
       // Os campos "Integrado" são os do catálogo interno. ItemCompra traz o
       // nome que veio na nota do fornecedor ("OLEO DE ALGODAO; BALDE 1" em vez
       // de "MP OLEO DE ALGODAO") e não casa com ficha técnica nem com estoque.
-      var cod     = cfyTexto_(i.CodRefIntegrado);
-      var produto = cfyTexto_(i.ProdutoIntegrado || i.ItemCompra);
+      // Item ainda não integrado ao catálogo (NFe importada mas não conciliada):
+      // vem sem CodRefIntegrado e sem QtdIntegrada. Entra como R$ 0 e com a
+      // descrição da nota ("ALCOOL ETIL SOL 46.2 INPM LIMPADOR 1L UNIDADE QTD.
+      // 1.00 UN"), que não casa com ficha nem com estoque. Fica de fora -- é o
+      // mesmo critério do relatório do Cloudfy, conferido contra o CSV.
+      // Assim que alguém integrar no Cloudfy, a próxima execução traz o item,
+      // porque o mês inteiro é rebuscado todo dia.
+      var cod = cfyTexto_(i.CodRefIntegrado);
+      if (!cod) {
+        naoIntegrados++;
+        valorNaoIntegrado += Number(i['Valor total']) || 0;
+        return;
+      }
+      var produto = cfyTexto_(i.ProdutoIntegrado);
       var qtd     = Number(i.QtdIntegrada) || 0;
       var unit    = Number(i.VlrUnitIntegrado) || 0;
       if (!produto) return;
@@ -272,7 +285,28 @@ function cfyComprasLinhas_(codFilial, nomeFilial, dataIni, dataFim, mapaGrupos) 
       linhas.push(linha);
     });
   });
+  if (naoIntegrados) {
+    Logger.log('  ' + nomeFilial + ': ' + naoIntegrados + ' itens fora (sem integração no Cloudfy), R$ ' + valorNaoIntegrado.toFixed(2));
+  }
+  PropertiesService.getScriptProperties().setProperty(
+    'CFY_NAO_INTEGRADO_' + codFilial, naoIntegrados + '|' + valorNaoIntegrado.toFixed(2)
+  );
   return linhas;
+}
+
+// Quanto de compra está parado sem integração no Cloudfy, por filial.
+// Esse valor não entra no CMC de ninguém -- nem do painel, nem do Cloudfy --
+// até alguém conciliar a nota com o catálogo de produtos.
+function cfyComprasNaoIntegradas() {
+  var props = PropertiesService.getScriptProperties();
+  var fora = [];
+  CFY_FILIAIS_COMPRA.forEach(function(f) {
+    var v = props.getProperty('CFY_NAO_INTEGRADO_' + f.nr);
+    if (!v) return;
+    var p = v.split('|');
+    if (Number(p[0]) > 0) fora.push({ filial: f.nome, itens: Number(p[0]), valor: Number(p[1]) });
+  });
+  return fora;
 }
 
 // Gatilho diário: puxa o mês corrente das 3 filiais e grava no cache.
