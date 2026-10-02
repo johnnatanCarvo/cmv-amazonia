@@ -84,6 +84,29 @@ function cfyCampo_(obj, nome) {
 }
 function cfyTexto_(v) { return String(v === null || v === undefined ? '' : v).trim(); }
 
+// Data lida do cache: a planilha converte "01/09/2026" em Date de verdade na
+// gravação, e aí volta como objeto, não string. Quem fizer slice() direto pega
+// "ep" em vez de "09" e o mês inteiro deixa de ser reconhecido -- foi assim que
+// o cache de compras virou invisível pro painel. Normaliza sempre.
+function cfyDataBR_(v) {
+  // Checa pelo método em vez de instanceof: data vinda de outro contexto de
+  // execução não passa no instanceof, e aí voltaria "Tue Sep 01" em silêncio.
+  if (v && typeof v.getMonth === 'function') {
+    return Utilities.formatDate(v, 'America/Belem', 'dd/MM/yyyy');
+  }
+  return String(v === null || v === undefined ? '' : v).trim().slice(0, 10);
+}
+
+// Marca a coluna de data como texto puro antes de gravar, pra planilha parar de
+// converter. Vale pros dois caches (compras e vendas).
+function cfyFormatarColunaData_(aba, colData, nLinhas) {
+  try {
+    aba.getRange(2, colData + 1, Math.max(nLinhas, 1), 1).setNumberFormat('@');
+  } catch (e) {
+    Logger.log('Não consegui formatar a coluna de data como texto: ' + e.message);
+  }
+}
+
 // ── CFYCC880: ficha técnica -> linhas no layout C_FICHAS (Dados.js) ──
 // IMPORTANTE: quantidades e custos saem como NÚMERO, nunca string. numVal()
 // trata ponto como separador de milhar (padrão brasileiro), então "0.125"
@@ -404,8 +427,9 @@ function atualizarCacheCompras() {
     var preservadas = [];
     if (aba.getLastRow() > 1) {
       aba.getRange(2, 1, aba.getLastRow() - 1, 18).getValues().forEach(function(r) {
-        var d = String(r[C_COMPRAS.data] || '').trim();
+        var d = cfyDataBR_(r[C_COMPRAS.data]);
         if (d.length < 10) return;
+        r[C_COMPRAS.data] = d;   // regrava normalizado
         var ref = d.slice(3, 5) + '/' + d.slice(6, 10);
         if (!mesesBuscados[ref]) preservadas.push(r);
       });
@@ -413,6 +437,7 @@ function atualizarCacheCompras() {
 
     var dados = [cab].concat(preservadas).concat(todas);
     aba.clearContents();
+    cfyFormatarColunaData_(aba, C_COMPRAS.data, dados.length);
     aba.getRange(1, 1, dados.length, 18).setValues(dados);
     aba.getRange(1, 1, 1, 18).setFontWeight('bold');
 
@@ -441,7 +466,8 @@ function cfyLerCacheCompras_() {
     var linhas = aba.getRange(2, 1, aba.getLastRow() - 1, 18).getValues();
     var meses = {};
     linhas.forEach(function(r) {
-      var d = String(r[C_COMPRAS.data] || '').trim();
+      var d = cfyDataBR_(r[C_COMPRAS.data]);
+      r[C_COMPRAS.data] = d;   // o painel espera dd/MM/yyyy como texto
       if (d.length >= 10) meses[d.slice(3, 5) + '/' + d.slice(6, 10)] = true;
     });
     return { linhas: linhas, meses: meses };
@@ -543,7 +569,8 @@ function atualizarCacheVendas() {
     var preservadas = [];
     if (aba.getLastRow() > 1) {
       aba.getRange(2, 1, aba.getLastRow() - 1, 15).getValues().forEach(function(r) {
-        var d = String(r[C_VENDAS.data] || '').trim();
+        var d = cfyDataBR_(r[C_VENDAS.data]);
+        r[C_VENDAS.data] = d;
         if (d && !diasBuscados[d]) preservadas.push(r);
       });
     }
@@ -556,6 +583,7 @@ function atualizarCacheVendas() {
 
     var dados = [cab].concat(preservadas).concat(todas);
     aba.clearContents();
+    cfyFormatarColunaData_(aba, C_VENDAS.data, dados.length);
     aba.getRange(1, 1, dados.length, 15).setValues(dados);
     aba.getRange(1, 1, 1, 15).setFontWeight('bold');
 
@@ -604,12 +632,14 @@ function cfyVendasPeriodo_(ini, fim) {
   if (!aba) { Logger.log('Rode atualizarCacheVendas() antes.'); return 'cache ainda não existe'; }
   var preservadas = [];
   aba.getRange(2, 1, Math.max(aba.getLastRow() - 1, 1), 15).getValues().forEach(function(r) {
-    var dd = String(r[C_VENDAS.data] || '').trim();
+    var dd = cfyDataBR_(r[C_VENDAS.data]);
+    r[C_VENDAS.data] = dd;
     if (dd && !dias[dd]) preservadas.push(r);
   });
   var cab = aba.getRange(1, 1, 1, 15).getValues()[0];
   var dados = [cab].concat(preservadas).concat(todas);
   aba.clearContents();
+  cfyFormatarColunaData_(aba, C_VENDAS.data, dados.length);
   aba.getRange(1, 1, dados.length, 15).setValues(dados);
   SpreadsheetApp.flush();
   var msg = fmtBR(ini) + ' a ' + fmtBR(fim) + ': ' + todas.length + ' linhas';
@@ -625,7 +655,8 @@ function cfyLerCacheVendas_() {
     var linhas = aba.getRange(2, 1, aba.getLastRow() - 1, 15).getValues();
     var dias = {};
     linhas.forEach(function(r) {
-      var d = String(r[C_VENDAS.data] || '').trim();
+      var d = cfyDataBR_(r[C_VENDAS.data]);
+      r[C_VENDAS.data] = d;   // o painel espera dd/MM/yyyy como texto
       if (d) dias[d] = true;
     });
     return { linhas: linhas, dias: dias };
