@@ -850,6 +850,7 @@ var DEMANDAINSUMOS={}, RECONCILIACAOINSUMOS={}, mesDemanda='', uniDemanda='TODAS
 var SEMCAL_CACHE={}, mesSemCal='', uniSemCal='TODAS';
 var AVISOSINVENTARIO=[];
 var COMPRAS_NAO_INTEGRADAS=[];
+var COBERTURA_CLOUDFY={compras:[],vendas:[]};
 var abcOrder='valor', custoCache=null, uniABC='TODAS', mesABC='TODOS';
 var custoMesA='', custoMesB='';
 var SENHA_ATUAL='';
@@ -945,6 +946,7 @@ function fazerLogin(){
       DEMANDAINSUMOS=res.demandaInsumos||{}; RECONCILIACAOINSUMOS=res.reconciliacaoInsumos||{};
       AVISOSINVENTARIO=res.avisosInventario||[];
       COMPRAS_NAO_INTEGRADAS=res.comprasNaoIntegradas||[];
+      COBERTURA_CLOUDFY=res.coberturaCloudfy||{compras:[],vendas:[]};
       mesAtual=MESES.length?MESES[MESES.length-1]:'';
       var login=document.getElementById('login');
       login.classList.add('hide');
@@ -1010,6 +1012,37 @@ function recarregarApp(){
    no Cloudfy. Esse dinheiro não entra no CMC de ninguém -- nem deste painel,
    nem dos relatórios do próprio Cloudfy -- então o mês corrente aparece melhor
    do que é. Sem aviso na tela, o número errado passa por certo. */
+/* Mostra, pro mês selecionado, o que já veio da API e o que ainda depende do
+   CSV. Vendas chegam de 3 em 3 dias (limite da consulta de cupom), então um
+   mês pode estar pela metade sem nada denunciar -- e aí o faturamento aparece
+   menor do que é, o que estraga CMV% e CMC% do mês inteiro. */
+function mostrarCoberturaCloudfy(){
+  var antigo=document.getElementById('cobertura-cloudfy');
+  if(antigo)antigo.remove();
+  var cob=COBERTURA_CLOUDFY||{};
+  var vend=(cob.vendas||[]).filter(function(v){return v.mes===mesAtual;})[0];
+  var numMes={JANEIRO:1,FEVEREIRO:2,'MARÇO':3,ABRIL:4,MAIO:5,JUNHO:6,JULHO:7,
+              AGOSTO:8,SETEMBRO:9,OUTUBRO:10,NOVEMBRO:11,DEZEMBRO:12}[mesAtual];
+  var temCompras=(cob.compras||[]).some(function(ref){return Number(ref.slice(0,2))===numMes;});
+  if(!vend&&!temCompras)return;
+  var partes=[];
+  partes.push('Compras: '+(temCompras?'<b style="color:var(--vd)">via Cloudfy</b>':'<span style="color:var(--am)">pelo CSV</span>'));
+  if(vend){
+    var completo=vend.faltam===0;
+    partes.push('Vendas: '+(completo
+      ? '<b style="color:var(--vd)">via Cloudfy, '+vend.temDias+' de '+vend.deDias+' dias</b>'
+      : '<span style="color:var(--am)">'+vend.temDias+' de '+vend.deDias+' dias via Cloudfy, '+vend.faltam+' ainda pelo CSV</span>'));
+  } else {
+    partes.push('Vendas: <span style="color:var(--am)">pelo CSV</span>');
+  }
+  var d=document.createElement('div');
+  d.id='cobertura-cloudfy';
+  d.style.cssText='margin:0 0 14px;font-size:12px;color:var(--fg2);display:flex;gap:14px;flex-wrap:wrap;';
+  d.innerHTML='<span>Origem dos dados de '+(ML_MAP[mesAtual]||mesAtual)+':</span>'+partes.map(function(p){return '<span>'+p+'</span>';}).join('');
+  var main=document.querySelector('main')||document.body;
+  main.insertBefore(d,main.firstChild);
+}
+
 function mostrarAvisoComprasNaoIntegradas(){
   var antigo=document.getElementById('aviso-nao-integradas');
   if(antigo)antigo.remove();
@@ -1095,6 +1128,7 @@ function atualizarPainelAposCorrecao(){
       DEMANDAINSUMOS=res.demandaInsumos||{}; RECONCILIACAOINSUMOS=res.reconciliacaoInsumos||{};
       AVISOSINVENTARIO=res.avisosInventario||[];
       COMPRAS_NAO_INTEGRADAS=res.comprasNaoIntegradas||[];
+      COBERTURA_CLOUDFY=res.coberturaCloudfy||{compras:[],vendas:[]};
       if(MESES.indexOf(mesAtual)<0)mesAtual=MESES.length?MESES[MESES.length-1]:'';
       rInventarioAvisos();
       reRenderizarAbaAtual_();
@@ -1123,6 +1157,7 @@ function mostrarAvisoNovaVersao(){
 
 function iniciar(){
   iniciarChecagemDeVersao();
+  mostrarCoberturaCloudfy();
   mostrarAvisoComprasNaoIntegradas();
   // Seletor de meses
   var seg=document.getElementById('mes-seg');
@@ -1334,7 +1369,7 @@ function dadosPeriodoCMV(mesNome, periodo){
 /* ============================================================
    ABA 1: ANÁLISE MÊS A MÊS
    ============================================================ */
-function setMes(m){mesAtual=m;periodoAtualCMC={tipo:'mes'};limparPeriodoCustomCMC();mostrarAvisoComprasNaoIntegradas();document.querySelectorAll('#mes-seg button').forEach(function(b){b.classList.toggle('on',b.textContent===(ML_MAP[m]||m));});rMes();}
+function setMes(m){mesAtual=m;periodoAtualCMC={tipo:'mes'};limparPeriodoCustomCMC();mostrarCoberturaCloudfy();mostrarAvisoComprasNaoIntegradas();document.querySelectorAll('#mes-seg button').forEach(function(b){b.classList.toggle('on',b.textContent===(ML_MAP[m]||m));});rMes();}
 function setUni(u){uniAtual=u;document.querySelectorAll('#mes-useg button').forEach(function(b){b.classList.toggle('on',b.textContent===(u==='TODAS'?'Todas':nomeUni(u)));});rMes();}
 function nomeUni(f){var map={'MARCO':'Marco','PORTO FUTURO':'Porto Futuro','UMARIZAL':'Umarizal'};return map[f]||f.charAt(0)+f.slice(1).toLowerCase();}
 

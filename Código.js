@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-10-02.9';
+var VERSAO_APP = '2026-10-02.10';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -258,7 +258,11 @@ function getPayload(senha) {
       // catálogo. Não entram no CMC de ninguém -- nem aqui, nem nos relatórios
       // do próprio Cloudfy -- então o mês corrente fica parecendo melhor do que
       // é. Sem isso na tela, o erro é silencioso.
-      comprasNaoIntegradas: cfyComprasNaoIntegradas()
+      comprasNaoIntegradas: cfyComprasNaoIntegradas(),
+      // Quais meses/dias já vêm da API e quais ainda dependem do CSV. Sem isso
+      // visível, um mês pela metade (vendas chegam de 3 em 3 dias) passa por
+      // completo e o faturamento aparece menor do que é.
+      coberturaCloudfy: cfyCobertura()
     });
 
   } catch (err) {

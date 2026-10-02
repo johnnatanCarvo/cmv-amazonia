@@ -639,6 +639,103 @@ function cfyVendasAtualizadoEm() {
   return PropertiesService.getScriptProperties().getProperty('CFY_VENDAS_ATUALIZADO') || '';
 }
 
+// ── COBERTURA: o que já veio da API e o que ainda depende do CSV ──
+// Vendas chegam em blocos de 3 dias, então a cobertura é irregular até o
+// backfill terminar. Sem isso na tela, um mês pela metade passa por completo.
+function cfyCobertura() {
+  var out = { compras: [], vendas: [] };
+  try {
+    var cc = cfyLerCacheCompras_();
+    if (cc) out.compras = Object.keys(cc.meses).sort(function(a, b) {
+      return (a.slice(3) + a.slice(0, 2)).localeCompare(b.slice(3) + b.slice(0, 2));
+    });
+  } catch (e) {}
+  try {
+    var cv = cfyLerCacheVendas_();
+    if (cv) {
+      // agrupa os dias por mês: { '09/2026': [1,2,3...] }
+      var porMes = {};
+      Object.keys(cv.dias).forEach(function(d) {
+        var ref = d.slice(3, 5) + '/' + d.slice(6, 10);
+        if (!porMes[ref]) porMes[ref] = [];
+        porMes[ref].push(Number(d.slice(0, 2)));
+      });
+      out.vendas = Object.keys(porMes).sort().map(function(ref) {
+        var dias = porMes[ref].sort(function(a, b) { return a - b; });
+        var mesNum = Number(ref.slice(0, 2)), anoNum = Number(ref.slice(3));
+        var diasNoMes = new Date(anoNum, mesNum, 0).getDate();
+        var hoje = new Date();
+        var limite = (mesNum === hoje.getMonth() + 1 && anoNum === hoje.getFullYear())
+          ? Number(Utilities.formatDate(hoje, 'America/Belem', 'dd')) : diasNoMes;
+        var faltam = [];
+        for (var d2 = 1; d2 <= limite; d2++) if (dias.indexOf(d2) === -1) faltam.push(d2);
+        return { mes: NOMES_MESES[mesNum], ref: ref, temDias: dias.length, deDias: limite, faltam: faltam.length };
+      });
+    }
+  } catch (e) {}
+  return out;
+}
+
+// ── BACKFILL AUTOMÁTICO DE VENDAS ──
+// A consulta de cupom só aceita 3 dias, e o limite é 7 chamadas/hora por
+// filial. Então o preenchimento de um mês não cabe numa execução: este gatilho
+// roda de hora em hora, avança o que couber e se remove quando termina.
+var CFY_BLOCOS_POR_RODADA = 6;   // 6 blocos = 6 chamadas por filial, abaixo das 7
+
+function backfillVendasAuto() {
+  var hora = Number(Utilities.formatDate(new Date(), 'America/Belem', 'H'));
+  if (CFY_HORAS_PERMITIDAS.indexOf(hora) === -1) {
+    Logger.log('Fora da janela permitida (hora ' + hora + '). Tenta na próxima.');
+    return { ok: false, erro: 'fora da janela' };
+  }
+  try {
+    var cache = cfyLerCacheVendas_() || { dias: {} };
+    var hoje = new Date();
+    var fmtBR = function(d) { return Utilities.formatDate(d, 'America/Belem', 'dd/MM/yyyy'); };
+
+    // Alvo: do dia 1 do mês anterior até hoje.
+    var ini = new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1);
+    var faltando = [];
+    for (var d = new Date(ini); d <= hoje; d = new Date(d.getTime() + 86400000)) {
+      if (!cache.dias[fmtBR(d)]) faltando.push(new Date(d));
+    }
+    if (!faltando.length) {
+      ScriptApp.getProjectTriggers().forEach(function(t) {
+        if (t.getHandlerFunction() === 'backfillVendasAuto') ScriptApp.deleteTrigger(t);
+      });
+      Logger.log('Backfill de vendas concluído: nada faltando. Gatilho removido.');
+      return { ok: true, concluido: true };
+    }
+
+    var feitos = 0;
+    for (var b = 0; b < CFY_BLOCOS_POR_RODADA && faltando.length; b++) {
+      var dIni = faltando[0];
+      var dFim = new Date(dIni.getTime() + (CFY_DIAS_VENDAS - 1) * 86400000);
+      if (dFim > hoje) dFim = hoje;
+      cfyVendasPeriodo_(dIni, dFim);
+      // tira do pendente os dias que acabaram de entrar
+      faltando = faltando.filter(function(x) { return x < dIni || x > dFim; });
+      feitos++;
+    }
+    Logger.log('Backfill de vendas: ' + feitos + ' bloco(s) nesta rodada, ' + faltando.length + ' dia(s) ainda faltando.');
+    return { ok: true, blocos: feitos, faltando: faltando.length };
+  } catch (err) {
+    Logger.log('Falha no backfill de vendas: ' + err.message);
+    return { ok: false, erro: err.message };
+  }
+}
+
+// Liga o preenchimento automático: roda de hora em hora e se desliga sozinho
+// quando o período estiver completo.
+function instalarBackfillVendas() {
+  ScriptApp.getProjectTriggers().forEach(function(t) {
+    if (t.getHandlerFunction() === 'backfillVendasAuto') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('backfillVendasAuto').timeBased().everyHours(1).create();
+  var r = backfillVendasAuto();   // já adianta a primeira rodada
+  return 'Backfill ligado (de hora em hora). Primeira rodada: ' + JSON.stringify(r);
+}
+
 function instalarGatilhoVendas() {
   ScriptApp.getProjectTriggers().forEach(function(t) {
     if (t.getHandlerFunction() === 'atualizarCacheVendas') ScriptApp.deleteTrigger(t);
