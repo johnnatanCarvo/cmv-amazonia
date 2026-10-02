@@ -1017,18 +1017,33 @@ function mostrarAvisoComprasNaoIntegradas(){
   // tem o que fazer com nota pendente de outubro.
   var lista=(COMPRAS_NAO_INTEGRADAS||{})[mesAtual]||[];
   if(!lista.length)return;
-  var total=lista.reduce(function(s,f){return s+(f.valor||0);},0);
-  if(total<=0)return;
+  var total =lista.reduce(function(s,f){return s+(f.valor ||0);},0);
+  var outros=lista.reduce(function(s,f){return s+(f.outros||0);},0);
+  if(total<=0&&outros<=0)return;
   var brl=function(v){return 'R$ '+v.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});};
-  var detalhe=lista.map(function(f){return f.filial+' '+brl(f.valor);}).join(' · ');
+  var detalhe=lista.filter(function(f){return (f.valor||0)>0;})
+                   .map(function(f){return f.filial+' '+brl(f.valor);}).join(' · ');
   var d=document.createElement('div');
   d.id='aviso-nao-integradas';
   d.style.cssText='margin:0 0 16px;padding:12px 16px;border-radius:10px;background:rgba(201,146,47,.12);'+
     'border:1px solid rgba(201,146,47,.45);color:var(--fg);font-size:13px;line-height:1.55;';
-  d.innerHTML='<b>'+brl(total)+' em notas de '+(ML_MAP[mesAtual]||mesAtual)+' ainda não conciliadas no Cloudfy.</b> '+
-    'Esse valor não entra no CMC — nem aqui, nem nos relatórios do Cloudfy — '+
-    'enquanto as notas não forem vinculadas aos produtos. O custo deste mês '+
-    'está incompleto nessa medida.<br><span style="color:var(--fg2);font-size:12px;">'+detalhe+'</span>';
+  var mesLabel=ML_MAP[mesAtual]||mesAtual;
+  var html='';
+  if(total>0){
+    html='<b>'+brl(total)+' em insumos de '+mesLabel+' ainda não conciliados no Cloudfy.</b> '+
+      'Esse valor não entra no CMC — nem aqui, nem nos relatórios do Cloudfy — enquanto as '+
+      'notas não forem vinculadas aos produtos. O custo deste mês está incompleto nessa medida.'+
+      '<br><span style="color:var(--fg2);font-size:12px;">'+detalhe+'</span>';
+  }
+  if(outros>0){
+    // Ativo imobilizado e serviço não compõem CMC nem CMV: aparecem só como
+    // contexto, pra ninguém somar com o número de cima.
+    html+=(html?'<div style="margin-top:8px;">':'<div>')+
+      '<span style="color:var(--fg2);font-size:12px;">Há também '+brl(outros)+
+      ' em notas pendentes de fornecedores sem histórico de estoque (equipamento, serviço). '+
+      'Ativo imobilizado não entra em CMC nem CMV, então esse valor fica de fora do cálculo de propósito.</span></div>';
+  }
+  d.innerHTML=html;
   var main=document.querySelector('main')||document.body;
   main.insertBefore(d,main.firstChild);
 }

@@ -232,10 +232,26 @@ function cfyMapaGrupos_(rowsComprasCSV) {
   return mapa;
 }
 
+// Fornecedores que já tiveram compra conciliada como estoque. Serve pra separar,
+// entre as notas pendentes, o que é insumo do que é ativo imobilizado/serviço.
+// Ativo não entra em CMC nem CMV, então contar tudo junto superestimaria a
+// pendência -- em setembro/2026 eram R$ 112 mil de equipamento (parque infantil,
+// freezer, cabeçote de refrigeração) contra R$ 58 mil de insumo de verdade.
+// Baseado no histórico e não numa lista fixa: fornecedor novo de alimento se
+// classifica sozinho assim que tiver a primeira nota conciliada.
+function cfyFornecedoresConhecidos_(rowsComprasCSV) {
+  var set = {};
+  (rowsComprasCSV || []).slice(1).forEach(function(r) {
+    var f = String(r[C_COMPRAS_FORNECEDOR] || '').trim().toUpperCase().replace(/\s+/g, ' ');
+    if (f) set[f] = true;
+  });
+  return set;
+}
+
 // CFYCC892 -> linhas no layout C_COMPRAS.
 // Sem filtro de situação/integração: conferido contra o CSV, filtrar por
 // IntegCompra descartava compra real (R$ 10 mil só em Umarizal, setembro).
-function cfyComprasLinhas_(codFilial, nomeFilial, dataIni, dataFim, mapaGrupos, acumulador) {
+function cfyComprasLinhas_(codFilial, nomeFilial, dataIni, dataFim, mapaGrupos, acumulador, fornConhecidos) {
   var rs = cfyChamar_('CFYCC892', {
     DataInicio: dataIni, DataFim: dataFim,
     CodFornecedor: null, CPFCNPJFornecedor: null, NrDoc: null, ChaveNF: null,
@@ -245,10 +261,12 @@ function cfyComprasLinhas_(codFilial, nomeFilial, dataIni, dataFim, mapaGrupos, 
   }, codFilial);
 
   var linhas = [];
-  var naoIntegrados = 0, valorNaoIntegrado = 0;
+  var naoIntegrados = 0, valorInsumo = 0, valorOutros = 0;
   (rs.Compras || []).forEach(function(c) {
     var s = String(c.DataCompra);
     var dataBR = s.slice(6, 8) + '/' + s.slice(4, 6) + '/' + s.slice(0, 4);
+    var fornecedor = String(c.Fornecedor || '').trim().toUpperCase().replace(/\s+/g, ' ');
+    var pareceInsumo = !fornConhecidos || !!fornConhecidos[fornecedor];
     (c.Itens || []).forEach(function(i) {
       // Os campos "Integrado" são os do catálogo interno. ItemCompra traz o
       // nome que veio na nota do fornecedor ("OLEO DE ALGODAO; BALDE 1" em vez
@@ -263,7 +281,8 @@ function cfyComprasLinhas_(codFilial, nomeFilial, dataIni, dataFim, mapaGrupos, 
       var cod = cfyTexto_(i.CodRefIntegrado);
       if (!cod) {
         naoIntegrados++;
-        valorNaoIntegrado += Number(i['Valor total']) || 0;
+        if (pareceInsumo) valorInsumo += Number(i['Valor total']) || 0;
+        else              valorOutros += Number(i['Valor total']) || 0;
         return;
       }
       var produto = cfyTexto_(i.ProdutoIntegrado);
@@ -286,12 +305,17 @@ function cfyComprasLinhas_(codFilial, nomeFilial, dataIni, dataFim, mapaGrupos, 
     });
   });
   if (naoIntegrados) {
-    Logger.log('  ' + nomeFilial + ': ' + naoIntegrados + ' itens fora (sem integração no Cloudfy), R$ ' + valorNaoIntegrado.toFixed(2));
+    Logger.log('  ' + nomeFilial + ': ' + naoIntegrados + ' itens sem conciliação — insumo R$ ' +
+               valorInsumo.toFixed(2) + ', não-estoque R$ ' + valorOutros.toFixed(2));
   }
   // Quem chamou acumula por mês -- o aviso no painel só aparece no mês a que
   // pertence, senão quem está olhando setembro veria pendência de outubro.
-  if (acumulador && naoIntegrados) {
-    acumulador.push({ filial: nomeFilial, itens: naoIntegrados, valor: Number(valorNaoIntegrado.toFixed(2)) });
+  if (acumulador && (valorInsumo > 0 || valorOutros > 0)) {
+    acumulador.push({
+      filial: nomeFilial, itens: naoIntegrados,
+      valor: Number(valorInsumo.toFixed(2)),         // o que de fato falta no CMC
+      outros: Number(valorOutros.toFixed(2))         // ativo/serviço: não entra em CMC nem CMV
+    });
   }
   return linhas;
 }
@@ -350,13 +374,15 @@ function atualizarCacheCompras() {
     janelas.push({ ini: ano * 10000 + mes * 100 + 1, fim: ano * 10000 + mes * 100 + dia,
                    ref: pad2(mes) + '/' + ano, nome: NOMES_MESES[mes] });
 
-    var mapaGrupos = cfyMapaGrupos_(lerTodosCSVs('compras'));
+    var rowsCSV     = lerTodosCSVs('compras');
+    var mapaGrupos  = cfyMapaGrupos_(rowsCSV);
+    var fornecedores = cfyFornecedoresConhecidos_(rowsCSV);
     var todas = [], mesesBuscados = {}, naoIntegradoPorMes = {};
     janelas.forEach(function(j) {
       mesesBuscados[j.ref] = true;
       var acum = [];
       CFY_FILIAIS_COMPRA.forEach(function(f) {
-        todas = todas.concat(cfyComprasLinhas_(f.nr, f.nome, j.ini, j.fim, mapaGrupos, acum));
+        todas = todas.concat(cfyComprasLinhas_(f.nr, f.nome, j.ini, j.fim, mapaGrupos, acum, fornecedores));
       });
       if (acum.length) naoIntegradoPorMes[j.nome] = acum;
     });
