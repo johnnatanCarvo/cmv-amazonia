@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-10-02.3';
+var VERSAO_APP = '2026-10-02.4';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -253,7 +253,12 @@ function getPayload(senha) {
       demandaInsumos:  demandaInsumos,
       reconciliacaoInsumos: reconciliacaoInsumos,
       fichasDisponivel: Object.keys(fichasMap).length > 0,
-      avisosInventario: inventarioConectado.avisos
+      avisosInventario: inventarioConectado.avisos,
+      // Compras que o Cloudfy importou da NFe mas ninguém conciliou com o
+      // catálogo. Não entram no CMC de ninguém -- nem aqui, nem nos relatórios
+      // do próprio Cloudfy -- então o mês corrente fica parecendo melhor do que
+      // é. Sem isso na tela, o erro é silencioso.
+      comprasNaoIntegradas: cfyComprasNaoIntegradas()
     });
 
   } catch (err) {

@@ -849,6 +849,7 @@ var CMVTEORICO={}, FICHAS_DISPONIVEL=false, mesTeorico='', uniTeorico='TODAS';
 var DEMANDAINSUMOS={}, RECONCILIACAOINSUMOS={}, mesDemanda='', uniDemanda='TODAS';
 var SEMCAL_CACHE={}, mesSemCal='', uniSemCal='TODAS';
 var AVISOSINVENTARIO=[];
+var COMPRAS_NAO_INTEGRADAS=[];
 var abcOrder='valor', custoCache=null, uniABC='TODAS', mesABC='TODOS';
 var custoMesA='', custoMesB='';
 var SENHA_ATUAL='';
@@ -943,6 +944,7 @@ function fazerLogin(){
       CMVTEORICO=res.cmvTeorico||{}; FICHAS_DISPONIVEL=!!res.fichasDisponivel;
       DEMANDAINSUMOS=res.demandaInsumos||{}; RECONCILIACAOINSUMOS=res.reconciliacaoInsumos||{};
       AVISOSINVENTARIO=res.avisosInventario||[];
+      COMPRAS_NAO_INTEGRADAS=res.comprasNaoIntegradas||[];
       mesAtual=MESES.length?MESES[MESES.length-1]:'';
       var login=document.getElementById('login');
       login.classList.add('hide');
@@ -1004,6 +1006,29 @@ function recarregarApp(){
    cada número na mão (acoplado demais, arriscado de divergir do cálculo
    real do servidor), busca o payload inteiro de novo em segundo plano e
    re-renderiza só a aba de análise que estiver aberta agora. */
+/* Compras importadas da NFe que ninguém conciliou com o catálogo de produtos
+   no Cloudfy. Esse dinheiro não entra no CMC de ninguém -- nem deste painel,
+   nem dos relatórios do próprio Cloudfy -- então o mês corrente aparece melhor
+   do que é. Sem aviso na tela, o número errado passa por certo. */
+function mostrarAvisoComprasNaoIntegradas(){
+  var lista=COMPRAS_NAO_INTEGRADAS||[];
+  if(!lista.length)return;
+  var total=lista.reduce(function(s,f){return s+(f.valor||0);},0);
+  if(total<=0)return;
+  var brl=function(v){return 'R$ '+v.toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});};
+  var detalhe=lista.map(function(f){return f.filial+' '+brl(f.valor);}).join(' · ');
+  var d=document.createElement('div');
+  d.id='aviso-nao-integradas';
+  d.style.cssText='margin:0 0 16px;padding:12px 16px;border-radius:10px;background:rgba(201,146,47,.12);'+
+    'border:1px solid rgba(201,146,47,.45);color:var(--fg);font-size:13px;line-height:1.55;';
+  d.innerHTML='<b>'+brl(total)+' em notas ainda não conciliadas no Cloudfy.</b> '+
+    'Esse valor não entra no CMC deste mês — nem aqui, nem nos relatórios do Cloudfy — '+
+    'enquanto as notas não forem vinculadas aos produtos. O custo do mês em andamento '+
+    'está incompleto nessa medida.<br><span style="color:var(--fg2);font-size:12px;">'+detalhe+'</span>';
+  var main=document.querySelector('main')||document.body;
+  main.insertBefore(d,main.firstChild);
+}
+
 function mostrarAvisoAtualizandoPainel(){
   if(document.getElementById('atualizando-painel-aviso'))return;
   var d=document.createElement('div');
@@ -1050,6 +1075,7 @@ function atualizarPainelAposCorrecao(){
       CMVTEORICO=res.cmvTeorico||{}; FICHAS_DISPONIVEL=!!res.fichasDisponivel;
       DEMANDAINSUMOS=res.demandaInsumos||{}; RECONCILIACAOINSUMOS=res.reconciliacaoInsumos||{};
       AVISOSINVENTARIO=res.avisosInventario||[];
+      COMPRAS_NAO_INTEGRADAS=res.comprasNaoIntegradas||[];
       if(MESES.indexOf(mesAtual)<0)mesAtual=MESES.length?MESES[MESES.length-1]:'';
       rInventarioAvisos();
       reRenderizarAbaAtual_();
@@ -1078,6 +1104,7 @@ function mostrarAvisoNovaVersao(){
 
 function iniciar(){
   iniciarChecagemDeVersao();
+  mostrarAvisoComprasNaoIntegradas();
   // Seletor de meses
   var seg=document.getElementById('mes-seg');
   seg.innerHTML=MESES.map(function(m){
