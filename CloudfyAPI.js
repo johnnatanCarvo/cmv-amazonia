@@ -239,7 +239,9 @@ function cfyComprasLinhas_(codFilial, nomeFilial, dataIni, dataFim, mapaGrupos) 
   var rs = cfyChamar_('CFYCC892', {
     DataInicio: dataIni, DataFim: dataFim,
     CodFornecedor: null, CPFCNPJFornecedor: null, NrDoc: null, ChaveNF: null,
-    IdentifConsultaItens: 1, IdentifConsultaCobrancas: 2
+    // IdentifConsultaCobrancas só aceita 0 ou 1 — e 1 é o valor com que a
+    // conferência contra o CSV foi feita. Não mexer sem refazer a conferência.
+    IdentifConsultaItens: 1, IdentifConsultaCobrancas: 1
   }, codFilial);
 
   var linhas = [];
