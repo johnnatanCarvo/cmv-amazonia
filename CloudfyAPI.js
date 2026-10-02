@@ -337,10 +337,16 @@ function atualizarCacheCompras() {
 
     // [início, fim, rótulo MM/yyyy] -- o limite da consulta é 31 dias, então
     // um mês inteiro cabe numa chamada.
-    var janelas = [
-      { ini: anoAnt * 10000 + mesAnt * 100 + 1, fim: anoAnt * 10000 + mesAnt * 100 + ultimoDiaAnt, ref: pad2(mesAnt) + '/' + anoAnt },
-      { ini: ano    * 10000 + mes    * 100 + 1, fim: ano    * 10000 + mes    * 100 + dia,          ref: pad2(mes)    + '/' + ano }
-    ];
+    //
+    // O mês anterior só é rebuscado até o dia 10. Depois disso ele já fechou:
+    // nota atrasada praticamente não chega mais, e continuar rebuscando só
+    // gastaria chamada e deixaria um número fechado mudando sozinho. Como o
+    // cache acumula, o que foi gravado até o dia 10 fica congelado lá.
+    var janelas = [];
+    if (dia <= 10) {
+      janelas.push({ ini: anoAnt * 10000 + mesAnt * 100 + 1, fim: anoAnt * 10000 + mesAnt * 100 + ultimoDiaAnt, ref: pad2(mesAnt) + '/' + anoAnt });
+    }
+    janelas.push({ ini: ano * 10000 + mes * 100 + 1, fim: ano * 10000 + mes * 100 + dia, ref: pad2(mes) + '/' + ano });
 
     var mapaGrupos = cfyMapaGrupos_(lerTodosCSVs('compras'));
     var todas = [], mesesBuscados = {};
