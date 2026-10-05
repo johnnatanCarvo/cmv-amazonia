@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-10-02.16';
+var VERSAO_APP = '2026-10-05.1';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -2522,16 +2522,36 @@ function lerDataPorContagemId_() {
 // entre as contagens escolhidas (contagemIds). Retorna o info de
 // parseDataCompleta (ano/mes/dia/ts), ou null se nenhuma contagem tiver
 // data válida.
+// Data que o inventário REPRESENTA -- não a da última contagem lançada.
+//
+// Uma seleção quase sempre junta contagens de vários setores do mesmo
+// fechamento, e sempre há quem lance depois da meia-noite: um setor que conta
+// 00:32 de segunda está fechando o domingo. Pegando a contagem mais recente,
+// a data virava segunda e o período passava a incluir um dia inteiro de venda
+// e compra que o estoque contado não reflete.
+//
+// Regra: o dia em que a MAIORIA das contagens aconteceu. Empate resolve pelo
+// mais antigo, que é o fechamento de fato -- o resto é retardatário.
 function resolverDataInventario_(inv, dataPorContagemId) {
-  var melhorTs = null, melhorInfo = null;
+  var porDia = {};
   (inv.contagemIds || []).forEach(function(cid) {
     var txt = dataPorContagemId[String(cid).trim()];
     if (!txt) return;
     var info = parseDataCompleta(txt.split(' ')[0]);
     if (!info) return;
-    if (!melhorTs || info.ts > melhorTs) { melhorTs = info.ts; melhorInfo = info; }
+    var chave = info.ano + '-' + info.mes + '-' + info.dia;
+    if (!porDia[chave]) porDia[chave] = { n: 0, info: info };
+    porDia[chave].n++;
   });
-  return melhorInfo;
+
+  var escolhido = null;
+  Object.keys(porDia).forEach(function(k) {
+    var c = porDia[k];
+    if (!escolhido) { escolhido = c; return; }
+    if (c.n > escolhido.n) escolhido = c;
+    else if (c.n === escolhido.n && c.info.ts < escolhido.info.ts) escolhido = c;
+  });
+  return escolhido ? escolhido.info : null;
 }
 
 // Precifica uma lista de itens contados (produto, und, qtde — vindo de
