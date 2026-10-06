@@ -159,6 +159,10 @@ td.hi{font-weight:600;}
 
 /* ===== FAIXA DE MÉTRICAS ===== */
 .metrics{display:grid;grid-template-columns:1.4fr 1fr 1fr 1fr;gap:1px;background:var(--ln);border:1px solid var(--ln);border-radius:12px;overflow:hidden;margin-bottom:20px;}
+/* Card que ocupa duas colunas: usado quando a linha ficaria pela metade, com
+   o fundo cinza da grade aparecendo no lugar vazio. Também dá espaço pro
+   subtítulo caber numa linha só. */
+.metric.w2{grid-column:span 2;}
 .metric{background:var(--bg2);padding:20px 22px;position:relative;}
 .metric.lead:before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--ac);}
 .metric-l{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--fg3);margin-bottom:11px;}
@@ -1495,41 +1499,27 @@ function rMes(){
   html+='<div class="metric"><div class="metric-l">Produtos</div><div class="metric-v am">'+nProd+'</div>'+
     '<div class="metric-sub" style="color:var(--fg3)">'+grupos.length+' grupos</div></div>';
 
-  // ===== TRANSFERÊNCIA ENTRE UNIDADES + CMC COM/SEM TRANSFERÊNCIA =====
-  // Entrada e saída são cards independentes: uma unidade pode só enviar ou só
-  // receber. Antes o bloco inteiro dependia de ter ENTRADA, então quem só
-  // enviava não via nada -- nem o que mandou embora.
+  // ===== TRANSFERÊNCIA ENTRE UNIDADES =====
+  // DOIS cards, não cinco. Recebido, enviado, saldo, CMC com transferência e
+  // o percentual dele em cards separados davam nove métricas na tela, uma
+  // sozinha na última linha e um subtítulo de fórmula que estourava em duas
+  // linhas. Aqui o saldo carrega a composição no subtítulo e o CMC líquido
+  // carrega os dois percentuais -- mesma informação, metade do espaço.
   if(uniAtual!=='TODAS' && (d.transfEntrada>0||d.transfSaida>0)){
-    if(d.transfEntrada>0){
-      html+='<div class="metric"><div class="metric-l">Recebido de Outra Unidade</div><div class="metric-v az">'+fR2(d.transfEntrada)+'</div>'+
-        '<div class="metric-sub" style="color:var(--fg3)">'+fQ(d.transfEntradaQtd)+' unid. recebidas</div></div>';
-    }
-    if(d.transfSaida>0){
-      // O CMC da unidade JÁ está líquido da saída (ver coGAjust em
-      // processarCompras): o que ela mandou embora não é custo dela. Esse card
-      // mostra quanto saiu, que antes não aparecia em lugar nenhum.
-      html+='<div class="metric"><div class="metric-l">Enviado para Outra Unidade</div><div class="metric-v am">'+fR2(d.transfSaida)+'</div>'+
-        '<div class="metric-sub" style="color:var(--fg3)">'+fQ(d.transfSaidaQtd)+' unid. enviadas · já descontado do CMC</div></div>';
-    }
-    if(d.transfEntrada>0&&d.transfSaida>0){
-      var saldoTr=d.transfEntrada-d.transfSaida;
-      html+='<div class="metric"><div class="metric-l">Saldo de Transferência</div>'+
-        '<div class="metric-v '+(saldoTr>=0?'az':'am')+'">'+fR2(saldoTr)+'</div>'+
-        '<div class="metric-sub" style="color:var(--fg3)">'+(saldoTr>=0?'recebeu mais do que enviou':'enviou mais do que recebeu')+'</div></div>';
-    }
-  }
-  // "Com transferência" vale também pra quem SÓ envia: o card mostra o custo
-  // do que ficou na unidade, que nesse caso é menor que a compra externa dela.
-  if(uniAtual!=='TODAS' && (d.transfEntrada>0||d.transfSaida>0)){
-    var compoe=[];
-    if(d.transfEntrada>0)compoe.push('+'+fR2(d.transfEntrada)+' recebido');
-    if(d.transfSaida>0)compoe.push('-'+fR2(d.transfSaida)+' enviado');
-    html+='<div class="metric"><div class="metric-l">CMC com Transferência</div><div class="metric-v">'+fR2(d.cmcComTransf)+'</div>'+
-      '<div class="metric-sub" style="color:var(--fg3)">compra externa '+fR2(d.cmc_total)+' '+compoe.join(' ')+'</div></div>';
+    var saldoTr=d.transfEntrada-d.transfSaida;
+    var partes=[];
+    if(d.transfEntrada>0)partes.push('recebeu '+fR(d.transfEntrada)+' ('+fQ(d.transfEntradaQtd)+' un)');
+    if(d.transfSaida>0)partes.push('enviou '+fR(d.transfSaida)+' ('+fQ(d.transfSaidaQtd)+' un)');
+    html+='<div class="metric w2"><div class="metric-l">Transferência entre Unidades</div>'+
+      '<div class="metric-v '+(saldoTr>=0?'az':'am')+'">'+fR2(saldoTr)+'</div>'+
+      '<div class="metric-sub" style="color:var(--fg3)">'+partes.join(' · ')+'</div></div>';
     var pctComTransf=d.cmcPctFatComTransf;
-    html+='<div class="metric"><div class="metric-l">CMC com Transf. sobre Faturamento</div>'+
-      '<div class="metric-v '+(pctComTransf>42?'rd':'ac')+'">'+(pctComTransf!==null?fP(pctComTransf):'--')+'</div>'+
-      '<div class="metric-sub" style="color:var(--fg3)">só compra externa: '+(pctFat!==null?fP(pctFat):'--')+'</div></div>';
+    var subCmc=[];
+    if(pctComTransf!==null&&pctComTransf!==undefined)subCmc.push(fP(pctComTransf)+' do faturamento');
+    if(pctFat!==null)subCmc.push('só compra externa '+fP(pctFat));
+    html+='<div class="metric w2"><div class="metric-l">CMC com Transferência</div>'+
+      '<div class="metric-v '+(pctComTransf>42?'rd':'')+'">'+fR2(d.cmcComTransf)+'</div>'+
+      '<div class="metric-sub" style="color:var(--fg3)">'+subCmc.join(' · ')+'</div></div>';
   }
 
   document.getElementById('mes-metrics').innerHTML=html;
