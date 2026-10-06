@@ -1316,7 +1316,7 @@ function dadosPeriodoCMC(mesNome, periodo, unidade){
     var consolidado=bloco.TODAS;
     if(!consolidado)return null;
     return {cmc_total:consolidado.compras,faturamento:consolidado.faturamento||0,grupos:{},transf:null,transfUni:null,
-      transfSaldo:0,transfEntrada:0,transfSaida:0,transfEntradaQtd:0,
+      transfSaldo:0,transfEntrada:0,transfSaida:0,transfEntradaQtd:0,transfSaidaQtd:0,
       cmcComTransf:consolidado.compras,cmcPctFatComTransf:consolidado.cmc_pct};
   }
   var unidadeBloco=bloco[unidade];
@@ -1328,12 +1328,12 @@ function dadosPeriodoCMC(mesNome, periodo, unidade){
     var trUni=(tr&&tr.filiais&&tr.filiais[unidade])?tr.filiais[unidade]:null;
     return {cmc_total:f.cmc_total,faturamento:f.faturamento||0,grupos:f.grupos,transf:tr,transfUni:trUni,
       transfSaldo:f.transf_saldo||0,transfEntrada:f.transf_entrada||0,transfSaida:f.transf_saida||0,
-      transfEntradaQtd:f.transf_entrada_qtd||0,
+      transfEntradaQtd:f.transf_entrada_qtd||0,transfSaidaQtd:f.transf_saida_qtd||0,
       cmcComTransf:(f.cmc_com_transf!==undefined?f.cmc_com_transf:f.cmc_total),
       cmcPctFatComTransf:(f.cmc_pct_fat_com_transf!==undefined?f.cmc_pct_fat_com_transf:null)};
   }
   return {cmc_total:0,faturamento:0,grupos:{},transf:null,transfUni:null,transfSaldo:0,transfEntrada:0,transfSaida:0,
-    transfEntradaQtd:0,cmcComTransf:0,cmcPctFatComTransf:null};
+    transfEntradaQtd:0,transfSaidaQtd:0,cmcComTransf:0,cmcPctFatComTransf:null};
 }
 
 // Mesma ideia, pro CMV: extrai de cmvDetalhado o formato que cmvDados()
@@ -1411,18 +1411,18 @@ function extrairCMCPorUnidade_(d){
   if(!d)return null;
   var tr=d.transferencias||null;
   if(uniAtual==='TODAS')return {cmc_total:d.cmc_total,faturamento:d.faturamento||0,grupos:d.grupos,transf:tr,transfUni:null,transfSaldo:tr?tr.total:0,transfEntrada:0,transfSaida:0,
-    transfEntradaQtd:0,cmcComTransf:d.cmc_total,cmcPctFatComTransf:d.cmc_pct_fat};
+    transfEntradaQtd:0,transfSaidaQtd:0,cmcComTransf:d.cmc_total,cmcPctFatComTransf:d.cmc_pct_fat};
   if(d.filiais&&d.filiais[uniAtual]){
     var f=d.filiais[uniAtual];
     var trUni=(tr&&tr.filiais&&tr.filiais[uniAtual])?tr.filiais[uniAtual]:null;
     return {cmc_total:f.cmc_total,faturamento:f.faturamento||0,grupos:f.grupos,transf:tr,transfUni:trUni,
       transfSaldo:f.transf_saldo||0,transfEntrada:f.transf_entrada||0,transfSaida:f.transf_saida||0,
-      transfEntradaQtd:f.transf_entrada_qtd||0,
+      transfEntradaQtd:f.transf_entrada_qtd||0,transfSaidaQtd:f.transf_saida_qtd||0,
       cmcComTransf:(f.cmc_com_transf!==undefined?f.cmc_com_transf:f.cmc_total),
       cmcPctFatComTransf:(f.cmc_pct_fat_com_transf!==undefined?f.cmc_pct_fat_com_transf:null)};
   }
   return {cmc_total:0,faturamento:0,grupos:{},transf:null,transfUni:null,transfSaldo:0,transfEntrada:0,transfSaida:0,
-    transfEntradaQtd:0,cmcComTransf:0,cmcPctFatComTransf:null};
+    transfEntradaQtd:0,transfSaidaQtd:0,cmcComTransf:0,cmcPctFatComTransf:null};
 }
 
 // Retorna o objeto de dados do mês conforme a unidade selecionada -- ou,
@@ -1495,10 +1495,30 @@ function rMes(){
   html+='<div class="metric"><div class="metric-l">Produtos</div><div class="metric-v am">'+nProd+'</div>'+
     '<div class="metric-sub" style="color:var(--fg3)">'+grupos.length+' grupos</div></div>';
 
-  // ===== RECEBIDO DE OUTRA UNIDADE (transferência) + CMC COM/SEM TRANSFERÊNCIA =====
+  // ===== TRANSFERÊNCIA ENTRE UNIDADES + CMC COM/SEM TRANSFERÊNCIA =====
+  // Entrada e saída são cards independentes: uma unidade pode só enviar ou só
+  // receber. Antes o bloco inteiro dependia de ter ENTRADA, então quem só
+  // enviava não via nada -- nem o que mandou embora.
+  if(uniAtual!=='TODAS' && (d.transfEntrada>0||d.transfSaida>0)){
+    if(d.transfEntrada>0){
+      html+='<div class="metric"><div class="metric-l">Recebido de Outra Unidade</div><div class="metric-v az">'+fR2(d.transfEntrada)+'</div>'+
+        '<div class="metric-sub" style="color:var(--fg3)">'+fQ(d.transfEntradaQtd)+' unid. recebidas</div></div>';
+    }
+    if(d.transfSaida>0){
+      // O CMC da unidade JÁ está líquido da saída (ver coGAjust em
+      // processarCompras): o que ela mandou embora não é custo dela. Esse card
+      // mostra quanto saiu, que antes não aparecia em lugar nenhum.
+      html+='<div class="metric"><div class="metric-l">Enviado para Outra Unidade</div><div class="metric-v am">'+fR2(d.transfSaida)+'</div>'+
+        '<div class="metric-sub" style="color:var(--fg3)">'+fQ(d.transfSaidaQtd)+' unid. enviadas · já descontado do CMC</div></div>';
+    }
+    if(d.transfEntrada>0&&d.transfSaida>0){
+      var saldoTr=d.transfEntrada-d.transfSaida;
+      html+='<div class="metric"><div class="metric-l">Saldo de Transferência</div>'+
+        '<div class="metric-v '+(saldoTr>=0?'az':'am')+'">'+fR2(saldoTr)+'</div>'+
+        '<div class="metric-sub" style="color:var(--fg3)">'+(saldoTr>=0?'recebeu mais do que enviou':'enviou mais do que recebeu')+'</div></div>';
+    }
+  }
   if(uniAtual!=='TODAS' && d.transfEntrada>0){
-    html+='<div class="metric"><div class="metric-l">Recebido de Outra Unidade</div><div class="metric-v az">'+fR2(d.transfEntrada)+'</div>'+
-      '<div class="metric-sub" style="color:var(--fg3)">'+fQ(d.transfEntradaQtd)+' unid. recebidas</div></div>';
     html+='<div class="metric"><div class="metric-l">CMC com Transferência</div><div class="metric-v">'+fR2(d.cmcComTransf)+'</div>'+
       '<div class="metric-sub" style="color:var(--fg3)">sem transferência: '+fR2(d.cmc_total)+'</div></div>';
     var pctComTransf=d.cmcPctFatComTransf;
