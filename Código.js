@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-10-06.5';
+var VERSAO_APP = '2026-10-06.6';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -159,10 +159,18 @@ function getPayload(senha) {
           filObj.cmc_pct_fat = (fatFil > 0)
             ? Math.round(filObj.cmc_total / fatFil * 10000) / 100
             : null;
-          // CMC considerando a transferencia recebida de outra unidade como
-          // se fosse compra externa (cmc_total, por padrao, NAO inclui transferencia).
+          // "Com transferência" = o custo do que REALMENTE ficou nesta unidade:
+          // compra externa + o que ela recebeu - o que ela mandou embora.
+          // cmc_total é só compra externa (transferência sai do agg em
+          // processarComprasPorPeriodo_), e o que foi enviado foi comprado por
+          // esta unidade, então está dentro dele e precisa sair.
+          // Somar só a entrada, como era antes, fazia uma unidade que envia mais
+          // do que recebe aparecer com CMC MAIOR do que o dela sozinha -- o
+          // contrário do que de fato aconteceu. Porto Futuro em 01-27/09/2026:
+          // enviou R$ 19.893,23, recebeu R$ 2.129,06, e o card mostrava +R$ 2.129.
           var entradaVal = filObj.transf_entrada || 0;
-          filObj.cmc_com_transf = Math.round((filObj.cmc_total + entradaVal) * 100) / 100;
+          var saidaVal   = filObj.transf_saida || 0;
+          filObj.cmc_com_transf = Math.round((filObj.cmc_total + entradaVal - saidaVal) * 100) / 100;
           filObj.cmc_pct_fat_com_transf = (fatFil > 0)
             ? Math.round(filObj.cmc_com_transf / fatFil * 10000) / 100
             : null;
@@ -1437,8 +1445,18 @@ function injetarFaturamentoCmcPeriodo_(cmcPeriodo, porDiaVendas, mesIniNum, anoI
       filObj.cmc_pct_fat = (fatFil > 0)
         ? Math.round(filObj.cmc_total / fatFil * 10000) / 100
         : null;
+      // "Com transferência" = o custo do que REALMENTE ficou nesta unidade:
+      // compra externa + o que ela recebeu - o que ela mandou embora.
+      // cmc_total é só compra externa (transferência sai do agg em
+      // processarComprasPorPeriodo_), e o que foi enviado foi comprado por
+      // esta unidade, então está dentro dele e precisa sair.
+      // Somar só a entrada, como era antes, fazia uma unidade que envia mais
+      // do que recebe aparecer com CMC MAIOR do que o dela sozinha -- o
+      // contrário do que de fato aconteceu. Porto Futuro em 01-27/09/2026:
+      // enviou R$ 19.893,23, recebeu R$ 2.129,06, e o card mostrava +R$ 2.129.
       var entradaVal = filObj.transf_entrada || 0;
-      filObj.cmc_com_transf = Math.round((filObj.cmc_total + entradaVal) * 100) / 100;
+      var saidaVal   = filObj.transf_saida || 0;
+      filObj.cmc_com_transf = Math.round((filObj.cmc_total + entradaVal - saidaVal) * 100) / 100;
       filObj.cmc_pct_fat_com_transf = (fatFil > 0)
         ? Math.round(filObj.cmc_com_transf / fatFil * 10000) / 100
         : null;

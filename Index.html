@@ -1518,13 +1518,18 @@ function rMes(){
         '<div class="metric-sub" style="color:var(--fg3)">'+(saldoTr>=0?'recebeu mais do que enviou':'enviou mais do que recebeu')+'</div></div>';
     }
   }
-  if(uniAtual!=='TODAS' && d.transfEntrada>0){
+  // "Com transferência" vale também pra quem SÓ envia: o card mostra o custo
+  // do que ficou na unidade, que nesse caso é menor que a compra externa dela.
+  if(uniAtual!=='TODAS' && (d.transfEntrada>0||d.transfSaida>0)){
+    var compoe=[];
+    if(d.transfEntrada>0)compoe.push('+'+fR2(d.transfEntrada)+' recebido');
+    if(d.transfSaida>0)compoe.push('-'+fR2(d.transfSaida)+' enviado');
     html+='<div class="metric"><div class="metric-l">CMC com Transferência</div><div class="metric-v">'+fR2(d.cmcComTransf)+'</div>'+
-      '<div class="metric-sub" style="color:var(--fg3)">sem transferência: '+fR2(d.cmc_total)+'</div></div>';
+      '<div class="metric-sub" style="color:var(--fg3)">compra externa '+fR2(d.cmc_total)+' '+compoe.join(' ')+'</div></div>';
     var pctComTransf=d.cmcPctFatComTransf;
     html+='<div class="metric"><div class="metric-l">CMC com Transf. sobre Faturamento</div>'+
       '<div class="metric-v '+(pctComTransf>42?'rd':'ac')+'">'+(pctComTransf!==null?fP(pctComTransf):'--')+'</div>'+
-      '<div class="metric-sub" style="color:var(--fg3)">sem transferência: '+(pctFat!==null?fP(pctFat):'--')+'</div></div>';
+      '<div class="metric-sub" style="color:var(--fg3)">só compra externa: '+(pctFat!==null?fP(pctFat):'--')+'</div></div>';
   }
 
   document.getElementById('mes-metrics').innerHTML=html;
