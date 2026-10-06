@@ -714,18 +714,73 @@ function cfyLerCacheVendas_() {
     var ss  = obterFichasManuaisSheet_();
     var aba = ss.getSheetByName(CFY_ABA_VENDAS);
     if (!aba || aba.getLastRow() < 2) return null;
-    var linhas = aba.getRange(2, 1, aba.getLastRow() - 1, 15).getValues();
-    var dias = {};
-    linhas.forEach(function(r) {
+    var brutas = aba.getRange(2, 1, aba.getLastRow() - 1, 15).getValues();
+
+    // cfyVendasLinhas_ já agrega por dia+produto dentro de cada filial, então
+    // filial|data|produto é único POR GRAVAÇÃO. Linha repetida só aparece se o
+    // mesmo dia foi gravado duas vezes (duas execuções do backfill pegando a
+    // mesma janela). Aconteceu: 1.753 linhas repetidas, R$ 299 mil, os dias
+    // 01 a 03/09/2026 em dobro -- o faturamento de setembro saía R$ 274 mil
+    // maior que a soma dos cupons da própria API.
+    // Dedupe na LEITURA, ficando com a última ocorrência (é a mais recente,
+    // porque o backfill escreve no fim). Assim o número fica certo mesmo com o
+    // cache sujo, sem precisar reescrever a planilha.
+    var ultimaPorChave = {};
+    for (var i = 0; i < brutas.length; i++) {
+      var rb = brutas[i];
+      var ch = String(rb[C_VENDAS.filial]) + '|' + cfyDataBR_(rb[C_VENDAS.data]) +
+               '|' + String(rb[C_VENDAS.produto]);
+      ultimaPorChave[ch] = i;
+    }
+    var linhas = [], dias = {}, repetidas = 0;
+    for (var k = 0; k < brutas.length; k++) {
+      var r = brutas[k];
       var d = cfyDataBR_(r[C_VENDAS.data]);
+      var chave = String(r[C_VENDAS.filial]) + '|' + d + '|' + String(r[C_VENDAS.produto]);
+      if (ultimaPorChave[chave] !== k) { repetidas++; continue; }
       r[C_VENDAS.data] = d;   // o painel espera dd/MM/yyyy como texto
       if (d) dias[d] = true;
-    });
+      linhas.push(r);
+    }
+    if (repetidas) {
+      Logger.log('Cache de vendas: ' + repetidas + ' linha(s) repetida(s) ignorada(s) na leitura. ' +
+                 'Rode limparDuplicatasCacheVendas() pra tirar da planilha.');
+    }
     return { linhas: linhas, dias: dias };
   } catch (err) {
     Logger.log('Cache de vendas indisponível: ' + err.message);
     return null;
   }
+}
+
+// Tira da planilha as linhas repetidas que cfyLerCacheVendas_ já ignora na
+// leitura. Rodar é opcional -- o número do painel já sai certo sem isso --,
+// mas deixa a aba menor e evita confundir quem abrir a planilha na mão.
+// Mantém a ÚLTIMA ocorrência de cada filial|data|produto.
+function limparDuplicatasCacheVendas() {
+  var ss  = obterFichasManuaisSheet_();
+  var aba = ss.getSheetByName(CFY_ABA_VENDAS);
+  if (!aba || aba.getLastRow() < 2) return 'cache de vendas vazio';
+  var brutas = aba.getRange(2, 1, aba.getLastRow() - 1, 15).getValues();
+  var ultima = {};
+  brutas.forEach(function(r, i) {
+    ultima[String(r[C_VENDAS.filial]) + '|' + cfyDataBR_(r[C_VENDAS.data]) +
+           '|' + String(r[C_VENDAS.produto])] = i;
+  });
+  var limpas = brutas.filter(function(r, i) {
+    return ultima[String(r[C_VENDAS.filial]) + '|' + cfyDataBR_(r[C_VENDAS.data]) +
+                  '|' + String(r[C_VENDAS.produto])] === i;
+  });
+  var removidas = brutas.length - limpas.length;
+  if (!removidas) return 'nenhuma duplicata encontrada (' + brutas.length + ' linhas)';
+  aba.getRange(2, 1, brutas.length, 15).clearContent();
+  if (limpas.length) {
+    aba.getRange(2, 1, limpas.length, 15).setValues(limpas);
+    cfyFormatarColunaData_(aba, C_VENDAS.data, limpas.length);
+  }
+  var msg = removidas + ' linha(s) repetida(s) removida(s). Cache ficou com ' + limpas.length + '.';
+  Logger.log(msg);
+  return msg;
 }
 
 function cfyVendasAtualizadoEm() {

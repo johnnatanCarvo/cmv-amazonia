@@ -104,14 +104,45 @@ function limpaCelula(val) {
   return String(val || '').trim().replace(/"/g, '');
 }
 
+// Dia da ÚLTIMA contagem de estoque de cada mês. É a data em que o mês
+// "fecha" de verdade: o CMV real só consegue medir até ali, porque é o
+// último retrato de estoque que existe. Compras e vendas depois dessa data
+// entram no mês seguinte do ponto de vista do CMV.
+//
+// Sem isso, um mês contado no dia 27 compara estoque de 27 dias com compras
+// e vendas de 30 — em setembro/2026 isso sozinho inflava o CMV em R$ 104 mil.
+// Mês sem contagem nenhuma não entra no mapa e continua valendo inteiro.
+function limiteDiaPorMesDeEstoque_(rowsEstoque) {
+  var limite = {};
+  if (!rowsEstoque || rowsEstoque.length < 2) return limite;
+  for (var i = 1; i < rowsEstoque.length; i++) {
+    var r = rowsEstoque[i];
+    if (!r || r.length < 16) continue;
+    if (limpaCelula(r[C_ESTOQUE.tp_movto]) !== ESTOQUE_TIPO_VALIDO) continue;
+    var di = parseDataCompleta(r[C_ESTOQUE.data]);
+    if (!di) continue;
+    var m = NOMES_MESES[di.mes];
+    if (!limite[m] || di.dia > limite[m]) limite[m] = di.dia;
+  }
+  return limite;
+}
+
+// Aplica o limite acima num dataInfo: devolve o nome do mês, ou null quando a
+// linha cai depois do fechamento daquele mês (aí ela é ignorada).
+function mesDentroDaJanela_(dataInfo, limiteDiaPorMes) {
+  var m = NOMES_MESES[dataInfo.mes];
+  if (limiteDiaPorMes && limiteDiaPorMes[m] && dataInfo.dia > limiteDiaPorMes[m]) return null;
+  return m;
+}
+
 // ── PROCESSAR COMPRAS → CMC ──────────────────────────────────
 
-function processarCompras(rows) {
+function processarCompras(rows, limiteDiaPorMes) {
   if (!rows || rows.length < 2) {
     throw new Error('CSV de compras vazio ou sem linhas de dados.');
   }
   return processarComprasPorPeriodo_(rows, function(dataInfo) {
-    return NOMES_MESES[dataInfo.mes];
+    return mesDentroDaJanela_(dataInfo, limiteDiaPorMes);
   });
 }
 
@@ -384,7 +415,7 @@ function processarComprasIntervaloDiasCross_(rows, mesIniNum, anoIni, diaIni, me
 
 // ── PROCESSAR VENDAS → ABC + FATURAMENTO ─────────────────────
 
-function processarVendas(rows) {
+function processarVendas(rows, limiteDiaPorMes) {
   if (!rows || rows.length < 2) {
     throw new Error('CSV de vendas vazio ou sem linhas de dados.');
   }
@@ -416,6 +447,13 @@ function processarVendas(rows) {
     var filial = limpaCelula(r[C_VENDAS.filial]) || 'OUTRA';
     var qtd    = numVal(r[C_VENDAS.qtd]);
     if (!prod) continue;
+
+    // Venda depois do fechamento do mês (data da última contagem) fica de
+    // fora: o CMV real não alcança esse dia, então deixar a venda dentro só
+    // engordaria o denominador do CMV% e do CMV Teórico. Mês sem contagem
+    // não tem limite e continua inteiro. Ver limiteDiaPorMesDeEstoque_.
+    var diJanela = parseDataCompleta(r[C_VENDAS.data]);
+    if (diJanela && !mesDentroDaJanela_(diJanela, limiteDiaPorMes)) continue;
 
     var mes = mesNum(r[C_VENDAS.data]);
     var mn  = mes ? NOMES_MESES[mes] : null;
@@ -976,8 +1014,19 @@ function processarCMV(rowsEstoque, rowsCompras, historicoPorInsumo, fichasMap) {
   }
 
   // ── 2. Compras por mes + grupo + filial ──
+  // Só até a data da última contagem de cada mês: é até ali que o estoque
+  // final enxerga. Aqui dá pra derivar a janela direto das contagens que
+  // acabaram de ser lidas, sem depender de ninguém passar o mapa.
+  var limiteDiaCMV = {};
+  datasOrdenadas.forEach(function(ts) {
+    var cJ = contagensPorData[ts];
+    var mJ = NOMES_MESES[cJ.mes];
+    if (!limiteDiaCMV[mJ] || cJ.dia > limiteDiaCMV[mJ]) limiteDiaCMV[mJ] = cJ.dia;
+  });
   var comprasMes = (rowsCompras && rowsCompras.length > 1)
-    ? agregarComprasPeriodoCMV_(rowsCompras, function(dataInfo) { return NOMES_MESES[dataInfo.mes]; })
+    ? agregarComprasPeriodoCMV_(rowsCompras, function(dataInfo) {
+        return mesDentroDaJanela_(dataInfo, limiteDiaCMV);
+      })
     : {};
 
   // ── 3. CMV por mes ──
@@ -1129,10 +1178,9 @@ function processarCMV(rowsEstoque, rowsCompras, historicoPorInsumo, fichasMap) {
       // "Mês Todo" mostra o período como dia 1 do mês até a data da última
       // contagem -- não a data real da contagem de Estoque Inicial (que
       // normalmente é o fechamento do mês ANTERIOR, ex: 31/08 fechando/
-      // abrindo Setembro). Compras já é sempre o total do mês inteiro por
-      // nome (comprasMes[mesNome].total, algumas linhas acima) — mostrar
-      // "31/08 a 15/09" no rótulo enquanto Compras só cobre 01/09 a 15/09
-      // seria inconsistente com o número exibido.
+      // abrindo Setembro). Desde a janela por contagem, Compras também para
+      // nessa data (ver limiteDiaCMV acima), então o rótulo e o número
+      // finalmente falam do mesmo período.
       data_ei:       '01/'+pad2(ef.mes)+'/'+ef.ano,
       data_ef:       tsEF.slice(6,8)+'/'+tsEF.slice(4,6)+'/'+tsEF.slice(0,4),
       grupos:        grupos,

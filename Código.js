@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-10-06.1';
+var VERSAO_APP = '2026-10-06.2';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -80,8 +80,6 @@ function getPayload(senha) {
     var rowsEstoque = lerTodosCSVs('estoque');
     var rowsFichas  = lerFichaTecnica(); // opcional — [] se ainda nao foi enviada
 
-    var cmc        = processarCompras(rowsCompras);
-    var vendas     = processarVendas(rowsVendas);
     var fichasMap  = processarFichas(rowsFichas);
     var receitas   = processarReceitas(rowsFichas);
 
@@ -101,6 +99,18 @@ function getPayload(senha) {
     }
     var rowsEstoqueCompleto = (rowsEstoque && rowsEstoque.length ? rowsEstoque : [[]]).concat(inventarioConectado.linhas);
 
+    // Janela de cada mês: do dia 1 até a data da ÚLTIMA contagem daquele mês.
+    // CMC, CMV real e CMV Teórico passam a respeitar a MESMA janela -- antes o
+    // estoque parava na contagem (27/09, por exemplo) enquanto compras e
+    // vendas iam até o dia 30, e os três números não falavam do mesmo período.
+    // Mês ainda sem contagem não entra no mapa e continua valendo inteiro.
+    // Precisa vir depois do rowsEstoqueCompleto pra enxergar também as
+    // contagens do sistema próprio, não só as do CSV.
+    var limiteDiaPorMes = limiteDiaPorMesDeEstoque_(rowsEstoqueCompleto);
+    Logger.log('Janela por mês (dia da última contagem): ' + JSON.stringify(limiteDiaPorMes));
+
+    var cmc        = processarCompras(rowsCompras, limiteDiaPorMes);
+    var vendas     = processarVendas(rowsVendas, limiteDiaPorMes);
     var cmv        = processarCMV(rowsEstoqueCompleto, rowsCompras, historicoPorInsumo, fichasMap);
 
     // Meses disponíveis — derivados dos dados de compras
