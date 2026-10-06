@@ -41,6 +41,21 @@ var GRUPOS_EXCLUIR_ABC = ['TAXAS OPERACIONAIS'];
 // serviço. Taxa não é venda de produto, então excluir por nome também.
 var PADRAO_PRODUTO_TAXA = /^\s*TAXA\s+DE\s+/i;
 
+
+// Acerto de fechamento de caixa. Sai no cupom como se fosse produto (grupo
+// "SERVIÇOS"), mas não é venda: é a diferença que o operador lança pra fechar
+// a gaveta. Entrava no faturamento e diluía todo percentual que divide por
+// ele -- CMC%, CMV% e CMV Teórico%. Aparece desde julho/2026: R$ 1.143,31 em
+// julho, R$ 2.540,53 em agosto, R$ 2.680,08 em setembro.
+var PADRAO_PRODUTO_AJUSTE = /^\s*AJUSTE\s+DE\s+CAIXA\b/i;
+
+// Linha que o cupom traz mas que NÃO é venda de produto. Ponto único: quem
+// somar faturamento passa por aqui, senão um filtro novo entra num cálculo e
+// esquece do outro -- foi o que aconteceu com a taxa sem grupo, que ficou de
+// fora do mensal e dentro do semanal.
+function naoEhVenda_(produto) {
+  return PADRAO_PRODUTO_TAXA.test(produto) || PADRAO_PRODUTO_AJUSTE.test(produto);
+}
 // Transferências entre unidades: no relatório de compras, aparecem como
 // "fornecedor" que é a própria empresa. Identificadas pelo nome do fornecedor.
 // O índice da coluna fornecedor no CSV de compras é 2.
@@ -442,8 +457,8 @@ function processarVendas(rows, limiteDiaPorMes) {
     if (GRUPOS_EXCLUIR_ABC.indexOf(grupo.toUpperCase()) >= 0) continue;
 
     var prod   = limpaCelula(r[C_VENDAS.produto]);
-    // Taxa sem grupo cadastrado não pode virar faturamento (ver PADRAO_PRODUTO_TAXA).
-    if (PADRAO_PRODUTO_TAXA.test(prod)) continue;
+    // Taxa sem grupo e acerto de caixa não viram faturamento (ver naoEhVenda_).
+    if (naoEhVenda_(prod)) continue;
     var filial = limpaCelula(r[C_VENDAS.filial]) || 'OUTRA';
     var qtd    = numVal(r[C_VENDAS.qtd]);
     if (!prod) continue;
@@ -1855,7 +1870,7 @@ function preAgregarVendasPorDia(rowsVendas) {
     // cadastro esteja sem grupo. Sem isso, CMV e Período Personalizado (que
     // usam esta agregação) contam a taxa como venda e o CMV% sai menor do
     // que é -- a divergência que apareceu no Umarizal de setembro.
-    if (PADRAO_PRODUTO_TAXA.test(limpaCelula(r[C_VENDAS.produto]))) continue;
+    if (naoEhVenda_(limpaCelula(r[C_VENDAS.produto]))) continue;
 
     var dataInfo = parseDataCompleta(r[C_VENDAS.data]);
     if (!dataInfo) continue;
