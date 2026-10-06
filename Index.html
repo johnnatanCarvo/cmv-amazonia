@@ -1488,31 +1488,33 @@ function rMes(){
   if(fat>0){
     html+='<div class="metric"><div class="metric-l">Faturamento</div><div class="metric-v ac">'+fR(fat)+'</div>'+
       '<div class="metric-sub" style="color:var(--fg3)">Vendas do mês</div></div>';
-    html+='<div class="metric"><div class="metric-l">CMC sobre Faturamento</div><div class="metric-v '+(pctFat>42?'rd':'ac')+'">'+fP(pctFat)+'</div>'+
+    html+='<div class="metric w2"><div class="metric-l">CMC sobre Faturamento</div><div class="metric-v '+(pctFat>42?'rd':'ac')+'">'+fP(pctFat)+'</div>'+
       '<div class="metric-sub" style="color:var(--fg3)">'+(pctFat>42?'Acima de 42%':'Dentro do esperado')+'</div></div>';
   }else{
     html+='<div class="metric"><div class="metric-l">Grupos Comprados</div><div class="metric-v az">'+grupos.length+'</div>'+
       '<div class="metric-sub" style="color:var(--fg3)">Categorias ativas</div></div>';
-    html+='<div class="metric"><div class="metric-l">Maior Grupo</div><div class="metric-v" style="font-size:16px">'+(grupos[0]?grupos[0].nome:'-')+'</div>'+
+    html+='<div class="metric w2"><div class="metric-l">Maior Grupo</div><div class="metric-v" style="font-size:16px">'+(grupos[0]?grupos[0].nome:'-')+'</div>'+
       '<div class="metric-sub" style="color:var(--fg3)">'+(grupos[0]?fP(grupos[0].pct)+' do CMC':'')+'</div></div>';
   }
-  html+='<div class="metric"><div class="metric-l">Produtos</div><div class="metric-v am">'+nProd+'</div>'+
-    '<div class="metric-sub" style="color:var(--fg3)">'+grupos.length+' grupos</div></div>';
-
   // ===== TRANSFERÊNCIA ENTRE UNIDADES =====
-  // DOIS cards, não cinco. Recebido, enviado, saldo, CMC com transferência e
-  // o percentual dele em cards separados davam nove métricas na tela, uma
-  // sozinha na última linha e um subtítulo de fórmula que estourava em duas
-  // linhas. Aqui o saldo carrega a composição no subtítulo e o CMC líquido
-  // carrega os dois percentuais -- mesma informação, metade do espaço.
+  // Recebido e enviado com o VALOR em destaque, cada um no seu card: foi o
+  // que o usuário pediu pra ver, e colapsar os dois num saldo escondia
+  // justamente isso num subtítulo cinza.
+  // A largura se ajusta pra linha nunca fechar pela metade: com os dois,
+  // 1+1+2 colunas; com só um deles, 2+2.
   if(uniAtual!=='TODAS' && (d.transfEntrada>0||d.transfSaida>0)){
-    var saldoTr=d.transfEntrada-d.transfSaida;
-    var partes=[];
-    if(d.transfEntrada>0)partes.push('recebeu '+fR(d.transfEntrada)+' ('+fQ(d.transfEntradaQtd)+' un)');
-    if(d.transfSaida>0)partes.push('enviou '+fR(d.transfSaida)+' ('+fQ(d.transfSaidaQtd)+' un)');
-    html+='<div class="metric w2"><div class="metric-l">Transferência entre Unidades</div>'+
-      '<div class="metric-v '+(saldoTr>=0?'az':'am')+'">'+fR2(saldoTr)+'</div>'+
-      '<div class="metric-sub" style="color:var(--fg3)">'+partes.join(' · ')+'</div></div>';
+    var umSo=(d.transfEntrada>0?1:0)+(d.transfSaida>0?1:0)===1;
+    var clsTr='metric'+(umSo?' w2':'');
+    if(d.transfEntrada>0){
+      html+='<div class="'+clsTr+'"><div class="metric-l">Recebido de Outra Unidade</div>'+
+        '<div class="metric-v az">'+fR2(d.transfEntrada)+'</div>'+
+        '<div class="metric-sub" style="color:var(--fg3)">'+fQ(d.transfEntradaQtd)+' unidades</div></div>';
+    }
+    if(d.transfSaida>0){
+      html+='<div class="'+clsTr+'"><div class="metric-l">Enviado para Outra Unidade</div>'+
+        '<div class="metric-v am">'+fR2(d.transfSaida)+'</div>'+
+        '<div class="metric-sub" style="color:var(--fg3)">'+fQ(d.transfSaidaQtd)+' unidades</div></div>';
+    }
     var pctComTransf=d.cmcPctFatComTransf;
     var subCmc=[];
     if(pctComTransf!==null&&pctComTransf!==undefined)subCmc.push(fP(pctComTransf)+' do faturamento');
