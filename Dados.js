@@ -565,7 +565,15 @@ var C_ESTOQUE = {
   tp_movto:   8,   // Tipo de movimento (Inventário, Saldo anterior...)
   saldo:      12,  // Saldo (quantidade contada)
   custo_unit: 14,  // Custo unitário
-  custo_total:15   // Custo total (saldo * custo_unit)
+  custo_total:15,  // Custo total (saldo * custo_unit)
+  // SINTETICA -- nao existe no CSV do Cloudfy (que tem 16 colunas). So e
+  // preenchida pelas linhas geradas a partir de um inventario salvo no
+  // sistema de contagem (gerarLinhasEstoqueDeInventariosSalvos_), e carrega
+  // [{contagemId, linha}]: a origem daquele numero. E o que permite o lapis
+  // de correcao aparecer na tabela "Produtos do Grupo" tambem no "Mes Todo",
+  // e nao so na visao por Semana/Quinzena. Indice bem depois do fim do CSV
+  // pra nunca colidir com uma coluna real.
+  fontes:     30
 };
 
 // Apenas linhas com este tipo de movimento são contagem física real
@@ -755,9 +763,11 @@ function montarGruposCMV_(eiPorGrupoF, eiProdGrupoF, efPorGrupoF, efProdGrupoF,
   saidaProdGrupoF = saidaProdGrupoF || {};
   eiProdQtdGrupoF = eiProdQtdGrupoF || {};
   efProdQtdGrupoF = efProdQtdGrupoF || {};
-  // fontes: só vem preenchido no caminho de semana/quinzena (contagens do
-  // sistema próprio) — no CSV mensal do Cloudfy não existe "contagemId" pra
-  // apontar, então fica vazio e nenhum botão de correção aparece.
+  // fontes: preenchido sempre que o EI/EF veio de uma contagem do nosso
+  // sistema — tanto no caminho de semana/quinzena quanto no mensal, onde o
+  // inventário salvo entra como linha sintética de estoque carregando
+  // C_ESTOQUE.fontes. Linha vinda do CSV do Cloudfy não tem "contagemId" pra
+  // apontar: fica vazio e nenhum botão de correção aparece, que é o certo.
   eiProdFontesGrupoF = eiProdFontesGrupoF || {};
   efProdFontesGrupoF = efProdFontesGrupoF || {};
 
@@ -902,12 +912,19 @@ function processarCMV(rowsEstoque, rowsCompras, historicoPorInsumo, fichasMap) {
     var grupo   = limpaCelula(r[C_ESTOQUE.grupo]);
     var filial  = limpaCelula(r[C_ESTOQUE.filial]) || 'OUTRA';
     var ts = dataInfo.ts;
+    // Origem da linha, quando ela veio de uma contagem do nosso sistema
+    // (inventario salvo). Linha de CSV do Cloudfy nao tem esse campo e fica
+    // com lista vazia -- nenhum lapis de correcao aparece, que e o correto:
+    // nao existe contagem nossa pra abrir.
+    var fontesLinha = r[C_ESTOQUE.fontes];
+    if (!fontesLinha || !fontesLinha.length) fontesLinha = null;
 
     if (!contagensPorData[ts]) {
       contagensPorData[ts] = {
         ts: ts, mes: dataInfo.mes, ano: dataInfo.ano, dia: dataInfo.dia,
         total: 0, porGrupo: {}, porFilial: {}, porFilialGrupo: {}, porProdGrupo: {}, porProdGrupoFilial: {},
-        porProdGrupoQtd: {}, porProdGrupoFilialQtd: {}
+        porProdGrupoQtd: {}, porProdGrupoFilialQtd: {},
+        porProdGrupoFontes: {}, porProdGrupoFilialFontes: {}
       };
     }
     var c = contagensPorData[ts];
@@ -924,6 +941,10 @@ function processarCMV(rowsEstoque, rowsCompras, historicoPorInsumo, fichasMap) {
       c.porProdGrupo[grupo][produto] = (c.porProdGrupo[grupo][produto] || 0) + valor;
       if (!c.porProdGrupoQtd[grupo]) c.porProdGrupoQtd[grupo] = {};
       c.porProdGrupoQtd[grupo][produto] = (c.porProdGrupoQtd[grupo][produto] || 0) + qtd;
+      if (fontesLinha) {
+        if (!c.porProdGrupoFontes[grupo]) c.porProdGrupoFontes[grupo] = {};
+        c.porProdGrupoFontes[grupo][produto] = (c.porProdGrupoFontes[grupo][produto] || []).concat(fontesLinha);
+      }
     }
     // Produto dentro do grupo, por filial (para detalhe do CMV por produto de uma unidade)
     if (filial && grupo && produto) {
@@ -935,6 +956,12 @@ function processarCMV(rowsEstoque, rowsCompras, historicoPorInsumo, fichasMap) {
       if (!c.porProdGrupoFilialQtd[filial]) c.porProdGrupoFilialQtd[filial] = {};
       if (!c.porProdGrupoFilialQtd[filial][grupo]) c.porProdGrupoFilialQtd[filial][grupo] = {};
       c.porProdGrupoFilialQtd[filial][grupo][produto] = (c.porProdGrupoFilialQtd[filial][grupo][produto] || 0) + qtd;
+      if (fontesLinha) {
+        if (!c.porProdGrupoFilialFontes[filial]) c.porProdGrupoFilialFontes[filial] = {};
+        if (!c.porProdGrupoFilialFontes[filial][grupo]) c.porProdGrupoFilialFontes[filial][grupo] = {};
+        c.porProdGrupoFilialFontes[filial][grupo][produto] =
+          (c.porProdGrupoFilialFontes[filial][grupo][produto] || []).concat(fontesLinha);
+      }
     }
   }
 
@@ -990,6 +1017,8 @@ function processarCMV(rowsEstoque, rowsCompras, historicoPorInsumo, fichasMap) {
       var coProds = (cMes && cMes.prodGrupo[g]) ? cMes.prodGrupo[g] : {};
       var eiProdsQtd = ei.porProdGrupoQtd[g] || {};
       var efProdsQtd = ef.porProdGrupoQtd[g] || {};
+      var eiProdsFontes = ei.porProdGrupoFontes[g] || {};
+      var efProdsFontes = ef.porProdGrupoFontes[g] || {};
       Object.keys(eiProds).forEach(function(p){ prodSet[p]=1; });
       Object.keys(efProds).forEach(function(p){ prodSet[p]=1; });
       Object.keys(coProds).forEach(function(p){ prodSet[p]=1; });
@@ -1005,7 +1034,8 @@ function processarCMV(rowsEstoque, rowsCompras, historicoPorInsumo, fichasMap) {
           ei: r2(eiP), compras: r2(coP), ef: r2(efP),
           cmv: r2(eiP + coP - efP),
           qtd: r2(qtdP),
-          ei_qtd: r2(eiProdsQtd[p] || 0), ef_qtd: r2(efProdsQtd[p] || 0)
+          ei_qtd: r2(eiProdsQtd[p] || 0), ef_qtd: r2(efProdsQtd[p] || 0),
+          ei_fontes: eiProdsFontes[p] || [], ef_fontes: efProdsFontes[p] || []
         };
       }).sort(function(a,b){ return b.cmv - a.cmv; });
 
@@ -1065,9 +1095,11 @@ function processarCMV(rowsEstoque, rowsCompras, historicoPorInsumo, fichasMap) {
       var saidaProdGrupoF   = (cMes && cMes.saidaProdGrupoFilial   && cMes.saidaProdGrupoFilial[f])   ? cMes.saidaProdGrupoFilial[f]   : {};
       var eiProdQtdGrupoF = (ei.porProdGrupoFilialQtd && ei.porProdGrupoFilialQtd[f]) ? ei.porProdGrupoFilialQtd[f] : {};
       var efProdQtdGrupoF = (ef.porProdGrupoFilialQtd && ef.porProdGrupoFilialQtd[f]) ? ef.porProdGrupoFilialQtd[f] : {};
+      var eiProdFontesGrupoF = (ei.porProdGrupoFilialFontes && ei.porProdGrupoFilialFontes[f]) ? ei.porProdGrupoFilialFontes[f] : {};
+      var efProdFontesGrupoF = (ef.porProdGrupoFilialFontes && ef.porProdGrupoFilialFontes[f]) ? ef.porProdGrupoFilialFontes[f] : {};
       var gruposF = montarGruposCMV_(eiPorGrupoF, eiProdGrupoF, efPorGrupoF, efProdGrupoF,
         coPorGrupoF, prodGrupoFilialF, entradaGrupoF, saidaGrupoF, entradaProdGrupoF, saidaProdGrupoF,
-        eiProdQtdGrupoF, efProdQtdGrupoF);
+        eiProdQtdGrupoF, efProdQtdGrupoF, eiProdFontesGrupoF, efProdFontesGrupoF);
 
       filiais[f] = {
         ei: r2(eiF), compras: r2(comprasAjust), ef: r2(efF),

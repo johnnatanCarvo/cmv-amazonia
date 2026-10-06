@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-10-05.1';
+var VERSAO_APP = '2026-10-06.1';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -2749,6 +2749,12 @@ function gerarLinhasEstoqueDeInventariosSalvos_(rowsEstoque, rowsCompras, rowsVe
         linha[C_ESTOQUE.saldo]       = p.qtd;
         linha[C_ESTOQUE.custo_unit]  = p.custoUnit;
         linha[C_ESTOQUE.custo_total] = p.custoTotal;
+        // Coluna sintética: de qual(is) contagem(ns) saiu esse número. É o
+        // que faz o lápis de correção aparecer na tabela "Produtos do Grupo"
+        // do CMV "Mês Todo" — sem isso só dava pra corrigir pela visão de
+        // Semana/Quinzena, e um erro de digitação como 500 no lugar de 5
+        // ficava visível no mês sem nenhum caminho pra arrumar.
+        linha[C_ESTOQUE.fontes]      = p.fontes || [];
         linhas.push(linha);
       });
     });
