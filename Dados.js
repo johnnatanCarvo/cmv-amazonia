@@ -618,6 +618,7 @@ var C_ESTOQUE = {
   filial:     0,   // Filial (ex: MARCO)
   grupo:      1,   // Grupo (ex: AGUAS E CIA)
   produto:    2,   // Nome do produto
+  cod:        3,   // Cód. ref. -- usado quando o nome vem vazio no relatório
   unid:       4,   // Unidade
   data:       5,   // Data da contagem (DD/MM/YYYY)
   centro:     6,   // Centro de estoque (CENTRAL, BAR, COZINHA...)
@@ -921,6 +922,19 @@ function processarCMV(rowsEstoque, rowsCompras, historicoPorInsumo, fichasMap) {
   }
   historicoPorInsumo = historicoPorInsumo || {};
 
+  // Cód. ref. -> nome, tirado das compras. Serve só pra linha de estoque que
+  // veio sem nome no relatório; o nome do cadastro é o mesmo nos dois lugares.
+  var nomePorCodigo = {};
+  if (rowsCompras && rowsCompras.length > 1) {
+    for (var ci = 1; ci < rowsCompras.length; ci++) {
+      var rc = rowsCompras[ci];
+      if (!rc) continue;
+      var codC = limpaCelula(rc[C_COMPRAS.cod]), nomeC = limpaCelula(rc[C_COMPRAS.produto]);
+      if (codC && nomeC && !nomePorCodigo[codC]) nomePorCodigo[codC] = nomeC;
+    }
+  }
+  var recuperadosPorCodigo = 0;
+
   // ── 1. Ler contagens (apenas linhas de Inventario) ──
   // Para cada data de contagem, somar o valor do estoque por grupo e total.
   // Um produto pode ter varias linhas (centros de estoque diferentes): todas somam.
@@ -953,7 +967,14 @@ function processarCMV(rowsEstoque, rowsCompras, historicoPorInsumo, fichasMap) {
     if (qtd <= 0) continue;
 
     var produto = limpaCelula(r[C_ESTOQUE.produto]);
-    if (!produto) continue;
+    if (!produto) {
+      // Sem nome a linha era descartada e o item sumia do estoque. O código
+      // está lá e o cadastro tem o nome -- dá pra recuperar.
+      var codLinha = limpaCelula(r[C_ESTOQUE.cod]);
+      produto = codLinha ? (nomePorCodigo[codLinha] || '') : '';
+      if (!produto) continue;
+      recuperadosPorCodigo++;
+    }
 
     var mesNomeLinha = NOMES_MESES[dataInfo.mes];
     var custoUnit = buscarCustoInsumoComFallback(historicoPorInsumo, produto, mesNomeLinha, dataInfo.ano);
@@ -1026,6 +1047,10 @@ function processarCMV(rowsEstoque, rowsCompras, historicoPorInsumo, fichasMap) {
 
   var datasOrdenadas = Object.keys(contagensPorData).sort();
   Logger.log('Contagens de estoque: ' + datasOrdenadas.join(', '));
+  if (recuperadosPorCodigo > 0) {
+    Logger.log(recuperadosPorCodigo + ' linha(s) de estoque vieram sem nome no relatório e ' +
+               'foram recuperadas pelo Cód. ref. — antes eram descartadas.');
+  }
   if (itensSemPreco > 0) {
     Logger.log(itensSemPreco + ' linha(s) de contagem sem histórico de compra nem ficha técnica — ficaram de fora do CMV.');
   }
