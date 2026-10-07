@@ -230,6 +230,17 @@ var CFY_FILIAIS_COMPRA = [
   // filial 4 (ACAI NA CUIA) não registra compras -- conferido na API
 ];
 
+// VENDAS tem lista PRÓPRIA. A de compras exclui a filial 4 de propósito,
+// porque o Açaí na Cuia não compra -- mas ele VENDE, e reaproveitar a lista de
+// compras aqui fazia o faturamento dele sumir do painel inteiro. Em 03-05/10/2026
+// eram 53 cupons e R$ 2.546,50 que não chegavam em lugar nenhum.
+var CFY_FILIAIS_VENDA = [
+  { nr: 1, nome: 'UMARIZAL' },
+  { nr: 2, nome: 'MARCO' },
+  { nr: 3, nome: 'PORTO FUTURO' },
+  { nr: 4, nome: 'ACAI NA CUIA' }
+];
+
 // Mapa código -> grupo do produto. A consulta de compras NÃO devolve o grupo,
 // e ele alimenta CMC por grupo e Curva ABC. Montado a partir do cache de
 // fichas (produtos e insumos) e completado pelo histórico de compras dos CSVs.
@@ -285,7 +296,9 @@ function cfyComprasLinhas_(codFilial, nomeFilial, dataIni, dataFim, mapaGrupos, 
 
   var linhas = [];
   var naoIntegrados = 0, valorInsumo = 0, valorOutros = 0;
-  (rs.Compras || []).forEach(function(c) {
+  // Mesmo cuidado das vendas: sem compra no período vem {} em vez de [].
+  var compras = Array.isArray(rs.Compras) ? rs.Compras : [];
+  compras.forEach(function(c) {
     var s = String(c.DataCompra);
     var dataBR = s.slice(6, 8) + '/' + s.slice(4, 6) + '/' + s.slice(0, 4);
     var fornecedor = String(c.Fornecedor || '').trim().toUpperCase().replace(/\s+/g, ' ');
@@ -601,7 +614,11 @@ function cfyVendasLinhas_(codFilial, nomeFilial, dataIni, dataFim) {
 
   // agrega cupom -> dia + CÓDIGO
   var mapa = {};
-  (rs.CuponsVenda || []).forEach(function(c) {
+  // Filial sem venda no período devolve CuponsVenda como OBJETO VAZIO, não
+  // como array -- e {} é truthy, então o "|| []" não salvava e o forEach
+  // estourava. Visto na filial 4 consultando setembro, antes dela abrir.
+  var cupons = Array.isArray(rs.CuponsVenda) ? rs.CuponsVenda : [];
+  cupons.forEach(function(c) {
     if (String(c.DescSituacao || '') !== 'Finalizado') return;
     var s = String(c.DataMovimento);
     var dataBR = s.slice(6, 8) + '/' + s.slice(4, 6) + '/' + s.slice(0, 4);
@@ -669,7 +686,7 @@ function atualizarCacheVendas() {
 
     // Uma filial que falhar não derruba as outras nem apaga o que já existe.
     var todas = [], okFilial = {}, falhas = [];
-    CFY_FILIAIS_COMPRA.forEach(function(f) {
+    CFY_FILIAIS_VENDA.forEach(function(f) {
       try {
         todas = todas.concat(cfyVendasLinhas_(f.nr, f.nome, fmt(ini), fmt(hoje)));
         okFilial[f.nome] = true;
@@ -743,10 +760,22 @@ function cfyVendasPeriodo_(ini, fim) {
   var dias = {};
   for (var d = new Date(ini); d <= fim; d = new Date(d.getTime() + 86400000)) dias[fmtBR(d)] = true;
 
-  var todas = [];
-  CFY_FILIAIS_COMPRA.forEach(function(f) {
-    todas = todas.concat(cfyVendasLinhas_(f.nr, f.nome, fmt(ini), fmt(fim)));
+  // try/catch por filial: sem ele, uma filial que estoura (cota, rede, ou a
+  // filial 4 num período em que ainda não existia) abortava a janela inteira
+  // e o backfill parava de avançar.
+  var todas = [], falhasP = [];
+  CFY_FILIAIS_VENDA.forEach(function(f) {
+    try {
+      todas = todas.concat(cfyVendasLinhas_(f.nr, f.nome, fmt(ini), fmt(fim)));
+    } catch (e) {
+      falhasP.push(f.nome + ': ' + e.message);
+      Logger.log('Vendas / ' + f.nome + ' falhou nesta janela: ' + e.message);
+    }
   });
+  if (falhasP.length === CFY_FILIAIS_VENDA.length) {
+    // Todas falharam: não regrava nada, senão apagaria o dia que já existia.
+    throw new Error('Nenhuma filial respondeu: ' + falhasP.join(' | '));
+  }
 
   var ss  = obterFichasManuaisSheet_();
   var aba = ss.getSheetByName(CFY_ABA_VENDAS);
