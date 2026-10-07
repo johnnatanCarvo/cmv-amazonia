@@ -226,8 +226,12 @@ var CFY_ABA_COMPRAS = 'COMPRAS_CLOUDFY';
 var CFY_FILIAIS_COMPRA = [
   { nr: 1, nome: 'UMARIZAL' },
   { nr: 2, nome: 'MARCO' },
-  { nr: 3, nome: 'PORTO FUTURO' }
-  // filial 4 (ACAI NA CUIA) não registra compras -- conferido na API
+  { nr: 3, nome: 'PORTO FUTURO' },
+  // A filial 4 ESTÁ comprando: consulta de 10/09 a 07/10/2026 em 07/10 trouxe
+  // 7 notas, R$ 11.504,18 (açaí em lata dos fornecedores da feira, mais uma
+  // transferência do Umarizal). Ficar de fora da lista deixava o CMC do
+  // quiosque permanentemente zerado.
+  { nr: 4, nome: 'ACAI NA CUIA' }
 ];
 
 // VENDAS tem lista PRÓPRIA. A de compras exclui a filial 4 de propósito,
