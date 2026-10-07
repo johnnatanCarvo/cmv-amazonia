@@ -546,6 +546,48 @@ function cfyComprasAtualizadoEm() {
 var CFY_ABA_VENDAS = 'VENDAS_CLOUDFY';
 var CFY_DIAS_VENDAS = 3;   // limite da própria consulta
 
+// Nome de catálogo de cada código, lido do cache de fichas (COD -> PRODUTO).
+// É o desempate pra escolher COMO chamar um código que chega com vários nomes.
+function cfyNomeCatalogoPorCodigo_() {
+  var mapa = {};
+  try {
+    var fichas = cfyLerCacheFichas_();
+    if (fichas) {
+      for (var i = 1; i < fichas.length; i++) {
+        var cod  = String(fichas[i][0] || '').trim();
+        var nome = String(fichas[i][1] || '').trim();
+        if (cod && nome && !mapa[cod]) mapa[cod] = nome;
+      }
+    }
+  } catch (e) {
+    Logger.log('Sem cache de fichas pra nomear produto por código: ' + e.message);
+  }
+  return mapa;
+}
+
+// Escolhe a chave de maior valor acumulado. Usado pra decidir o nome e o grupo
+// de um código quando a ficha não resolve.
+function cfyMaiorPorValor_(obj) {
+  var melhor = null, maior = -1;
+  Object.keys(obj || {}).forEach(function(k) {
+    if (obj[k] > maior) { maior = obj[k]; melhor = k; }
+  });
+  return melhor;
+}
+
+// CFYCC870 -> linhas no layout C_VENDAS.
+//
+// Agrega por CodRefProduto, NÃO pelo nome. A API devolve o MESMO código com
+// nomes diferentes -- o do catálogo no salão e o do iFood no delivery -- e
+// agregar por nome quebrava um produto em vários. Em setembro/2026 eram 68
+// códigos nessa situação: 10.474 unidades e R$ 301.686,92 que não chegavam no
+// produto da ficha, tirando R$ 75.225,32 do CMV Teórico. O caso extremo era o
+// código 405, com 43 unidades em "MINI FILE BACURI" e 1.246 em
+// "Mini File Bacurizinho".
+//
+// O nome vira só rótulo: vale o do catálogo (ficha) e, sem ela, o nome que
+// mais faturou. O grupo segue a mesma regra, mas descarta grupo só numérico
+// ("1", "23"), que é como o cadastro do iFood chega.
 function cfyVendasLinhas_(codFilial, nomeFilial, dataIni, dataFim) {
   var rs = cfyChamar_('CFYCC870', {
     DataInicio: dataIni, DataFim: dataFim,
@@ -554,7 +596,10 @@ function cfyVendasLinhas_(codFilial, nomeFilial, dataIni, dataFim) {
     IdentifConsultaProdCancelados: 2
   }, codFilial);
 
-  // agrega cupom -> dia + produto
+  var nomeCatalogo = cfyNomeCatalogoPorCodigo_();
+  var soNumero = /^\d+$/;
+
+  // agrega cupom -> dia + CÓDIGO
   var mapa = {};
   (rs.CuponsVenda || []).forEach(function(c) {
     if (String(c.DescSituacao || '') !== 'Finalizado') return;
@@ -563,31 +608,45 @@ function cfyVendasLinhas_(codFilial, nomeFilial, dataIni, dataFim) {
     (c.Produtos || []).forEach(function(p) {
       if (String(p.DescSituacaoItem || '') !== 'Finalizado') return;
       var nome = cfyTexto_(p.DescProduto);
-      if (!nome) return;
-      var chave = dataBR + '|' + nome;
+      var cod  = cfyTexto_(p.CodRefProduto);
+      if (!nome && !cod) return;
+      // Item sem código no cupom (modificador, lançamento avulso) continua
+      // agregado pelo nome: não há o que unificar.
+      var chave = dataBR + '|' + (cod ? 'C' + cod : 'N' + nome);
       if (!mapa[chave]) {
-        mapa[chave] = { data: dataBR, produto: nome, grupo: cfyTexto_(p.DescGrupo), qtd: 0, valor: 0 };
+        mapa[chave] = { data: dataBR, cod: cod, qtd: 0, valor: 0, nomes: {}, grupos: {} };
       }
-      mapa[chave].qtd   += Number(p.Qtde) || 0;
-      // VlrTotalLiq já é líquido de desconto; é o que o CSV traz na coluna Total.
-      mapa[chave].valor += Number(p.VlrTotalLiq || p.VlrTotal) || 0;
+      var m = mapa[chave];
+      var val = Number(p.VlrTotalLiq || p.VlrTotal) || 0;
+      m.qtd   += Number(p.Qtde) || 0;
+      m.valor += val;
+      // Peso mínimo pra que item que só sai a R$ 0 (componente de menu) ainda
+      // consiga nomear o código quando for a única ocorrência.
+      var peso = val > 0 ? val : 0.0001;
+      if (nome) m.nomes[nome] = (m.nomes[nome] || 0) + peso;
+      var g = cfyTexto_(cfyCampo_(p, 'DescGrupo'));
+      if (g) m.grupos[g] = (m.grupos[g] || 0) + peso;
     });
   });
 
   return Object.keys(mapa).map(function(k) {
     var v = mapa[k];
+    var nome = (v.cod && nomeCatalogo[v.cod]) ? nomeCatalogo[v.cod] : cfyMaiorPorValor_(v.nomes);
+    var grupos = Object.keys(v.grupos);
+    var comNome = {};
+    grupos.forEach(function(g) { if (!soNumero.test(g)) comNome[g] = v.grupos[g]; });
+    var grupo = cfyMaiorPorValor_(Object.keys(comNome).length ? comNome : v.grupos) || '';
     var linha = new Array(15);
     for (var i = 0; i < 15; i++) linha[i] = '';
     linha[C_VENDAS.filial]  = nomeFilial;
     linha[C_VENDAS.data]    = v.data;
-    linha[C_VENDAS.produto] = v.produto;
-    linha[C_VENDAS.grupo]   = v.grupo;
+    linha[C_VENDAS.produto] = nome || '';
+    linha[C_VENDAS.grupo]   = grupo;
     linha[C_VENDAS.qtd]     = v.qtd;
     linha[C_VENDAS.valor]   = v.valor;
     return linha;
-  });
+  }).filter(function(l) { return l[C_VENDAS.produto]; });
 }
-
 // Gatilho diário: busca os últimos dias e acumula no cache.
 // A janela recua CFY_DIAS_VENDAS dias para pegar cupom reaberto ou ajustado
 // depois do fechamento do caixa.
@@ -882,6 +941,80 @@ function instalarBackfillVendas() {
   ScriptApp.newTrigger('backfillVendasAuto').timeBased().everyHours(1).create();
   var r = backfillVendasAuto();   // já adianta a primeira rodada
   return 'Backfill ligado (de hora em hora). Primeira rodada: ' + JSON.stringify(r);
+}
+
+// ── REFAZER O HISTÓRICO DE VENDAS ─────────────────────────────
+// O cache gravado antes de 07/10/2026 foi agregado por NOME do produto. Com a
+// agregação por CÓDIGO (ver cfyVendasLinhas_), os dias antigos continuariam com
+// o produto quebrado em vários nomes. Estas duas funções reconsultam a API e
+// regravam cada dia já existente no cache, respeitando o limite de 7 consultas
+// por hora e por filial.
+//
+// Diferente do backfillVendasAuto, que só busca dia AUSENTE, aqui o alvo é
+// justamente o dia que já está lá.
+var CFY_PROP_REFAZER = 'CFY_VENDAS_REFAZER_PENDENTE';
+
+function iniciarRefazerVendas() {
+  var cache = cfyLerCacheVendas_();
+  if (!cache || !cache.linhas.length) return 'Cache de vendas vazio: nada a refazer.';
+  var dias = Object.keys(cache.dias).sort(function(a, b) {
+    return (a.slice(6) + a.slice(3, 5) + a.slice(0, 2)) < (b.slice(6) + b.slice(3, 5) + b.slice(0, 2)) ? -1 : 1;
+  });
+  PropertiesService.getScriptProperties().setProperty(CFY_PROP_REFAZER, JSON.stringify(dias));
+  ScriptApp.getProjectTriggers().forEach(function(t) {
+    if (t.getHandlerFunction() === 'refazerVendasAuto') ScriptApp.deleteTrigger(t);
+  });
+  ScriptApp.newTrigger('refazerVendasAuto').timeBased().everyHours(1).create();
+  var r = refazerVendasAuto();   // adianta a primeira rodada
+  return 'Refazer ligado: ' + dias.length + ' dia(s) na fila (' + dias[0] + ' a ' +
+         dias[dias.length - 1] + '). Primeira rodada: ' + JSON.stringify(r);
+}
+
+function refazerVendasAuto() {
+  var props = PropertiesService.getScriptProperties();
+  var bruto = props.getProperty(CFY_PROP_REFAZER);
+  var pendentes = bruto ? JSON.parse(bruto) : [];
+  if (!pendentes.length) {
+    ScriptApp.getProjectTriggers().forEach(function(t) {
+      if (t.getHandlerFunction() === 'refazerVendasAuto') ScriptApp.deleteTrigger(t);
+    });
+    props.deleteProperty(CFY_PROP_REFAZER);
+    Logger.log('Refazer vendas concluído: fila vazia. Gatilho removido.');
+    return { ok: true, concluido: true };
+  }
+  var hora = Number(Utilities.formatDate(new Date(), 'America/Belem', 'H'));
+  if (CFY_HORAS_PERMITIDAS.indexOf(hora) === -1) {
+    Logger.log('Refazer vendas: fora da janela da API (hora ' + hora + '). ' +
+               pendentes.length + ' dia(s) na fila. Tenta na próxima.');
+    return { ok: false, erro: 'fora da janela', faltando: pendentes.length };
+  }
+  var emData = function(s) {
+    var p = s.split('/');
+    return new Date(Number(p[2]), Number(p[1]) - 1, Number(p[0]));
+  };
+  var fmtBR = function(d) { return Utilities.formatDate(d, 'America/Belem', 'dd/MM/yyyy'); };
+  var feitos = 0;
+  try {
+    for (var b = 0; b < CFY_BLOCOS_POR_RODADA && pendentes.length; b++) {
+      var dIni = emData(pendentes[0]);
+      var dFim = new Date(dIni.getTime() + (CFY_DIAS_VENDAS - 1) * 86400000);
+      cfyVendasPeriodo_(dIni, dFim);
+      // tira da fila os dias que a janela acabou de regravar
+      var cobertos = {};
+      for (var d = new Date(dIni); d <= dFim; d = new Date(d.getTime() + 86400000)) cobertos[fmtBR(d)] = true;
+      pendentes = pendentes.filter(function(x) { return !cobertos[x]; });
+      feitos++;
+      props.setProperty(CFY_PROP_REFAZER, JSON.stringify(pendentes));
+    }
+  } catch (err) {
+    // Guarda o que sobrou: a próxima rodada continua de onde parou em vez de
+    // perder a fila inteira por causa de uma falha de rede ou de cota.
+    props.setProperty(CFY_PROP_REFAZER, JSON.stringify(pendentes));
+    Logger.log('Refazer vendas interrompido: ' + err.message + '. ' + pendentes.length + ' dia(s) na fila.');
+    return { ok: false, erro: err.message, blocos: feitos, faltando: pendentes.length };
+  }
+  Logger.log('Refazer vendas: ' + feitos + ' bloco(s) nesta rodada, ' + pendentes.length + ' dia(s) na fila.');
+  return { ok: true, blocos: feitos, faltando: pendentes.length };
 }
 
 function instalarGatilhoVendas() {
