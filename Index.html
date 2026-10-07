@@ -1606,11 +1606,25 @@ function rMes(){
   var html='';
   html+='<div class="metric lead"><div class="metric-l">CMC Total · '+labelAtual+((periodoAtualCMC.tipo==='mes'||periodoAtualCMC.tipo==='custom')?' 2026':' · '+(ML_MAP[mesAtual]||mesAtual))+sufUni+'</div>'+
     '<div class="metric-v">'+fR2(d.cmc_total)+'</div><div class="metric-sub">'+trendHtml+'</div></div>';
+  // Em "Todas" não existe versão com transferência: entre as unidades o que
+  // sai de uma entra na outra e o líquido é zero -- somar contaria a mesma
+  // mercadoria duas vezes.
+  var temTransf=(uniAtual!=='TODAS' && (d.transfEntrada>0||d.transfSaida>0));
+  var pctComTransf=d.cmcPctFatComTransf;
+  var temPctComTransf=(pctComTransf!==null&&pctComTransf!==undefined);
   if(fat>0){
     html+='<div class="metric"><div class="metric-l">Faturamento</div><div class="metric-v ac">'+fR(fat)+'</div>'+
       '<div class="metric-sub" style="color:var(--fg3)">Vendas do mês</div></div>';
-    html+='<div class="metric w2"><div class="metric-l">CMC sobre Faturamento</div><div class="metric-v '+(pctFat>42?'rd':'ac')+'">'+fP(pctFat)+'</div>'+
-      '<div class="metric-sub" style="color:var(--fg3)">'+(pctFat>42?'Acima de 42%':'Dentro do esperado')+'</div></div>';
+    html+='<div class="metric'+(temTransf?'':' w2')+'"><div class="metric-l">CMC sobre Faturamento</div>'+
+      '<div class="metric-v '+(pctFat>42?'rd':'ac')+'">'+fP(pctFat)+'</div>'+
+      '<div class="metric-sub" style="color:var(--fg3)">'+
+        (temTransf?'só compra externa':(pctFat>42?'Acima de 42%':'Dentro do esperado'))+'</div></div>';
+    if(temTransf){
+      html+='<div class="metric"><div class="metric-l">CMC c/ Transf. sobre Fat.</div>'+
+        '<div class="metric-v '+(temPctComTransf&&pctComTransf>42?'rd':'ac')+'">'+
+        (temPctComTransf?fP(pctComTransf):'--')+'</div>'+
+        '<div class="metric-sub" style="color:var(--fg3)">com o recebido de outra unidade</div></div>';
+    }
   }else{
     html+='<div class="metric"><div class="metric-l">Grupos Comprados</div><div class="metric-v az">'+grupos.length+'</div>'+
       '<div class="metric-sub" style="color:var(--fg3)">Categorias ativas</div></div>';
@@ -1623,7 +1637,7 @@ function rMes(){
   // justamente isso num subtítulo cinza.
   // A largura se ajusta pra linha nunca fechar pela metade: com os dois,
   // 1+1+2 colunas; com só um deles, 2+2.
-  if(uniAtual!=='TODAS' && (d.transfEntrada>0||d.transfSaida>0)){
+  if(temTransf){
     var umSo=(d.transfEntrada>0?1:0)+(d.transfSaida>0?1:0)===1;
     var clsTr='metric'+(umSo?' w2':'');
     if(d.transfEntrada>0){
@@ -1636,13 +1650,11 @@ function rMes(){
         '<div class="metric-v am">'+fR2(d.transfSaida)+'</div>'+
         '<div class="metric-sub" style="color:var(--fg3)">'+fQ(d.transfSaidaQtd)+' unidades</div></div>';
     }
-    var pctComTransf=d.cmcPctFatComTransf;
-    var subCmc=[];
-    if(pctComTransf!==null&&pctComTransf!==undefined)subCmc.push(fP(pctComTransf)+' do faturamento');
-    if(pctFat!==null)subCmc.push('só compra externa '+fP(pctFat));
+    // A porcentagem agora tem card próprio na faixa de cima; aqui fica só a
+    // conta, que e o que explica o número.
     html+='<div class="metric w2"><div class="metric-l">CMC com Transferência</div>'+
-      '<div class="metric-v '+(pctComTransf>42?'rd':'')+'">'+fR2(d.cmcComTransf)+'</div>'+
-      '<div class="metric-sub" style="color:var(--fg3)">'+subCmc.join(' · ')+'</div></div>';
+      '<div class="metric-v '+(temPctComTransf&&pctComTransf>42?'rd':'')+'">'+fR2(d.cmcComTransf)+'</div>'+
+      '<div class="metric-sub" style="color:var(--fg3)">compra externa + recebido &minus; enviado</div></div>';
   }
 
   document.getElementById('mes-metrics').innerHTML=html;
