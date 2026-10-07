@@ -1715,9 +1715,32 @@ function calcularCustoExplodido(receitas, produtoNome, qtdeNecessaria, mesNome, 
 // Produtos vendidos SEM ficha técnica cadastrada não entram no teórico —
 // o valor dessas vendas fica separado em "sem_ficha_valor" para deixar
 // claro que o teórico pode estar subestimado nesse caso.
+// Indice { nome normalizado: nome original } de um mapa de produtos. Chave
+// que aponta pra mais de um nome original e descartada: custear com a ficha
+// errada e pior do que nao custear.
+function indiceNomesNormalizados_(mapa) {
+  var idx = {}, colide = {};
+  Object.keys(mapa || {}).forEach(function(nome) {
+    var k = normalizarNomeProduto_(nome);
+    if (!k) return;
+    if (idx[k] === undefined) idx[k] = nome;
+    else if (idx[k] !== nome) colide[k] = true;
+  });
+  Object.keys(colide).forEach(function(k) { delete idx[k]; });
+  return idx;
+}
+
 function calcularCMVTeorico(vendas, fichasMap, produtosMenuEscolha, receitas, historicoPorInsumo, anoPorMes) {
   var resultado = {};
   if (!vendas || !vendas.abc_mes || !fichasMap || !Object.keys(fichasMap).length) return resultado;
+
+  // Ponte entre o nome que vem da VENDA e o nome que esta na FICHA.
+  var fichaPorNomeNormalizado = indiceNomesNormalizados_(fichasMap);
+  function resolverNomeFicha_(nome) {
+    if (fichasMap[nome] !== undefined) return nome;
+    var alvo = fichaPorNomeNormalizado[normalizarNomeProduto_(nome)];
+    return (alvo !== undefined) ? alvo : nome;
+  }
 
   // Se nao vier configurado (Script Properties), cai no padrao.
   var listaMenu = (produtosMenuEscolha && produtosMenuEscolha.length) ? produtosMenuEscolha : PRODUTOS_MENU_ESCOLHA_PADRAO;
@@ -1739,9 +1762,11 @@ function calcularCMVTeorico(vendas, fichasMap, produtosMenuEscolha, receitas, hi
   function detalharProdutos(produtos, mesNome, ano) {
     var teorico = 0, semFichaCadastro = 0, semFichaMenu = 0;
     var lista = produtos.map(function(p) {
-      var temFicha  = fichasMap[p.produto] !== undefined;
+      // nomeFicha pode diferir de p.produto so na caixa/acento
+      var nomeFicha = resolverNomeFicha_(p.produto);
+      var temFicha  = fichasMap[nomeFicha] !== undefined;
       var ehMenuEscolha = !temFicha && !!produtosMenuSet[String(p.produto || '').toUpperCase()];
-      var custoUnit = temFicha ? custoUnitarioNoMes(p.produto, mesNome, ano) : undefined;
+      var custoUnit = temFicha ? custoUnitarioNoMes(nomeFicha, mesNome, ano) : undefined;
       var custoTotal = temFicha ? r2(custoUnit * p.qtd) : null;
       if (temFicha) teorico += custoUnit * p.qtd;
       else if (ehMenuEscolha) semFichaMenu += p.valor;
