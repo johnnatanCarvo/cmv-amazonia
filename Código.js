@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-10-07.2';
+var VERSAO_APP = '2026-10-07.3';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -50,6 +50,68 @@ var PADROES = {
   fichas:  /^fichas/i
 };
 
+// ── NEGÓCIOS ─────────────────────────────────────────────────
+// Dois negócios dentro do mesmo Cloudfy: o restaurante, com três unidades, e
+// o quiosque de açaí, com uma. Somar os dois num total só não diz nada --
+// ticket médio, ficha técnica e margem são de operações diferentes --, então o
+// painel trabalha um negócio de cada vez e o usuário escolhe qual.
+var NEGOCIOS = {
+  'AMAZONIA NA CUIA': { rotulo: 'Amazônia na Cuia', filiais: ['UMARIZAL', 'MARCO', 'PORTO FUTURO'] },
+  'ACAI NA CUIA':     { rotulo: 'Açaí na Cuia',     filiais: ['ACAI NA CUIA'] }
+};
+var NEGOCIO_PADRAO = 'AMAZONIA NA CUIA';
+
+// Vale só durante UMA execução: cada google.script.run roda num contexto novo,
+// então não há risco de uma chamada herdar o negócio da anterior.
+var NEGOCIO_ATIVO = NEGOCIO_PADRAO;
+
+function definirNegocio_(n) {
+  var chave = String(n || '').trim().toUpperCase();
+  NEGOCIO_ATIVO = NEGOCIOS[chave] ? chave : NEGOCIO_PADRAO;
+  return NEGOCIO_ATIVO;
+}
+
+function listarNegocios() {
+  return Object.keys(NEGOCIOS).map(function(k) {
+    return { chave: k, rotulo: NEGOCIOS[k].rotulo, filiais: NEGOCIOS[k].filiais.slice() };
+  });
+}
+
+// Filiais do negócio ativo, ordenadas. Existe pra que nenhuma função precise
+// repetir a lista de unidades na mão -- era assim antes, e a filial nova
+// simplesmente não aparecia em quem tinha a lista chumbada.
+function filiaisDoNegocioAtivo_() {
+  return (NEGOCIOS[NEGOCIO_ATIVO].filiais || []).slice().sort();
+}
+
+// Mantém só as linhas das filiais do negócio ativo. Linha de filial
+// desconhecida fica de fora dos DOIS: melhor sumir e ser notada do que entrar
+// no negócio errado e contaminar um total em silêncio.
+function filtrarNegocio_(rows, colFilial) {
+  if (!rows || rows.length < 2) return rows;
+  var aceitas = {};
+  (NEGOCIOS[NEGOCIO_ATIVO].filiais || []).forEach(function(f) { aceitas[f.toUpperCase()] = true; });
+  var out = [rows[0]];
+  for (var i = 1; i < rows.length; i++) {
+    var r = rows[i];
+    if (!r) continue;
+    if (aceitas[String(r[colFilial] || '').trim().toUpperCase()]) out.push(r);
+  }
+  return out;
+}
+
+function filialDoNegocioAtivo_(nome) {
+  var aceitas = {};
+  (NEGOCIOS[NEGOCIO_ATIVO].filiais || []).forEach(function(f) { aceitas[f.toUpperCase()] = true; });
+  return !!aceitas[String(nome || '').trim().toUpperCase()];
+}
+
+// Ponto único de leitura do ESTOQUE, espelhando lerComprasCompleto_/
+// lerVendasCompleto_. Existe pra que o filtro de negócio fique num lugar só.
+function lerEstoqueCompleto_() {
+  return filtrarNegocio_(lerTodosCSVs('estoque'), C_ESTOQUE.filial);
+}
+
 // ── SERVIDOR ─────────────────────────────────────────────────
 
 function doGet(e) {
@@ -69,7 +131,8 @@ function doGet(e) {
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
 
-function getPayload(senha) {
+function getPayload(senha, negocio) {
+  definirNegocio_(negocio);   // escopo desta execução; ver NEGOCIOS
   // Trava de seguranca: sem senha valida, nao retorna dados
   if (!validarSenha(senha)) {
     return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
@@ -77,7 +140,7 @@ function getPayload(senha) {
   try {
     var rowsCompras = lerComprasCompleto_();
     var rowsVendas  = lerVendasCompleto_();
-    var rowsEstoque = lerTodosCSVs('estoque');
+    var rowsEstoque = lerEstoqueCompleto_();
     var rowsFichas  = lerFichaTecnica(); // opcional — [] se ainda nao foi enviada
 
     var fichasMap  = processarFichas(rowsFichas);
@@ -263,6 +326,8 @@ function getPayload(senha) {
 
     return JSON.stringify({
       ok:              true,
+      negocio:         NEGOCIO_ATIVO,
+      negocios:        listarNegocios(),
       cmc:             cmc,
       cmv:             cmv,
       vendas:          vendas,
@@ -304,7 +369,7 @@ function gerarPlanilhaItensSemPreco(senha) {
   try {
     var rowsCompras = lerComprasCompleto_();
     var rowsVendas  = lerVendasCompleto_();
-    var rowsEstoque = lerTodosCSVs('estoque');
+    var rowsEstoque = lerEstoqueCompleto_();
     var rowsFichas  = lerFichaTecnica();
     var fichasMap   = processarFichas(rowsFichas);
     var historicoPorInsumo = preAgregarCustoMedioPorInsumo(rowsCompras);
@@ -419,7 +484,7 @@ function gerarPlanilhaItensSemGrupo(senha) {
 
     // ── 1. CSV mensal (Cloudfy) — grupo já vem pronto na coluna, mas pode
     //    vir em branco (falha de cadastro no próprio Cloudfy) ──
-    var rowsEstoque = lerTodosCSVs('estoque');
+    var rowsEstoque = lerEstoqueCompleto_();
     for (var i = 1; i < rowsEstoque.length; i++) {
       var r = rowsEstoque[i];
       if (!r || r.length < 16) continue;
@@ -531,7 +596,10 @@ function lerComprasCompleto_() {
   }
 
   var cache = cfyLerCacheCompras_();
-  if (!cache || !cache.linhas.length) return rowsCSV;
+  // Filtro de negócio no ponto único de leitura: tudo que roda daqui pra
+  // frente (CMC, CMV, ABC, teórico) já nasce no escopo certo, sem precisar
+  // passar o negócio por dezenas de funções.
+  if (!cache || !cache.linhas.length) return filtrarNegocio_(rowsCSV, C_COMPRAS.filial);
 
   // Todo mês coberto pelo cache tem prioridade sobre o CSV: o cache vem da API
   // e já inclui nota lançada em atraso, que a exportação manual perdia.
@@ -545,7 +613,7 @@ function lerComprasCompleto_() {
              (rowsCSV.length - filtrado.length) + ' substituídas pelo cache da API (' +
              Object.keys(cache.meses).join(', ') + ' -- ' + cache.linhas.length + ' linhas, atualizado ' +
              (cfyComprasAtualizadoEm() || 'data desconhecida') + ')');
-  return filtrado.concat(cache.linhas);
+  return filtrarNegocio_(filtrado.concat(cache.linhas), C_COMPRAS.filial);
 }
 
 // Ponto único de leitura de VENDAS. Mesma ideia das compras, mas a
@@ -555,7 +623,7 @@ function lerComprasCompleto_() {
 function lerVendasCompleto_() {
   var rowsCSV = lerTodosCSVs('vendas');
   var cache = cfyLerCacheVendas_();
-  if (!cache || !cache.linhas.length) return rowsCSV;
+  if (!cache || !cache.linhas.length) return filtrarNegocio_(rowsCSV, C_VENDAS.filial);
 
   var filtrado = [rowsCSV[0]];
   for (var i = 1; i < rowsCSV.length; i++) {
@@ -567,7 +635,7 @@ function lerVendasCompleto_() {
              (rowsCSV.length - filtrado.length) + ' substituídas pelo cache da API (' +
              Object.keys(cache.dias).length + ' dias, ' + cache.linhas.length + ' linhas, atualizado ' +
              (cfyVendasAtualizadoEm() || 'data desconhecida') + ')');
-  return filtrado.concat(cache.linhas);
+  return filtrarNegocio_(filtrado.concat(cache.linhas), C_VENDAS.filial);
 }
 
 // ── LEITURA DE CSVs ──────────────────────────────────────────
@@ -1465,7 +1533,8 @@ function injetarFaturamentoCmcPeriodo_(cmcPeriodo, porDiaVendas, mesIniNum, anoI
   return cmcPeriodo;
 }
 
-function calcularAnaliseSemanal(senha, mes, ano) {
+function calcularAnaliseSemanal(senha, mes, ano, negocio) {
+  definirNegocio_(negocio);   // escopo desta execução; ver NEGOCIOS
   if (!validarSenha(senha)) {
     return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
   }
@@ -1691,7 +1760,8 @@ function calcularAnaliseSemanal(senha, mes, ano) {
 // mesmo no dia 1 do mês (nenhuma linha real tem dia "00", então vira um
 // sentinela que nunca exclui nada de verdade; ver comentário de
 // somarPeriodoPreAgregadoCross_ em Dados.js pra o raciocínio completo).
-function calcularPeriodoPersonalizado(senha, dataIniStr, dataFimStr) {
+function calcularPeriodoPersonalizado(senha, dataIniStr, dataFimStr, negocio) {
+  definirNegocio_(negocio);   // escopo desta execução; ver NEGOCIOS
   if (!validarSenha(senha)) {
     return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
   }
@@ -1830,7 +1900,8 @@ function calcularCMVPersonalizado(senha, unidade, inventarioInicialId, inventari
 // grupo nem ajuste de transferência (só fazem sentido calculados por
 // unidade) -- devolve só os totais consolidados, como o "Todas" de
 // qualquer outra tela do painel.
-function calcularCMVPersonalizadoTodas(senha, dataIniStr, dataFimStr) {
+function calcularCMVPersonalizadoTodas(senha, dataIniStr, dataFimStr, negocio) {
+  definirNegocio_(negocio);   // escopo desta execução; ver NEGOCIOS
   if (!validarSenha(senha)) {
     return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
   }
@@ -1853,7 +1924,7 @@ function calcularCMVPersonalizadoTodas_(dataIniStr, dataFimStr) {
       throw new Error('A data final do período precisa ser depois da inicial.');
     }
 
-    var unidades = ['MARCO', 'PORTO FUTURO', 'UMARIZAL'];
+    var unidades = filiaisDoNegocioAtivo_();
     var ss = SpreadsheetApp.openById(CONTAGEM_SHEET_ID);
     var aba = ss.getSheetByName('CONTAGENS');
     var rows = aba ? aba.getDataRange().getValues() : [];
@@ -2067,14 +2138,15 @@ function contagemOuInventarioMaisProximo_(porDia, inventariosSalvos, unidade, al
   return contagemMaisProxima_(porDia, alvo, janelaMaxDias);
 }
 
-function calcularSemanaCalendario(senha, mes, ano) {
+function calcularSemanaCalendario(senha, mes, ano, negocio) {
+  definirNegocio_(negocio);   // escopo desta execução; ver NEGOCIOS
   if (!validarSenha(senha)) {
     return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
   }
   try {
     var anoNum = Number(ano);
     var semanas = enumerarSemanasCalendario_(mes, anoNum);
-    var unidades = ['MARCO', 'PORTO FUTURO', 'UMARIZAL'];
+    var unidades = filiaisDoNegocioAtivo_();
 
     var ss = SpreadsheetApp.openById(CONTAGEM_SHEET_ID);
     var aba = ss.getSheetByName('CONTAGENS');
@@ -2714,6 +2786,9 @@ function gerarLinhasEstoqueDeInventariosSalvos_(rowsEstoque, rowsCompras, rowsVe
   var porMes = {}; // 'ano-mes' -> { unidade: {inv, info} }
   inventarios.forEach(function(inv) {
     if (!inv.contagemIds || !inv.contagemIds.length) return;
+    // Inventário de unidade de outro negócio não entra: o painel trabalha um
+    // negócio por vez e misturar aqui contaminaria o estoque do CMV.
+    if (!filialDoNegocioAtivo_(inv.unidade)) return;
     var info = resolverDataInventario_(inv, dataPorContagemId);
     if (!info) {
       avisos.push('Inventário "' + inv.label + '" (' + inv.unidade + '): sem data válida encontrada nas contagens escolhidas — ignorado.');
@@ -2966,7 +3041,8 @@ function conteudoDoArquivo(file) {
 
 // Lista as linhas de COMPRAS do mês selecionado, com metadados de origem
 // (arquivo + linha) para permitir a edição da quantidade.
-function listarComprasMes(senha, mesNome) {
+function listarComprasMes(senha, mesNome, negocio) {
+  definirNegocio_(negocio);   // escopo desta execução; ver NEGOCIOS
   if (!validarSenha(senha)) {
     return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
   }
@@ -3037,7 +3113,7 @@ function editarQtdCompra(senha, arquivo, linha, novaQtd) {
 
 // Lê todas as contagens de estoque (só linhas de Inventário) com metadados de origem.
 // rowsEstoquePreLidas (opcional): quando informado (array-de-arrays já
-// parseado, ex: lerTodosCSVs('estoque')), usa ESSAS linhas em vez de reler
+// parseado, ex: lerEstoqueCompleto_()), usa ESSAS linhas em vez de reler
 // e reparsear os arquivos do Drive do zero -- evita re-pagar o custo de
 // Drive I/O quando quem chama (reconciliarInsumos, dentro de getPayload)
 // já leu o mesmo CSV momentos antes. Nesse modo "arquivo"/"linha" ficam
@@ -3105,7 +3181,8 @@ function tsInicialEFinalDoMes(mesNome, linhas) {
 }
 
 // Lista a contagem INICIAL ou FINAL do mês selecionado.
-function listarContagemMes(senha, mesNome, qual) {
+function listarContagemMes(senha, mesNome, qual, negocio) {
+  definirNegocio_(negocio);   // escopo desta execução; ver NEGOCIOS
   if (!validarSenha(senha)) {
     return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
   }

@@ -153,8 +153,13 @@ function mesDentroDaJanela_(dataInfo, limiteDiaPorMes) {
 // ── PROCESSAR COMPRAS → CMC ──────────────────────────────────
 
 function processarCompras(rows, limiteDiaPorMes) {
+  // Nenhuma linha NÃO é mais erro: depois do filtro por negócio, um negócio
+  // recém-aberto (ou com todas as notas ainda por conciliar) chega aqui
+  // legitimamente vazio. Estourar aqui derrubava o painel inteiro -- agora
+  // devolve {} e quem renderiza diz que não há mês fechado.
   if (!rows || rows.length < 2) {
-    throw new Error('CSV de compras vazio ou sem linhas de dados.');
+    Logger.log('Compras sem nenhuma linha de dados. CMC não calculado.');
+    return {};
   }
   return processarComprasPorPeriodo_(rows, function(dataInfo) {
     return mesDentroDaJanela_(dataInfo, limiteDiaPorMes);
@@ -431,9 +436,10 @@ function processarComprasIntervaloDiasCross_(rows, mesIniNum, anoIni, diaIni, me
 // ── PROCESSAR VENDAS → ABC + FATURAMENTO ─────────────────────
 
 function processarVendas(rows, limiteDiaPorMes) {
-  if (!rows || rows.length < 2) {
-    throw new Error('CSV de vendas vazio ou sem linhas de dados.');
-  }
+  // Mesmo motivo de processarCompras: sem linha nenhuma a função segue com os
+  // agregadores vazios e devolve a MESMA forma de sempre (total 0, listas
+  // vazias) -- em vez de lançar e quebrar o carregamento.
+  if (!rows || rows.length < 2) rows = [[]];
 
   // Agregações
   var porProd      = {};   // consolidado: produto → {grupo, valor, qtd}
