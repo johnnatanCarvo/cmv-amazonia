@@ -2034,6 +2034,32 @@ function rSemCalPintar_(semanas){
 // Mesma extração de dadosPeriodoCMV (ramo "unidade específica"), só que a
 // partir do resultado plano de calcularCMVPersonalizado em vez de um
 // bloco de Semana/Quinzena.
+// De onde saiu o estoque de cada unidade no periodo personalizado. Sem isso
+// o total vira um numero sem rastro: quem olha nao tem como saber que a
+// contagem do almoxarifado do dia seguinte ficou de fora, por exemplo.
+function blocoOrigemContagensCMV_(){
+  var r=CUSTOM_CMV_CACHE[periodoAtualCMV.key];
+  if(!r||!r.porUnidade)return '';
+  var unis=Object.keys(r.porUnidade).sort();
+  if(!unis.length)return '';
+  var linhas=unis.map(function(u){
+    var f=r.porUnidade[u];
+    if(!f||!f.disponivel){
+      return '<tr><td>'+nomeUni(u)+'</td><td colspan="4" class="empty" style="text-align:left;">sem contagem dentro da janela</td></tr>';
+    }
+    var av=function(d){return d>0?' <span style="color:var(--am);">('+d+'d fora da data pedida)</span>':'';};
+    return '<tr><td>'+nomeUni(u)+'</td>'+
+      '<td>'+(f.eiData||'--')+av(f.eiDesvioDias||0)+'</td>'+
+      '<td class="n">'+fR(f.ei)+'</td>'+
+      '<td>'+(f.efData||'--')+av(f.efDesvioDias||0)+'</td>'+
+      '<td class="n">'+fR(f.ef)+'</td></tr>';
+  }).join('');
+  return '<div class="card" style="margin-top:12px;">'+
+    '<div class="ssub" style="margin:0 0 10px;">De onde saiu cada estoque. No período personalizado o painel usa a contagem (ou o inventário salvo) <b>mais próxima da data escolhida</b>, por unidade — não necessariamente o inventário que você marcou como fechamento do mês. Contagem feita depois da data final fica de fora.</div>'+
+    '<table><thead><tr><th>Unidade</th><th>Contagem inicial</th><th class="n">Estoque inicial</th>'+
+    '<th>Contagem final</th><th class="n">Estoque final</th></tr></thead><tbody>'+linhas+'</tbody></table></div>';
+}
+
 function extrairCMVCustom_(){
   var resultado=CUSTOM_CMV_CACHE[periodoAtualCMV.key];
   if(!resultado)return null;
@@ -2185,6 +2211,8 @@ function rCMV(){
     '<div class="metric"><div class="metric-l">CMV sobre Faturamento</div><div class="metric-v '+pctCls+'">'+pctTxt+'</div>'+
       '<div class="metric-sub" style="color:var(--fg3)">'+(d.fat>0?fR(d.fat)+' vendas':'sem faturamento')+'</div></div>'+
   '</div>';
+  // Rastro da origem: vale pra "Todas" e pra unidade isolada.
+  if(periodoAtualCMV.tipo==='custom')html+=blocoOrigemContagensCMV_();
 
   // Segunda faixa: os mesmos 5 indicadores, SEM considerar transferências entre unidades
   if(uniCMV!=='TODAS' && (d.transfEntrada>0 || d.transfSaida>0)){
