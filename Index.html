@@ -1572,7 +1572,13 @@ function rMes(){
     : (!d||d.cmc_total===undefined||d.cmc_total===null);
   if(semGrupos){
     document.getElementById('mes-metrics').innerHTML='';
-    document.getElementById('mes-rank').innerHTML='<div class="empty">Sem dados para '+(uniAtual==='TODAS'?'este mês':nomeUni(uniAtual))+(periodoAtualCMC.tipo!=='mes'?' neste período':'')+'.</div>';
+    // Sem NENHUM mês é diferente de "este mês ficou vazio": acontece quando o
+    // negócio selecionado ainda não tem compra registrada (unidade recém-aberta).
+    // Dizer só "sem dados" aí parece defeito do painel.
+    var vazioMsg=!MESES.length
+      ? 'Nenhuma compra registrada ainda em '+(rotuloNegocio_(NEGOCIO_ATUAL)||'neste negócio')+'. O CMC e o CMV aparecem assim que as notas entrarem no sistema.'
+      : 'Sem dados para '+(uniAtual==='TODAS'?'este mês':nomeUni(uniAtual))+(periodoAtualCMC.tipo!=='mes'?' neste período':'')+'.';
+    document.getElementById('mes-rank').innerHTML='<div class="empty">'+vazioMsg+'</div>';
     document.getElementById('mes-mov').innerHTML='';killChart('ch-evo');return;
   }
 
