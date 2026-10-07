@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-10-07.5';
+var VERSAO_APP = '2026-10-07.6';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -110,6 +110,75 @@ function filialDoNegocioAtivo_(nome) {
 // lerVendasCompleto_. Existe pra que o filtro de negócio fique num lugar só.
 function lerEstoqueCompleto_() {
   return filtrarNegocio_(lerTodosCSVs('estoque'), C_ESTOQUE.filial);
+}
+
+// ── CORREÇÃO PONTUAL: CONTAGEM EM ml/g NUM PRODUTO EM LITRO/KG ────
+// O Bar do Umarizal contou em mililitro e grama; quem digitou não converteu.
+// Nove linhas do fechamento de setembro/2026 entraram 1000x maiores, inflando
+// o estoque final em R$ 304.052,40 e escondendo o mesmo valor de CMV.
+//
+// Confirmado contra as outras contagens do MESMO mês: o Bar do Marco lançou
+// MP VODKA SMINORF L como 1,996 e o Bar do Umarizal como 998; BITTER DE CACAU
+// foi 0,15 no Marco e 300 no Umarizal. Os Estoquistas das três unidades também
+// lançaram em litro. Só essa folha saiu em ml.
+//
+// Cada alvo é identificado por CONTAGEM + LINHA (não por nome do produto, que
+// aparece em várias contagens -- corrigir por nome mexeria em linha certa
+// junto com a errada). Antes de escrever, confere que a linha ainda é daquela
+// contagem E que o valor atual é o esperado. Se qualquer um dos dois não
+// bater, PULA e relata -- nunca escreve no escuro.
+//
+// Idempotente: rodar de novo depois de corrigido não faz nada.
+var CORRECOES_ESCALA_SET2026 = [
+  { contagem: 'CNT-20260927-220440', linha: 5881, produto: 'MP CACHACA DE BANANA L', de: 980, para: 0.980 },
+  { contagem: 'CNT-20260927-220440', linha: 5887, produto: 'MP CACHACA OURO L',      de: 965, para: 0.965 },
+  { contagem: 'CNT-20260927-220440', linha: 5890, produto: 'MP VODKA SMINORF L',     de: 998, para: 0.998 },
+  { contagem: 'CNT-20260927-220440', linha: 5898, produto: 'MP BITTER DE CACAU L',   de: 300, para: 0.300 },
+  { contagem: 'CNT-20260927-220440', linha: 5899, produto: 'MP BITTER LARANJA L',    de: 300, para: 0.300 },
+  { contagem: 'CNT-20260927-220440', linha: 5901, produto: 'MP CANELA EM PAU',       de: 264, para: 0.264 },
+  { contagem: 'CNT-20260927-220440', linha: 5916, produto: 'MP CUMARU SEMENTE UN',   de: 240, para: 0.240 },
+  { contagem: 'CNT-20260927-220440', linha: 5949, produto: 'PP XAROPE DE PRECIOSA',  de: 900, para: 0.900 },
+  { contagem: 'CNT-20260927-160213', linha: 5697, produto: 'MP CREME DE LEITE KG',   de: 264, para: 0.264 }
+];
+
+function corrigirEscalaContagensSetembro() {
+  var ss  = SpreadsheetApp.openById(CONTAGEM_SHEET_ID);
+  var aba = ss.getSheetByName('ITENS_CONTAGEM');
+  if (!aba) throw new Error('Aba ITENS_CONTAGEM não encontrada.');
+
+  var feitas = [], jaOk = [], puladas = [];
+  CORRECOES_ESCALA_SET2026.forEach(function(c) {
+    var faixa = aba.getRange(c.linha, 1, 1, 5).getValues()[0];
+    var cid     = String(faixa[C_ITENS_CONTAGEM.contagemId]).trim();
+    var produto = String(faixa[C_ITENS_CONTAGEM.produto]).trim();
+    var atual   = numVal(faixa[C_ITENS_CONTAGEM.contado]);
+
+    if (cid !== c.contagem) {
+      puladas.push('L' + c.linha + ' ' + c.produto + ': a linha agora é da contagem ' + cid +
+                   ' (esperava ' + c.contagem + ') -- a planilha mudou de posição.');
+      return;
+    }
+    if (produto.toUpperCase() !== c.produto.toUpperCase()) {
+      puladas.push('L' + c.linha + ': produto é "' + produto + '", esperava "' + c.produto + '".');
+      return;
+    }
+    if (Math.abs(atual - c.para) < 1e-9) { jaOk.push(c.produto); return; }
+    if (Math.abs(atual - c.de) > 1e-9) {
+      puladas.push('L' + c.linha + ' ' + c.produto + ': contado é ' + atual +
+                   ', esperava ' + c.de + ' -- alguém já mexeu. Não toquei.');
+      return;
+    }
+    aba.getRange(c.linha, C_ITENS_CONTAGEM.contado + 1).setValue(c.para);
+    feitas.push(c.produto + ': ' + c.de + ' -> ' + c.para);
+  });
+
+  var msg = feitas.length + ' corrigida(s), ' + jaOk.length + ' já estava(m) certa(s), ' +
+            puladas.length + ' pulada(s).';
+  Logger.log('corrigirEscalaContagensSetembro: ' + msg);
+  feitas.forEach(function(s) { Logger.log('  OK    ' + s); });
+  jaOk.forEach(function(s) { Logger.log('  JA OK ' + s); });
+  puladas.forEach(function(s) { Logger.log('  PULOU ' + s); });
+  return msg + (puladas.length ? '\n\n' + puladas.join('\n') : '');
 }
 
 // ── SERVIDOR ─────────────────────────────────────────────────
