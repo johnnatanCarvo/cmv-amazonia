@@ -315,7 +315,6 @@ nav{top:0;left:0;right:auto;bottom:0;height:auto;width:var(--side-w);padding:0;f
 .crumb i{font-style:normal;color:var(--fg3);}
 .crumb b{color:var(--fg);font-weight:600;font-family:'Space Grotesk',sans-serif;}
 .top-r{margin-left:auto;display:flex;align-items:center;gap:14px;}
-.top-marca{font-family:'DM Mono',monospace;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--fg3);}
 #side-ov{display:none;}
 main{max-width:none;margin:0;margin-left:var(--side-w);padding:calc(var(--top-h) + 26px) 28px 60px;}
 .shead{border-bottom:none;padding-bottom:0;margin-bottom:20px;}
@@ -337,7 +336,6 @@ main{max-width:none;margin:0;margin-left:var(--side-w);padding:calc(var(--top-h)
   #menu-btn{display:flex;}
   main{margin-left:0;padding:calc(var(--top-h) + 18px) 16px 60px;}
   .nav-tabs{display:flex;}
-  .top-marca{display:none;}
   .tab{color:var(--fg2);}
   .tab:hover{background:rgba(128,128,128,.10);color:var(--fg);}
   .tab.on{background:rgba(128,128,128,.16);color:var(--fg);}
@@ -429,7 +427,6 @@ main{max-width:none;margin:0;margin-left:var(--side-w);padding:calc(var(--top-h)
   <div class="crumb"><span id="crumb-neg">Amazônia na Cuia</span><i>/</i><b id="crumb-t">Análise Mês a Mês</b></div>
   <div class="top-r">
     <div class="nav-neg" id="nav-neg" style="display:none;"></div>
-    <span class="top-marca">Painel CMC + CMV · CARVO</span>
   </div>
 </header>
 
@@ -441,7 +438,6 @@ main{max-width:none;margin:0;margin-left:var(--side-w);padding:calc(var(--top-h)
       <div>
         <div class="eyebrow">Custo de Mercadoria Comprado</div>
         <div class="stitle">Análise Mês a Mês</div>
-        <div class="ssub">Leitura do mês e tendência no período. Custo médio ponderado a partir do relatório de compras.</div>
       </div>
       <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end;">
         <div class="mseg" id="mes-seg"></div>
@@ -520,7 +516,6 @@ main{max-width:none;margin:0;margin-left:var(--side-w);padding:calc(var(--top-h)
       <div>
         <div class="eyebrow">Concentração de Faturamento</div>
         <div class="stitle">Curva ABC</div>
-        <div class="ssub">Classificação de produtos por representatividade no faturamento. Classe A até 80%, B de 80 a 95%, C acima de 95%. Taxas operacionais excluídas.</div>
       </div>
       <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end;">
         <div class="mseg" id="abc-mseg"></div>
@@ -569,7 +564,6 @@ main{max-width:none;margin:0;margin-left:var(--side-w);padding:calc(var(--top-h)
       <div>
         <div class="eyebrow">Evolução do Custo Unitário</div>
         <div class="stitle">Variação de Custo</div>
-        <div class="ssub">Custo médio ponderado por produto em cada mês. Escolha quais dois meses comparar na variação.</div>
       </div>
       <div class="sright" id="custo-fonte">Relatório de Compras</div>
     </div>
@@ -624,7 +618,6 @@ main{max-width:none;margin:0;margin-left:var(--side-w);padding:calc(var(--top-h)
       <div>
         <div class="eyebrow">Custo de Mercadoria Vendida</div>
         <div class="stitle">CMV Real</div>
-        <div class="ssub">Estoque inicial mais compras menos estoque final. Calculado a partir das contagens de inventario do periodo.</div>
       </div>
       <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end;">
         <div class="mseg" id="cmv-mseg"></div>
@@ -653,7 +646,6 @@ main{max-width:none;margin:0;margin-left:var(--side-w);padding:calc(var(--top-h)
       <div>
         <div class="eyebrow">CMC e CMV Real</div>
         <div class="stitle">Semana Calendário</div>
-        <div class="ssub">Todas as semanas do mês, sempre de segunda a domingo — inclusive quando a semana atravessa a virada do mês. Compras e vendas somam os dias corridos normalmente. O estoque inicial/final usa a contagem real mais próxima da segunda-feira/domingo (até 10 dias de distância); quando não é a data exata, o desvio aparece marcado. Sem contagem próxima o suficiente, o CMV daquela semana fica indisponível.</div>
       </div>
       <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end;">
         <div class="mseg" id="semcal-mseg"></div>
@@ -670,7 +662,6 @@ main{max-width:none;margin:0;margin-left:var(--side-w);padding:calc(var(--top-h)
       <div>
         <div class="eyebrow">Custo de Mercadoria Vendida — Teórico</div>
         <div class="stitle">CMV Teórico</div>
-        <div class="ssub">Quantidade vendida × custo teórico de cada produto, comparado ao CMV Real do mesmo período. O custo de cada insumo da receita é o preço médio de compra do próprio mês (ou do mês anterior mais próximo que teve compra, quando não houve compra naquele mês) — não o valor fixo da ficha técnica. A diferença não indica por si só perda ou desperdício — pode refletir produção não vendida, variação de rendimento ou outros fatores.</div>
       </div>
       <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end;">
         <div class="mseg" id="teorico-mseg"></div>
@@ -687,7 +678,6 @@ main{max-width:none;margin:0;margin-left:var(--side-w);padding:calc(var(--top-h)
       <div>
         <div class="eyebrow">Planejamento de Compras e Produção</div>
         <div class="stitle">Demanda de Insumos</div>
-        <div class="ssub">A partir das vendas do mês selecionado e da ficha técnica, mostra quanto de cada matéria-prima foi necessário pra cobrir essas vendas (o que comprar) e quanto de cada preparo interno precisou ser produzido (o que fazer na cozinha). Preparos são explodidos recursivamente até a matéria-prima real. Só considera produtos com ficha técnica cadastrada.</div>
       </div>
       <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end;">
         <div class="mseg" id="demanda-mseg"></div>
@@ -3069,9 +3059,9 @@ function rTeorico(){
       '<div class="metric-v">'+fR2(d.teorico)+'</div>'+
       '<div class="metric-sub" style="color:var(--fg3)">'+(d.teoricoPct!==null&&d.teoricoPct!==undefined?fP(d.teoricoPct)+' do faturamento coberto':'')+'</div></div>'+
     '<div class="metric"><div class="metric-l">CMV Real (mesmo mes)</div><div class="metric-v az">'+(temReal?fR2(d.real):'--')+'</div>'+
-      '<div class="metric-sub" style="color:var(--fg3)">'+(temReal&&d.realPct!==null&&d.realPct!==undefined?fP(d.realPct)+' do faturamento':'sem CMV real calculado')+'</div></div>'+
+      '<div class="metric-sub" style="color:var(--fg3)">'+(temReal&&d.realPct!==null&&d.realPct!==undefined?fP(d.realPct)+' do faturamento':'')+'</div></div>'+
     '<div class="metric"><div class="metric-l">Diferenca (Real menos Teorico)</div><div class="metric-v '+difCls+'">'+diferencaTxt+'</div>'+
-      '<div class="metric-sub" style="color:var(--fg3)">nao e indicador de perda por si so</div></div>'+
+      '</div>'+
     '<div class="metric"><div class="metric-l">Vendas sem Ficha Tecnica</div><div class="metric-v am">'+fR(d.semFicha)+'</div>'+
       '<div class="metric-sub" style="color:var(--fg3)">'+(d.semFicha>0?semFichaSub(d):'todas as vendas tem ficha')+'</div></div>'+
     '<div class="metric"><div class="metric-l">Faturamento</div><div class="metric-v ac">'+fR(d.fat)+'</div></div>'+
