@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-10-07.10';
+var VERSAO_APP = '2026-10-08.1';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -252,7 +252,7 @@ function getPayload(senha, negocio) {
     var anoPorMes = inferirAnoPorMes(rowsCompras, meses);
 
     var produtosMenuEscolha = obterProdutosMenuEscolha();
-    var cmvTeorico = calcularCMVTeorico(vendas, fichasMap, produtosMenuEscolha, receitas, historicoPorInsumo, anoPorMes);
+    var cmvTeorico = calcularCMVTeorico(vendas, fichasMap, produtosMenuEscolha, receitas, historicoPorInsumo, anoPorMes, preAgregarFichaPorCodigo(rowsFichas));
     var demandaInsumos = calcularDemandaInsumos(vendas, receitas);
     var reconciliacaoInsumos = reconciliarInsumos(demandaInsumos, receitas, rowsEstoque, rowsCompras);
 
@@ -341,11 +341,11 @@ function getPayload(senha, negocio) {
       if (cmvTeorico[m]) {
         var tObj = cmvTeorico[m];
         tObj.faturamento = fat;
-        // O percentual usa o faturamento COBERTO (total menos as vendas sem
-        // ficha tecnica) como base — dividir pelo faturamento total diluiria
-        // o percentual pra baixo artificialmente, ja que vendas sem ficha
-        // entram no denominador mas contribuem R$0 no teorico.
-        var fatCoberto = fat - (tObj.sem_ficha_valor || 0);
+        // Base do percentual: faturamento total MENOS so a venda sem ficha de
+        // verdade. A receita do combo FICA na base, porque o custo dele já
+        // está no numerador (os componentes do cupom têm ficha). Tirar os dois
+        // lados seria certo; tirar só a receita inflava o percentual.
+        var fatCoberto = fat - (tObj.sem_ficha_valor_cadastro || 0);
         tObj.faturamento_coberto = Math.round(fatCoberto * 100) / 100;
         tObj.teorico_pct = (fatCoberto > 0)
           ? Math.round(tObj.teorico_total / fatCoberto * 10000) / 100
@@ -369,7 +369,7 @@ function getPayload(senha, negocio) {
             var fatFil = fatMesFilial[m][fil] || 0;
             var fObj = tObj.filiais[fil];
             fObj.faturamento = fatFil;
-            var fatFilCoberto = fatFil - (fObj.sem_ficha_valor || 0);
+            var fatFilCoberto = fatFil - (fObj.sem_ficha_valor_cadastro || 0);
             fObj.faturamento_coberto = Math.round(fatFilCoberto * 100) / 100;
             fObj.teorico_pct = (fatFilCoberto > 0)
               ? Math.round(fObj.teorico_total / fatFilCoberto * 10000) / 100

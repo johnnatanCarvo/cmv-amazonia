@@ -25,6 +25,7 @@ var C_COMPRAS = {
 var C_VENDAS = {
   filial:  0,   // ex: MARCO
   data:    1,   // ex: 01/05/2026
+  cod:     2,   // Cód. ref. do produto -- chave pra casar com a ficha técnica
   produto: 3,   // ex: CG TACACA
   grupo:   4,   // ex: CUIA GRANDE
   qtd:     13,  // quantidade total vendida
@@ -449,6 +450,7 @@ function processarVendas(rows, limiteDiaPorMes) {
   var prodFilial   = {};   // filial → produto → {grupo, valor, qtd}
   var prodMes      = {};   // mês → produto → {grupo, valor, qtd}
   var prodMesFilial= {};   // mês → filial → produto → {grupo, valor, qtd}
+  var codPorProduto = {};  // produto → Cód. ref. (ponte com a ficha técnica)
   var totalGeral = 0;
 
   for (var i = 1; i < rows.length; i++) {
@@ -463,6 +465,7 @@ function processarVendas(rows, limiteDiaPorMes) {
     if (GRUPOS_EXCLUIR_ABC.indexOf(grupo.toUpperCase()) >= 0) continue;
 
     var prod   = limpaCelula(r[C_VENDAS.produto]);
+    var cod    = limpaCelula(r[C_VENDAS.cod]);
     // Taxa sem grupo e acerto de caixa não viram faturamento (ver naoEhVenda_).
     if (naoEhVenda_(prod)) continue;
     var filial = limpaCelula(r[C_VENDAS.filial]) || 'OUTRA';
@@ -519,6 +522,11 @@ function processarVendas(rows, limiteDiaPorMes) {
       prodMes[mn][prod].valor += valor;
       prodMes[mn][prod].qtd   += qtd;
 
+      // Guarda o código do produto pra quem precisa casar com a ficha técnica
+      // (CMV Teórico). Primeiro código visto por nome: o nome é a chave de
+      // agregação aqui, então um nome nunca tem dois códigos legítimos.
+      if (cod && codPorProduto[prod] === undefined) codPorProduto[prod] = cod;
+
       // Produto por mês + filial
       if (!prodMesFilial[mn]) prodMesFilial[mn] = {};
       if (!prodMesFilial[mn][filial]) prodMesFilial[mn][filial] = {};
@@ -537,6 +545,7 @@ function processarVendas(rows, limiteDiaPorMes) {
     var arr = Object.keys(mapaProd).map(function(prod) {
       return {
         produto: prod, grupo: mapaProd[prod].grupo,
+        cod: codPorProduto[prod] || '',
         valor: r2(mapaProd[prod].valor), qtd: r2(mapaProd[prod].qtd),
         pct: r4(mapaProd[prod].valor / total * 100)
       };
@@ -1755,14 +1764,24 @@ function indiceNomesNormalizados_(mapa) {
   return idx;
 }
 
-function calcularCMVTeorico(vendas, fichasMap, produtosMenuEscolha, receitas, historicoPorInsumo, anoPorMes) {
+function calcularCMVTeorico(vendas, fichasMap, produtosMenuEscolha, receitas, historicoPorInsumo, anoPorMes, fichaPorCodigo) {
   var resultado = {};
   if (!vendas || !vendas.abc_mes || !fichasMap || !Object.keys(fichasMap).length) return resultado;
 
-  // Ponte entre o nome que vem da VENDA e o nome que esta na FICHA.
+  // Ponte entre o produto da VENDA e o da FICHA, em três tentativas, da mais
+  // confiável pra menos:
+  //   1. nome igual;
+  //   2. Cód. ref. -- o código é o mesmo cadastro nos dois lados e não muda
+  //      com a origem do lançamento. É assim que a planilha de análise sempre
+  //      fez, e é o que explicava R$ 134.731,24 de diferença em setembro/2026;
+  //   3. nome normalizado (caixa/acento), pra venda que vem sem código.
   var fichaPorNomeNormalizado = indiceNomesNormalizados_(fichasMap);
-  function resolverNomeFicha_(nome) {
+  var catalogoCod = fichaPorCodigo || {};
+  function resolverNomeFicha_(nome, cod) {
     if (fichasMap[nome] !== undefined) return nome;
+    if (cod && catalogoCod[cod] && fichasMap[catalogoCod[cod].nome] !== undefined) {
+      return catalogoCod[cod].nome;
+    }
     var alvo = fichaPorNomeNormalizado[normalizarNomeProduto_(nome)];
     return (alvo !== undefined) ? alvo : nome;
   }
@@ -1787,8 +1806,8 @@ function calcularCMVTeorico(vendas, fichasMap, produtosMenuEscolha, receitas, hi
   function detalharProdutos(produtos, mesNome, ano) {
     var teorico = 0, semFichaCadastro = 0, semFichaMenu = 0;
     var lista = produtos.map(function(p) {
-      // nomeFicha pode diferir de p.produto so na caixa/acento
-      var nomeFicha = resolverNomeFicha_(p.produto);
+      // nomeFicha pode diferir de p.produto no código, na caixa ou no acento
+      var nomeFicha = resolverNomeFicha_(p.produto, p.cod);
       var temFicha  = fichasMap[nomeFicha] !== undefined;
       var ehMenuEscolha = !temFicha && !!produtosMenuSet[String(p.produto || '').toUpperCase()];
       var custoUnit = temFicha ? custoUnitarioNoMes(nomeFicha, mesNome, ano) : undefined;

@@ -661,6 +661,9 @@ function cfyVendasLinhas_(codFilial, nomeFilial, dataIni, dataFim) {
     for (var i = 0; i < 15; i++) linha[i] = '';
     linha[C_VENDAS.filial]  = nomeFilial;
     linha[C_VENDAS.data]    = v.data;
+    // O código é a chave que casa a venda com a ficha técnica: o nome muda
+    // conforme a origem do lançamento, o código não.
+    linha[C_VENDAS.cod]     = v.cod || '';
     linha[C_VENDAS.produto] = nome || '';
     linha[C_VENDAS.grupo]   = grupo;
     linha[C_VENDAS.qtd]     = v.qtd;
@@ -721,6 +724,7 @@ function atualizarCacheVendas() {
     cab[C_VENDAS.filial] = 'FILIAL'; cab[C_VENDAS.data] = 'DATA';
     cab[C_VENDAS.produto] = 'PRODUTO'; cab[C_VENDAS.grupo] = 'GRUPO';
     cab[C_VENDAS.qtd] = 'QTD'; cab[C_VENDAS.valor] = 'VALOR';
+    cab[C_VENDAS.cod] = 'COD';
 
     var dados = [cab].concat(preservadas).concat(todas);
     aba.clearContents();
