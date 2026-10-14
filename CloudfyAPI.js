@@ -1104,6 +1104,43 @@ function refazerComprasDoMes(mes, ano) {
   return r;
 }
 
+// ── PENDENCIAS DE SETEMBRO/2026 — rode e esqueca ─────────────
+// 1. corrige as 9 contagens lancadas em ml/g (nao usa API)
+// 2. rebusca as compras de setembro, ja fora da janela automatica
+// 3. liga o refazer das vendas, que grava o Cod. ref. no cache
+//
+// Os passos 2 e 3 dependem da janela de horas da API; se estiver fora, o
+// retorno avisa e e so rodar de novo mais tarde. Rodar duas vezes nao faz
+// mal: o passo 1 e idempotente e os outros dois sobrescrevem o mesmo dado.
+function rodarPendenciasSetembro() {
+  var r = { quando: Utilities.formatDate(new Date(), 'America/Belem', 'dd/MM/yyyy HH:mm') };
+
+  try {
+    r.contagens = corrigirEscalaContagensSetembro();
+  } catch (e) {
+    r.contagens = 'FALHOU: ' + e.message;
+  }
+
+  try {
+    var c = refazerComprasDoMes(9, 2026);
+    r.compras = c && c.ok
+      ? (c.linhas + ' linha(s) regravadas, ' + c.preservadas + ' preservadas')
+      : ('nao rodou: ' + (c && c.erro ? c.erro : 'motivo desconhecido'));
+  } catch (e) {
+    r.compras = 'FALHOU: ' + e.message;
+  }
+
+  try {
+    r.vendas = iniciarRefazerVendas();
+  } catch (e) {
+    r.vendas = 'FALHOU: ' + e.message;
+  }
+
+  Logger.log('=== PENDENCIAS DE SETEMBRO ===');
+  Object.keys(r).forEach(function(k) { Logger.log('  ' + k + ': ' + r[k]); });
+  return r;
+}
+
 function instalarGatilhoCompras() {
   ScriptApp.getProjectTriggers().forEach(function(t) {
     if (t.getHandlerFunction() === 'atualizarCacheCompras') ScriptApp.deleteTrigger(t);
