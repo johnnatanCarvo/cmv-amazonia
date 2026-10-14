@@ -383,7 +383,7 @@ function cfyComprasNaoIntegradas() {
 //
 // O mês anterior entra junto porque nota lançada com atraso continua chegando
 // depois da virada; buscar os dois cobre isso sem depender de ninguém.
-function atualizarCacheCompras() {
+function atualizarCacheCompras(janelasForcadas) {
   var hora = Number(Utilities.formatDate(new Date(), 'America/Belem', 'H'));
   if (CFY_HORAS_PERMITIDAS.indexOf(hora) === -1) {
     Logger.log('Fora da janela permitida pela API (hora ' + hora + '). Nada feito.');
@@ -407,12 +407,20 @@ function atualizarCacheCompras() {
     // gastaria chamada e deixaria um número fechado mudando sozinho. Como o
     // cache acumula, o que foi gravado até o dia 10 fica congelado lá.
     var janelas = [];
-    if (dia <= 10) {
-      janelas.push({ ini: anoAnt * 10000 + mesAnt * 100 + 1, fim: anoAnt * 10000 + mesAnt * 100 + ultimoDiaAnt,
-                     ref: pad2(mesAnt) + '/' + anoAnt, nome: NOMES_MESES[mesAnt] });
+    if (janelasForcadas && janelasForcadas.length) {
+      // Rebusca pedida à mão (ver refazerComprasDoMes). A gravação mais abaixo
+      // só descarta a linha antiga do mês+filial que voltou com sucesso, então
+      // reconsultar um mês isolado não encosta no resto do cache.
+      janelas = janelasForcadas;
+      Logger.log('Rebusca manual: ' + janelas.map(function(j) { return j.ref; }).join(', '));
+    } else {
+      if (dia <= 10) {
+        janelas.push({ ini: anoAnt * 10000 + mesAnt * 100 + 1, fim: anoAnt * 10000 + mesAnt * 100 + ultimoDiaAnt,
+                       ref: pad2(mesAnt) + '/' + anoAnt, nome: NOMES_MESES[mesAnt] });
+      }
+      janelas.push({ ini: ano * 10000 + mes * 100 + 1, fim: ano * 10000 + mes * 100 + dia,
+                     ref: pad2(mes) + '/' + ano, nome: NOMES_MESES[mes] });
     }
-    janelas.push({ ini: ano * 10000 + mes * 100 + 1, fim: ano * 10000 + mes * 100 + dia,
-                   ref: pad2(mes) + '/' + ano, nome: NOMES_MESES[mes] });
 
     var rowsCSV     = lerTodosCSVs('compras');
     var mapaGrupos  = cfyMapaGrupos_(rowsCSV);
@@ -1073,6 +1081,29 @@ function instalarGatilhoFichas() {
 
 // Compras roda às 9h, uma hora depois das fichas: o mapa de grupos usa o cache
 // de fichas, então ele precisa estar atualizado antes.
+// Reconsulta um mês JÁ FECHADO e regrava no cache. Use quando uma nota for
+// corrigida no Cloudfy depois que o mês saiu da janela automática (dia 10 do
+// mês seguinte).
+//
+//   refazerComprasDoMes(9, 2026)   // setembro/2026
+//
+// Respeita a janela de horas da API como qualquer outra consulta. O mês inteiro
+// cabe numa chamada por filial (limite de 31 dias).
+function refazerComprasDoMes(mes, ano) {
+  var m = Number(mes), a = Number(ano);
+  if (!(m >= 1 && m <= 12)) throw new Error('Mês inválido: use refazerComprasDoMes(9, 2026).');
+  if (!(a > 2000 && a < 2100)) throw new Error('Ano inválido: use refazerComprasDoMes(9, 2026).');
+  var ultimoDia = new Date(a, m, 0).getDate();
+  var r = atualizarCacheCompras([{
+    ini: a * 10000 + m * 100 + 1,
+    fim: a * 10000 + m * 100 + ultimoDia,
+    ref: pad2(m) + '/' + a,
+    nome: NOMES_MESES[m]
+  }]);
+  Logger.log('refazerComprasDoMes ' + NOMES_MESES[m] + '/' + a + ': ' + JSON.stringify(r));
+  return r;
+}
+
 function instalarGatilhoCompras() {
   ScriptApp.getProjectTriggers().forEach(function(t) {
     if (t.getHandlerFunction() === 'atualizarCacheCompras') ScriptApp.deleteTrigger(t);
