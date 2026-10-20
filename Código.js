@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-10-20.1';
+var VERSAO_APP = '2026-10-20.2';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -1444,11 +1444,26 @@ function salvarSemana(senha, dados) {
 
     var idx = -1;
     for (var i = 0; i < lista.length; i++) { if (lista[i].id === novo.id) { idx = i; break; } }
+    // Só atualiza o registro existente se for MESMO mês/ano/semana/unidade. Um id vindo de outro mês (tela
+    // mostrando semana de outro mês) nunca pode sobrescrever aquele registro: vira um registro novo.
+    if (idx >= 0 && (lista[idx].mes !== novo.mes || Number(lista[idx].ano) !== novo.ano ||
+                     Number(lista[idx].semanaNum) !== novo.semanaNum || lista[idx].unidade !== novo.unidade)) {
+      novo.id = 'SEM-' + new Date().getTime();
+      idx = -1;
+    }
+    // Mesmo mês/semana/unidade já salvos com outro id: atualiza esse, em vez de duplicar.
+    if (idx < 0) {
+      for (var j = 0; j < lista.length; j++) {
+        if (lista[j].mes === novo.mes && Number(lista[j].ano) === novo.ano && Number(lista[j].semanaNum) === novo.semanaNum && lista[j].unidade === novo.unidade) { novo.id = lista[j].id; idx = j; break; }
+      }
+    }
     if (idx >= 0) lista[idx] = novo; else lista.push(novo);
 
     props.setProperty('SEMANAS_SALVAS_CMV', JSON.stringify(lista));
     Logger.log('Semana salva: ' + novo.mes + '/' + novo.ano + ' Semana ' + novo.semanaNum + ' (' + novo.unidade + ')');
-    return JSON.stringify({ ok: true, semana: novo, semanas: lista });
+    // devolve só as semanas DESTE mês/ano (a tela casa por número da semana + unidade)
+    var doMes = lista.filter(function(s) { return s.mes === novo.mes && Number(s.ano) === novo.ano; });
+    return JSON.stringify({ ok: true, semana: novo, semanas: doMes });
   } catch (err) {
     Logger.log('salvarSemana ERROR: ' + err.message + '\n' + err.stack);
     return JSON.stringify({ ok: false, erro: err.message });

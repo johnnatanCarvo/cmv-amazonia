@@ -3890,7 +3890,10 @@ function excluirInventarioSalvo(id){
    como início/fim de cada semana de 1 a 4 de um mês)
    ============================================================ */
 var semanasMesAtual='';
-var SEMANAS_MES_SALVAS=[]; // semanas salvas do mes atual (todas as unidades)
+var SEMANAS_MES_SALVAS=[]; // semanas salvas do mes atual (todas as unidades) -- SEMPRE so do mes/ano da tela (ver soSemanasDoMesAtual_)
+// O servidor pode devolver as semanas de varios meses (ex.: ao salvar). A tabela casa por numero da semana +
+// unidade, entao sem este filtro uma semana de SETEMBRO aparecia (e era sobrescrita) na tela de OUTUBRO.
+function soSemanasDoMesAtual_(lista){return (lista||[]).filter(function(s){return s.mes===semanasMesAtual&&Number(s.ano)===Number(ANO_OPERACIONAL);});}
 var ANO_OPERACIONAL=new Date().getFullYear(); // sistema hoje só opera num ano por vez (ver inferirAnoPorMes)
 
 function montarSeletorMesSemanas(){
@@ -3915,7 +3918,7 @@ function carregarSemanasMes(){
     .withSuccessHandler(function(json){
       var res;try{res=JSON.parse(json);}catch(e){document.getElementById('semanas-mes-body').innerHTML='<tr><td colspan="4" class="empty">Erro ao carregar.</td></tr>';return;}
       if(!res.ok){document.getElementById('semanas-mes-body').innerHTML='<tr><td colspan="4" class="empty">'+(res.erro||'Erro ao carregar.')+'</td></tr>';return;}
-      SEMANAS_MES_SALVAS=res.semanas;
+      SEMANAS_MES_SALVAS=soSemanasDoMesAtual_(res.semanas);
       rSemanasMesTable();
     })
     .withFailureHandler(function(err){
@@ -4024,7 +4027,7 @@ function salvarSemanaRow(n){
     .withSuccessHandler(function(json){
       var res;try{res=JSON.parse(json);}catch(e){status.textContent='Erro ao salvar.';status.style.color='var(--rd)';return;}
       if(!res.ok){status.textContent=res.erro||'Erro ao salvar.';status.style.color='var(--rd)';return;}
-      SEMANAS_MES_SALVAS=res.semanas;
+      SEMANAS_MES_SALVAS=soSemanasDoMesAtual_(res.semanas);
       status.textContent='Semana '+n+' salva.';status.style.color='var(--ac2)';
       rSemanasMesTable();
     })
