@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-10-21.1';
+var VERSAO_APP = '2026-10-21.2';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -923,7 +923,45 @@ function montarRowsFichasCompleto_(rowsFichasCloudfy) {
     var produto = limpaCelula(r[C_FICHAS.produto]);
     return !overrideSet[produto.toUpperCase()];
   });
-  return [[]].concat(manual.linhas).concat(cloudfyFiltrado);
+  return [[]].concat(manual.linhas).concat(cloudfyFiltrado).concat(fichasPadraoAcai_(manual.linhas, cloudfyFiltrado));
+}
+
+// Açaí na Cuia vende o açaí por VOLUME (500 ml / 1 L, médio e grosso) e o Cloudfy não tem ficha desses
+// produtos -- então o CMV Teórico da unidade ficava zerado e o estoque do litro nunca baixava com a venda.
+// Estas fichas só entram se o produto NÃO tem ficha nenhuma (nem manual, nem do Cloudfy): cadastrou lá,
+// a do cadastro passa a valer. O litro é o MP produzido da lata; o custo dele vem da produção (ver
+// acrescentarCustoProducaoAcai_).
+var FICHAS_PADRAO_ACAI = [
+  { cod: '775', produto: 'ACAI MEDIO (500ML)', insCod: '1238', insumo: 'MP ACAI LT MEDIO',  qtde: 0.5 },
+  { cod: '776', produto: 'ACAI MEDIO (1L)',    insCod: '1238', insumo: 'MP ACAI LT MEDIO',  qtde: 1 },
+  { cod: '777', produto: 'ACAI GROSSO (500ML)', insCod: '805', insumo: 'MP ACAI LT GROSSO', qtde: 0.5 },
+  { cod: '778', produto: 'ACAI GROSSO (1L)',   insCod: '805',  insumo: 'MP ACAI LT GROSSO', qtde: 1 }
+];
+function fichasPadraoAcai_(linhasManuais, linhasCloudfy) {
+  if (NEGOCIO_ATIVO !== 'ACAI NA CUIA') return [];
+  var jaTem = {};
+  (linhasManuais || []).concat(linhasCloudfy || []).forEach(function(r) {
+    if (!r) return;
+    var cod = limpaCelula(r[C_FICHAS.cod]), nome = limpaCelula(r[C_FICHAS.produto]).toUpperCase();
+    if (cod) jaTem['C' + cod] = true;
+    if (nome) jaTem['N' + nome] = true;
+  });
+  var out = [];
+  FICHAS_PADRAO_ACAI.forEach(function(f) {
+    if (jaTem['C' + f.cod] || jaTem['N' + f.produto]) return;
+    var linha = new Array(16).fill('');
+    linha[C_FICHAS.cod] = f.cod;
+    linha[C_FICHAS.produto] = f.produto;
+    linha[C_FICHAS.grupo] = 'ACAI';
+    linha[C_FICHAS.tipo] = 'Venda';
+    linha[C_FICHAS.rendimento] = 1;
+    linha[11] = f.insCod;
+    linha[C_FICHAS.insumo_nome] = f.insumo;
+    linha[C_FICHAS.insumo_qtde] = f.qtde;
+    linha[C_FICHAS.insumo_und] = 'LT';
+    out.push(linha);
+  });
+  return out;
 }
 
 // Senha separada da senha do painel CMV (SENHA_ACESSO) -- ficha técnica é

@@ -490,6 +490,8 @@ function atualizarCacheCompras(janelasForcadas) {
                  Object.keys(okMesFilial).join(', ') + '), ' + preservadas.length + ' preservadas.';
     if (falhas.length) resumo += '  ATENÇÃO -- ' + falhas.length + ' falha(s), dado antigo mantido: ' + falhas.join(' | ');
     Logger.log(resumo);
+    // A produção do Açaí na Cuia (lata -> litro) anda junto: mesmo gatilho diário, nenhum gatilho novo.
+    try { atualizarCacheProducaoAcai(); } catch (eAcai) { Logger.log('Produção do Açaí: ' + eAcai.message); }
     return { ok: true, linhas: todas.length, preservadas: preservadas.length, falhas: falhas };
   } catch (err) {
     Logger.log('Falha ao atualizar cache de compras: ' + err.message);
@@ -1147,4 +1149,192 @@ function instalarGatilhoCompras() {
   });
   ScriptApp.newTrigger('atualizarCacheCompras').timeBased().atHour(9).everyDays(1).create();
   return 'Gatilho diário de compras criado (9h).';
+}
+
+// ============================================================
+// AÇAÍ NA CUIA — PRODUÇÃO (CFYCC886, movimento de estoque diário)
+// ============================================================
+// A unidade compra a LATA do fruto (cód 804, 14,5 kg) e bate o açaí ali mesmo. O Cloudfy registra a
+// produção como movimento de estoque: a lata SAI (804) e o litro ENTRA (1238 médio, 805 grosso). O
+// litro não tem compra na unidade, então sem esta leitura ele fica "sem preço" no inventário e no
+// CMV Teórico (e, se pegasse o preço das outras lojas, valeria R$ 22-40/L em vez do custo real).
+//
+// Custo do litro de um mês = (latas consumidas x custo médio da lata no mês) / litros produzidos.
+// O rendimento varia de dia pra dia (e o lançamento nem sempre cai no mesmo dia da lata), por isso é
+// calculado pelo MÊS inteiro, nunca dia a dia.
+//
+// Só vale pro negócio ACAI NA CUIA: nas lojas do outro negócio nada muda.
+var CFY_ABA_PRODUCAO_ACAI = 'PRODUCAO_ACAI_CLOUDFY';
+var ACAI_NR_FILIAL = 4;
+var ACAI_INICIO_PRODUCAO = { ano: 2026, mes: 9, dia: 1 };   // a unidade abriu no fim de setembro/2026
+var ACAI_COD_LATA = '804', ACAI_COD_MEDIO = '1238', ACAI_COD_GROSSO = '805';
+var ACAI_NOME_LATA = 'MP ACAI LATA 14,5KG', ACAI_NOME_MEDIO = 'MP ACAI LT MEDIO', ACAI_NOME_GROSSO = 'MP ACAI LT GROSSO';
+
+function cfyProducaoAcaiLinhas_(dataIni, dataFim) {
+  var rs = cfyChamar_('CFYCC886', {
+    DataInicial: dataIni, DataFinal: dataFim, CodRefProduto: null,
+    ConsolidarFiliais: null, ConsolidarCentrosEstoque: null, ConsolidarMotivos: null,
+    // Só o formato [{NrFilial: n}] filtra; "4" e ["4"] dão erro ou lista vazia.
+    Filiais: [{ NrFilial: ACAI_NR_FILIAL }], CentrosEstoque: null, Motivos: null
+  }, ACAI_NR_FILIAL);
+  var pos = Array.isArray(rs.Posicoes) ? rs.Posicoes : [];
+  var cods = {}; cods[ACAI_COD_LATA] = true; cods[ACAI_COD_MEDIO] = true; cods[ACAI_COD_GROSSO] = true;
+  var linhas = [];
+  pos.forEach(function(p) {
+    var cod = cfyTexto_(p.CodRefProduto);
+    if (!cods[cod]) return;
+    if (Number(p.NrFilial) !== ACAI_NR_FILIAL) return;
+    var s = String(p.Data);
+    linhas.push([s.slice(6, 8) + '/' + s.slice(4, 6) + '/' + s.slice(0, 4), cod, cfyTexto_(p.Produto),
+                 Number(p.QtdeEntradas) || 0, Number(p.QtdeSaidas) || 0]);
+  });
+  return linhas;
+}
+
+// Gatilho diário (chamado no fim de atualizarCacheCompras): reescreve a aba inteira, já que são poucas
+// linhas, e mantém a anterior se a API falhar.
+function atualizarCacheProducaoAcai() {
+  var hora = Number(Utilities.formatDate(new Date(), 'America/Belem', 'H'));
+  if (CFY_HORAS_PERMITIDAS.indexOf(hora) === -1) return { ok: false, erro: 'Fora da janela permitida pela API do Cloudfy.' };
+  try {
+    var hoje = new Date();
+    var fim = Number(Utilities.formatDate(hoje, 'America/Belem', 'yyyyMMdd'));
+    var ini = new Date(ACAI_INICIO_PRODUCAO.ano, ACAI_INICIO_PRODUCAO.mes - 1, ACAI_INICIO_PRODUCAO.dia);
+    var todas = [];
+    // a consulta aceita até 31 dias por chamada
+    for (var guarda = 0; guarda < 24; guarda++) {
+      var iniNum = ini.getFullYear() * 10000 + (ini.getMonth() + 1) * 100 + ini.getDate();
+      if (iniNum > fim) break;
+      var f = new Date(ini.getFullYear(), ini.getMonth(), ini.getDate() + 30);
+      var fNum = Math.min(fim, f.getFullYear() * 10000 + (f.getMonth() + 1) * 100 + f.getDate());
+      todas = todas.concat(cfyProducaoAcaiLinhas_(iniNum, fNum));
+      ini = new Date(ini.getFullYear(), ini.getMonth(), ini.getDate() + 31);
+    }
+    var ss = obterFichasManuaisSheet_();
+    var aba = ss.getSheetByName(CFY_ABA_PRODUCAO_ACAI);
+    if (!aba) aba = ss.insertSheet(CFY_ABA_PRODUCAO_ACAI);
+    var dados = [['DATA', 'COD', 'PRODUTO', 'ENTRADAS', 'SAIDAS']].concat(todas);
+    aba.clearContents();
+    aba.getRange(1, 1, 1, 1).setNumberFormat('@');
+    aba.getRange(2, 1, Math.max(todas.length, 1), 1).setNumberFormat('@');
+    aba.getRange(1, 1, dados.length, 5).setValues(dados);
+    aba.getRange(1, 1, 1, 5).setFontWeight('bold');
+    PropertiesService.getScriptProperties().setProperty('CFY_PRODUCAO_ACAI_ATUALIZADO', Utilities.formatDate(hoje, 'America/Belem', 'dd/MM/yyyy HH:mm'));
+    SpreadsheetApp.flush();
+    CACHE_PRODUCAO_ACAI_MEMO_ = undefined;   // a próxima leitura desta execução já pega o dado novo
+    Logger.log('Cache de produção do Açaí: ' + todas.length + ' linhas.');
+    return { ok: true, linhas: todas.length };
+  } catch (err) {
+    Logger.log('Falha ao atualizar a produção do Açaí: ' + err.message);
+    return { ok: false, erro: err.message };
+  }
+}
+
+// [{ano, mes, dia, cod, ent, sai}] — ou null se não há cache. Lê a aba UMA vez por execução (o histórico
+// de preço é montado várias vezes por requisição) e, se a aba nunca foi preenchida, tenta preencher
+// uma vez (só funciona dentro das horas liberadas pela API).
+var CACHE_PRODUCAO_ACAI_MEMO_ = undefined;
+function cfyLerCacheProducaoAcai_() {
+  if (CACHE_PRODUCAO_ACAI_MEMO_ !== undefined) return CACHE_PRODUCAO_ACAI_MEMO_;
+  var linhas = cfyLerAbaProducaoAcai_();
+  if (linhas === null) {
+    try { var r = atualizarCacheProducaoAcai(); if (r && r.ok) linhas = cfyLerAbaProducaoAcai_(); } catch (e) { /* segue sem custo de produção */ }
+  }
+  CACHE_PRODUCAO_ACAI_MEMO_ = linhas;
+  return linhas;
+}
+function cfyLerAbaProducaoAcai_() {
+  try {
+    var ss = obterFichasManuaisSheet_();
+    var aba = ss.getSheetByName(CFY_ABA_PRODUCAO_ACAI);
+    if (!aba || aba.getLastRow() < 2) return null;
+    var valores = aba.getRange(2, 1, aba.getLastRow() - 1, 5).getValues();
+    var linhas = [];
+    valores.forEach(function(r) {
+      var d = cfyDataBR_(r[0]);
+      if (d.length < 10) return;
+      linhas.push({ dia: Number(d.slice(0, 2)), mes: Number(d.slice(3, 5)), ano: Number(d.slice(6, 10)),
+                    cod: cfyTexto_(r[1]), ent: Number(r[3]) || 0, sai: Number(r[4]) || 0 });
+    });
+    return linhas;
+  } catch (err) {
+    Logger.log('Cache de produção do Açaí indisponível: ' + err.message);
+    return null;
+  }
+}
+
+// Por mês: latas consumidas, litros produzidos (médio e grosso).
+function cfyProducaoAcaiPorMes_(linhas) {
+  var porMes = {};
+  (linhas || []).forEach(function(l) {
+    var k = l.ano + '|' + l.mes;
+    var o = porMes[k] = porMes[k] || { ano: l.ano, mes: l.mes, latas: 0, litrosMedio: 0, litrosGrosso: 0 };
+    if (l.cod === ACAI_COD_LATA) o.latas += l.sai;
+    else if (l.cod === ACAI_COD_MEDIO) o.litrosMedio += l.ent;
+    else if (l.cod === ACAI_COD_GROSSO) o.litrosGrosso += l.ent;
+  });
+  return porMes;
+}
+
+// Resumo do mês pra tela e pro log: rendimento (litros por lata) e custo do litro.
+// historicoPorInsumo: o mesmo mapa de preparo de preAgregarCustoMedioPorInsumo (custo da lata por mês).
+function cfyCustoProducaoAcai_(historicoPorInsumo) {
+  var linhas = cfyLerCacheProducaoAcai_();
+  var porMes = cfyProducaoAcaiPorMes_(linhas);
+  var out = [];
+  Object.keys(porMes).forEach(function(k) {
+    var o = porMes[k];
+    var litros = o.litrosMedio + o.litrosGrosso;
+    var custoLata = buscarCustoInsumoComFallback(historicoPorInsumo || {}, ACAI_NOME_LATA, ORDEM_MESES[o.mes - 1], o.ano);
+    var item = { ano: o.ano, mes: o.mes, latas: r2(o.latas), litros: r2(litros), litrosMedio: r2(o.litrosMedio), litrosGrosso: r2(o.litrosGrosso),
+                 custoLata: custoLata, rendimento: null, custoLitro: null };
+    if (o.latas > 0 && litros > 0) {
+      item.rendimento = r4(litros / o.latas);
+      if (custoLata !== null && custoLata !== undefined) item.custoLitro = r4(o.latas * custoLata / litros);
+    }
+    out.push(item);
+  });
+  out.sort(function(a, b) { return (a.ano * 12 + a.mes) - (b.ano * 12 + b.mes); });
+  return out;
+}
+
+// Chamada por preAgregarCustoMedioPorInsumo (Dados.js): acrescenta ao histórico de preço o custo do
+// litro batido, com o MESMO nome do insumo que as fichas e as contagens usam. Só no negócio Açaí.
+function acrescentarCustoProducaoAcai_(porInsumo) {
+  if (NEGOCIO_ATIVO !== 'ACAI NA CUIA') return;
+  var meses = cfyCustoProducaoAcai_(porInsumo);
+  [ACAI_NOME_MEDIO, ACAI_NOME_GROSSO].forEach(function(nome) {
+    meses.forEach(function(m) {
+      if (m.custoLitro === null) return;
+      var lista = porInsumo[nome] = porInsumo[nome] || [];
+      if (lista.some(function(e) { return e.ano === m.ano && e.mes === m.mes; })) return;   // compra real do mês manda
+      lista.push({ ano: m.ano, mes: m.mes, custoUnit: m.custoLitro });
+    });
+    if (porInsumo[nome]) porInsumo[nome].sort(function(a, b) { return (a.ano * 12 + a.mes) - (b.ano * 12 + b.mes); });
+  });
+}
+
+// Chamada pelos catálogos (Dados.js): os litros batidos não são comprados, então não aparecem em
+// Compras — sem isso a contagem perde o grupo e o casamento por código.
+function acrescentarCatalogoAcai_(catalogoPorNome, catalogoPorCodigo) {
+  if (NEGOCIO_ATIVO !== 'ACAI NA CUIA') return;
+  var itens = [[ACAI_COD_MEDIO, ACAI_NOME_MEDIO], [ACAI_COD_GROSSO, ACAI_NOME_GROSSO]];
+  itens.forEach(function(it) {
+    if (catalogoPorNome && !catalogoPorNome[it[1].toUpperCase()]) catalogoPorNome[it[1].toUpperCase()] = { nome: it[1], grupo: 'ACAI' };
+    if (catalogoPorCodigo && !catalogoPorCodigo[it[0]]) catalogoPorCodigo[it[0]] = { nome: it[1], grupo: 'ACAI' };
+  });
+}
+
+// Pra rodar no editor: mostra o rendimento e o custo do litro, mês a mês.
+function testarProducaoAcai() {
+  var r = atualizarCacheProducaoAcai();
+  Logger.log('Atualização: ' + JSON.stringify(r));
+  var rows = lerComprasCompleto_();
+  var historico = preAgregarCustoMedioPorInsumo(rows);
+  var resumo = cfyCustoProducaoAcai_(historico);
+  resumo.forEach(function(m) {
+    Logger.log(m.mes + '/' + m.ano + ': ' + m.latas + ' latas -> ' + m.litros + ' L (' + (m.rendimento === null ? '?' : m.rendimento) + ' L/lata), lata R$ ' +
+               (m.custoLata === null ? '?' : m.custoLata) + ', litro R$ ' + (m.custoLitro === null ? '?' : m.custoLitro));
+  });
+  return resumo;
 }

@@ -1541,6 +1541,7 @@ function preAgregarCatalogoProdutos(rowsCompras, rowsVendas) {
       registrar(limpaCelula(rv[C_VENDAS.produto]), limpaCelula(rv[C_VENDAS.grupo]));
     }
   }
+  if (typeof acrescentarCatalogoAcai_ === 'function') acrescentarCatalogoAcai_(catalogo, null);
   return catalogo;
 }
 
@@ -1565,6 +1566,7 @@ function preAgregarCatalogoPorCodigo(rowsCompras) {
     if (!catalogo[cod]) catalogo[cod] = { nome: nome, grupo: grupo || '' };
     else if (!catalogo[cod].grupo && grupo) catalogo[cod].grupo = grupo;
   }
+  if (typeof acrescentarCatalogoAcai_ === 'function') acrescentarCatalogoAcai_(null, catalogo);
   return catalogo;
 }
 
@@ -1685,6 +1687,8 @@ function preAgregarCustoMedioPorInsumo(rowsCompras) {
   Object.keys(porInsumo).forEach(function(produto) {
     porInsumo[produto].sort(function(a, b) { return (a.ano * 12 + a.mes) - (b.ano * 12 + b.mes); });
   });
+  // Açaí na Cuia: o litro batido não é comprado, é produzido da lata -- o custo vem da produção do Cloudfy.
+  if (typeof acrescentarCustoProducaoAcai_ === 'function') acrescentarCustoProducaoAcai_(porInsumo);
   return porInsumo;
 }
 
