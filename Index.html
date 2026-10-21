@@ -711,6 +711,10 @@ main{max-width:none;margin:0;margin-left:var(--side-w);padding:calc(var(--top-h)
         <div class="ssub" style="margin:0;">Todas as linhas de compra do mês selecionado.</div>
         <div class="mseg" id="compras-mseg"></div>
       </div>
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
+        <button type="button" class="gd-close" id="compras-refazer-btn" onclick="refazerComprasPainel()">↻ Refazer compras pela API</button>
+        <div id="compras-refazer-status" style="font-size:12px;color:var(--fg3);"></div>
+      </div>
       <div class="card">
         <div class="card-h"><div class="card-t">Linhas de Compra</div><div class="card-s" id="compras-count"></div></div>
         <div class="ctrl"><input type="text" id="compras-busca" placeholder="Buscar produto, filial ou grupo..." oninput="rComprasTable()"></div>
@@ -4167,6 +4171,46 @@ function fQd(v){ return (v||0).toLocaleString('pt-BR',{maximumFractionDigits:4})
 
 function setMesCompras(m){ mesCompras=m; carregarCompras(); }
 
+// Refaz as compras do mês anterior e do mês atual (o calendário de hoje) buscando de novo no Cloudfy: é o que
+// traz de volta nota corrigida ou produto integrado de novo, inclusive de mês que já fechou na rotina automática.
+var MES_CURTO_REFAZER=['Jan','Fev','Mar','Abr','Mai','Jun','Jul','Ago','Set','Out','Nov','Dez'];
+function mesesParaRefazerCompras_(){
+  var hoje=new Date(), m=hoje.getMonth()+1, a=hoje.getFullYear();
+  var ma=m===1?12:m-1, aa=m===1?a-1:a;
+  return [{mes:ma,ano:aa},{mes:m,ano:a}];
+}
+function rotuloRefazerCompras_(){
+  var b=document.getElementById('compras-refazer-btn');
+  if(!b||b.disabled)return;
+  var ms=mesesParaRefazerCompras_();
+  b.textContent='↻ Refazer '+MES_CURTO_REFAZER[ms[0].mes-1]+' e '+MES_CURTO_REFAZER[ms[1].mes-1]+' pela API';
+}
+function refazerComprasPainel(){
+  var btn=document.getElementById('compras-refazer-btn'), st=document.getElementById('compras-refazer-status');
+  var ms=mesesParaRefazerCompras_();
+  var nomes=MES_CURTO_REFAZER[ms[0].mes-1]+'/'+ms[0].ano+' e '+MES_CURTO_REFAZER[ms[1].mes-1]+'/'+ms[1].ano;
+  if(!confirm('Refazer as compras de '+nomes+' buscando de novo no Cloudfy?\n\nAs linhas desses meses são trocadas pelas atuais (nota corrigida e produto integrado de novo entram). Os outros meses não mudam. Leva cerca de 1 minuto.'))return;
+  var rotulo=btn.textContent;
+  btn.disabled=true;btn.textContent='⏳ Refazendo...';
+  st.style.color='var(--fg3)';st.textContent='Buscando no Cloudfy — não feche a página...';
+  function fim(){btn.disabled=false;rotuloRefazerCompras_();}
+  google.script.run
+    .withSuccessHandler(function(json){
+      var res;try{res=JSON.parse(json);}catch(e){fim();st.style.color='var(--rd)';st.textContent='Resposta inválida do servidor.';return;}
+      fim();
+      var rs=res.resultados||[];
+      var linhasTxt=rs.map(function(r){
+        return (ML_MAP[(r.mes||'').toUpperCase()]||r.mes)+'/'+r.ano+': '+(r.ok?(r.linhas+' linhas'+((r.falhas&&r.falhas.length)?(' ⚠ '+r.falhas.length+' filial(is) falhou — dado antigo mantido'):'')):('não refeito ('+r.erro+')'));
+      }).join(' · ');
+      var algumOk=rs.some(function(r){return r.ok;});
+      if(res.ok){st.style.color='var(--ac2)';st.textContent='✓ '+linhasTxt;}
+      else{st.style.color='var(--rd)';st.textContent=(res.erro?res.erro+' ':'')+linhasTxt;}
+      if(algumOk){carregarCompras();atualizarPainelAposCorrecao();}
+    })
+    .withFailureHandler(function(err){fim();st.style.color='var(--rd)';st.textContent='Falha: '+(err.message||err);})
+    .refazerComprasMesesPainel(SENHA_ATUAL,ms);
+}
+
 function montarSeletorMesCompras(){
   var seg=document.getElementById('compras-mseg');
   if(!seg||seg.dataset.ready)return;
@@ -4175,6 +4219,7 @@ function montarSeletorMesCompras(){
 }
 
 function carregarCompras(){
+  rotuloRefazerCompras_();
   if(!mesCompras){ if(MESES.length) mesCompras=MESES[MESES.length-1]; else return; }
   montarSeletorMesCompras();
   document.querySelectorAll('#compras-mseg button').forEach(function(b){b.classList.toggle('on',b.dataset.m===mesCompras);});

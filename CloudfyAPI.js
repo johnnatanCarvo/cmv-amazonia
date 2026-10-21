@@ -1143,6 +1143,52 @@ function rodarPendenciasSetembro() {
   return r;
 }
 
+// Mesma rebusca, chamada pela tela (Ajustes > Compras > "Refazer compras"). Aceita até 3 meses
+// [{mes: 9, ano: 2026}, ...] e refaz um de cada vez. Cada mês gasta 1 consulta por filial na cota da API.
+// Trava de 5 min contra clique duplo; respeita a janela de horas da API como qualquer consulta.
+function refazerComprasMesesPainel(senha, meses) {
+  if (!validarSenha(senha)) return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  if (!Array.isArray(meses) || !meses.length || meses.length > 3) {
+    return JSON.stringify({ ok: false, erro: 'Informe de 1 a 3 meses.' });
+  }
+  var cache = CacheService.getScriptCache();
+  if (cache.get('refazer_compras_andamento')) {
+    return JSON.stringify({ ok: false, erro: 'Já existe uma rebusca de compras em andamento. Aguarde 1 ou 2 minutos.' });
+  }
+  cache.put('refazer_compras_andamento', '1', 300);
+  try {
+    var resultados = [];
+    for (var i = 0; i < meses.length; i++) {
+      var m = Number(meses[i] && meses[i].mes), a = Number(meses[i] && meses[i].ano);
+      if (!(m >= 1 && m <= 12) || !(a > 2000 && a < 2100)) {
+        return JSON.stringify({ ok: false, erro: 'Mês ou ano inválido.', resultados: resultados });
+      }
+      var item = { mes: NOMES_MESES[m], ano: a };
+      try {
+        var r = refazerComprasDoMes(m, a);
+        item.ok = !!(r && r.ok);
+        if (r && r.ok) { item.linhas = r.linhas; item.preservadas = r.preservadas; item.falhas = r.falhas || []; }
+        else item.erro = (r && r.erro) || 'motivo desconhecido';
+      } catch (e) {
+        item.ok = false; item.erro = e.message;
+      }
+      resultados.push(item);
+      if (!item.ok) break;   // fora da janela da API ou falha geral: os próximos teriam o mesmo problema
+    }
+    return JSON.stringify({ ok: resultados.length === meses.length && resultados.every(function(x) { return x.ok; }), resultados: resultados });
+  } finally {
+    cache.remove('refazer_compras_andamento');
+  }
+}
+
+// Atalho pro editor do Apps Script: refaz setembro e outubro/2026 de uma vez.
+function refazerComprasSetembroEOutubro() {
+  var r = JSON.parse(refazerComprasMesesPainel(PropertiesService.getScriptProperties().getProperty('SENHA_ACESSO'),
+                                              [{ mes: 9, ano: 2026 }, { mes: 10, ano: 2026 }]));
+  Logger.log(JSON.stringify(r));
+  return r;
+}
+
 function instalarGatilhoCompras() {
   ScriptApp.getProjectTriggers().forEach(function(t) {
     if (t.getHandlerFunction() === 'atualizarCacheCompras') ScriptApp.deleteTrigger(t);
