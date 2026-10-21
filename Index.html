@@ -1396,6 +1396,7 @@ function montarUnidadesDoNegocio_(){
    o mesmo mês.
    ============================================================ */
 var ANALISE_SEMANAL_CACHE={};
+var ANALISE_SEMANAL_ERRO={};   // mês -> motivo do último erro ao calcular as semanas de análise (não entra no cache)
 var periodoAtualCMC={tipo:'mes'};
 var periodoAtualCMV={tipo:'mes'};
 
@@ -1450,13 +1451,14 @@ function obterAnaliseSemanalCache_(mesNome, callback){
   if(ANALISE_SEMANAL_CACHE[mesNome]){callback(ANALISE_SEMANAL_CACHE[mesNome]);return;}
   google.script.run.withSuccessHandler(function(json){
     var res;try{res=JSON.parse(json);}catch(e){res=null;}
-    var dados=(res&&res.ok)?res:{semanas:{},quinzenas:{},avisos:[]};
-    ANALISE_SEMANAL_CACHE[mesNome]=dados;
-    callback(dados);
-  }).withFailureHandler(function(){
-    var dados={semanas:{},quinzenas:{},avisos:[]};
-    ANALISE_SEMANAL_CACHE[mesNome]=dados;
-    callback(dados);
+    if(res&&res.ok){delete ANALISE_SEMANAL_ERRO[mesNome];ANALISE_SEMANAL_CACHE[mesNome]=res;callback(res);return;}
+    // Erro NÃO fica no cache (senão o mês ficaria "sem semanas" até recarregar a página): a tela mostra o
+    // motivo e a próxima vez tenta de novo.
+    ANALISE_SEMANAL_ERRO[mesNome]=(res&&res.erro)||'resposta inválida do servidor';
+    callback({semanas:{},quinzenas:{},avisos:[]});
+  }).withFailureHandler(function(err){
+    ANALISE_SEMANAL_ERRO[mesNome]=(err&&err.message)||String(err);
+    callback({semanas:{},quinzenas:{},avisos:[]});
   }).calcularAnaliseSemanal(SENHA_ATUAL, mesNome, ANO_OPERACIONAL, NEGOCIO_ATUAL);
 }
 
@@ -1491,7 +1493,16 @@ function montarGranSeg_(elId, mesNome, periodoAtual, onSelectFn){
   var el=document.getElementById(elId);
   if(!el)return;
   var disponiveis=periodosDisponiveis_(mesNome);
-  if(!disponiveis.length){el.style.display='none';el.innerHTML='';return;}
+  if(!disponiveis.length){
+    var motivo=ANALISE_SEMANAL_ERRO[mesNome];
+    var carregado=!!ANALISE_SEMANAL_CACHE[mesNome];
+    if(!motivo&&!carregado){el.style.display='none';el.innerHTML='';return;}   // ainda carregando
+    el.style.display='';
+    el.innerHTML='<span style="font-size:12px;color:'+(motivo?'var(--rd)':'var(--fg3)')+';padding:4px 2px;">'+
+      (motivo?('Semanas de análise: erro ao calcular ('+String(motivo).replace(/</g,'&lt;')+')'):
+              ('Semanas de análise: nenhuma configurada em '+(ML_MAP[mesNome]||mesNome)+' — configure em Ajustes › Inventário › Semanas do Mês'))+'</span>';
+    return;
+  }
   el.style.display='';
   var chaveAtual=periodoParaChave_(periodoAtual);
   var html='<button class="'+(!chaveAtual?'on':'')+'" onclick="'+onSelectFn+'(null)">Mês Todo</button>';
@@ -1589,7 +1600,7 @@ function atualizarGranularidadeCMC(){
     if(mesAtual!==mesNoMomento)return; // usuário já trocou de mês antes da resposta voltar
     if(periodoAtualCMC.tipo==='custom')return;
     montarGranSeg_('mes-granseg', mesNoMomento, periodoAtualCMC, 'setPeriodoCMC');
-    if(!jaTinhaCache&&periodoAtualCMC.tipo!=='mes')rMes();
+    if(!jaTinhaCache&&ANALISE_SEMANAL_CACHE[mesNoMomento]&&periodoAtualCMC.tipo!=='mes')rMes();
   });
 }
 function setPeriodoCMC(key){
@@ -2321,7 +2332,7 @@ function atualizarGranularidadeCMV(){
     if(mesCMV!==mesNoMomento)return;
     if(periodoAtualCMV.tipo==='custom')return;
     montarGranSeg_('cmv-granseg', mesNoMomento, periodoAtualCMV, 'setPeriodoCMV');
-    if(!jaTinhaCache&&periodoAtualCMV.tipo!=='mes')rCMV();
+    if(!jaTinhaCache&&ANALISE_SEMANAL_CACHE[mesNoMomento]&&periodoAtualCMV.tipo!=='mes')rCMV();
   });
 }
 function setPeriodoCMV(key){
