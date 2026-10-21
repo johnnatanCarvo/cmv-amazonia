@@ -444,7 +444,7 @@ main{max-width:none;margin:0;margin-left:var(--side-w);padding:calc(var(--top-h)
         <div class="useg" id="mes-useg"></div>
         <div class="mseg" id="mes-granseg" style="display:none;"></div>
         <div style="display:flex;gap:8px;align-items:center;">
-          <button type="button" class="gd-close" id="mes-custom-toggle" onclick="toggleCustomCMC()">Período personalizado</button>
+          <button type="button" class="gd-close" id="mes-custom-toggle" style="display:none" onclick="toggleCustomCMC()">Período personalizado</button>
           <div id="mes-custom-box" style="display:none;align-items:center;gap:6px;">
             <input type="date" id="mes-custom-ini" style="font-size:12px;padding:5px 7px;border:1px solid var(--ln2);border-radius:7px;background:var(--bg3);color:var(--fg);font-family:inherit;">
             <span style="font-size:12px;color:var(--fg2);">até</span>
@@ -624,7 +624,7 @@ main{max-width:none;margin:0;margin-left:var(--side-w);padding:calc(var(--top-h)
         <div class="useg" id="cmv-useg"></div>
         <div class="mseg" id="cmv-granseg" style="display:none;"></div>
         <div style="display:flex;gap:8px;align-items:center;">
-          <button type="button" class="gd-close" id="cmv-custom-toggle" onclick="toggleCustomCMV()">Período personalizado</button>
+          <button type="button" class="gd-close" id="cmv-custom-toggle" style="display:none" onclick="toggleCustomCMV()">Período personalizado</button>
           <div id="cmv-custom-box" style="display:none;align-items:center;gap:6px;">
             <span style="font-size:11px;color:var(--fg2);white-space:nowrap;" title="Cada unidade usa, automaticamente, a contagem real mais próxima dessas datas (até 10 dias) -- prioriza um inventário salvo em Ajustes se existir um perto o suficiente.">período:</span>
             <input type="date" id="cmv-custom-ini" style="font-size:12px;padding:5px 7px;border:1px solid var(--ln2);border-radius:7px;background:var(--bg3);color:var(--fg);font-family:inherit;">
@@ -653,6 +653,7 @@ main{max-width:none;margin:0;margin-left:var(--side-w);padding:calc(var(--top-h)
       </div>
     </div>
 
+    <div id="semcal-periodos"></div>
     <div id="semcal-content"></div>
   </section>
 
@@ -1561,6 +1562,7 @@ function dadosPeriodoCMV(mesNome, periodo){
   var pctSemAjuste=(fatFil>0&&f.cmv_sem_ajuste!==undefined)?Math.round(f.cmv_sem_ajuste/fatFil*10000)/100:null;
   return {ei:f.ei,ef:f.ef,compras:f.compras,cmv:f.cmv,pct:pct,fat:fatFil,
     data_ei:unidadeBloco.dataInicio||null,data_ef:unidadeBloco.dataFim||null,grupos:(f.grupos||null),
+    invInicio:unidadeBloco.invInicio||null,invFim:unidadeBloco.invFim||null,periodoMarcado:!!unidadeBloco.periodoMarcado,
     transfEntrada:f.transf_entrada||0,transfSaida:f.transf_saida||0,transfSaldo:f.transf_saldo||0,
     cmvAjustado:f.cmv,pctAjustado:pct,
     cmvSemAjuste:(f.cmv_sem_ajuste!==undefined?f.cmv_sem_ajuste:f.cmv),pctSemAjuste:pctSemAjuste,
@@ -1575,14 +1577,21 @@ function setMes(m){mesAtual=m;periodoAtualCMC={tipo:'mes'};limparPeriodoCustomCM
 function setUni(u){uniAtual=u;document.querySelectorAll('#mes-useg button').forEach(function(b){b.classList.toggle('on',b.textContent===(u==='TODAS'?'Todas':nomeUni(u)));});rMes();}
 function nomeUni(f){var map={'MARCO':'Marco','PORTO FUTURO':'Porto Futuro','UMARIZAL':'Umarizal','ACAI NA CUIA':'Açaí na Cuia'};return map[f]||f.charAt(0)+f.slice(1).toLowerCase();}
 
-// O seletor de granularidade Semana 1-4/Quinzena (baseado nas contagens
-// reais salvas em Ajustes > Inventário > Semanas do Mês) foi desativado --
-// substituído pela aba "Semana Calendário" (sempre segunda a domingo). Essa
-// função fica como no-op de propósito: nunca popula #mes-granseg (que
-// permanece escondido, display:none no HTML), então periodoAtualCMC nunca
-// sai de {tipo:'mes'} (exceto pelo período personalizado, que é outro
-// caminho, independente deste seletor).
-function atualizarGranularidadeCMC(){}
+// Seletor de SEMANA DE ANÁLISE (Semana 1-4 / Quinzena): usa os inventários de início e fim salvos em
+// Ajustes > Inventário > Semanas do Mês pro EI/EF, e o período de vendas e compras marcado na aba
+// Semana Calendário (sem período marcado, vale o das datas das contagens).
+function atualizarGranularidadeCMC(){
+  var mesNoMomento=mesAtual;
+  // rMes() já rodou (síncrono) com o que havia até agora: se o cache das semanas deste mês chega só agora
+  // e a granularidade escolhida não é "mês inteiro", precisa desenhar de novo com o dado certo.
+  var jaTinhaCache=!!ANALISE_SEMANAL_CACHE[mesNoMomento];
+  obterAnaliseSemanalCache_(mesNoMomento, function(){
+    if(mesAtual!==mesNoMomento)return; // usuário já trocou de mês antes da resposta voltar
+    if(periodoAtualCMC.tipo==='custom')return;
+    montarGranSeg_('mes-granseg', mesNoMomento, periodoAtualCMC, 'setPeriodoCMC');
+    if(!jaTinhaCache&&periodoAtualCMC.tipo!=='mes')rMes();
+  });
+}
 function setPeriodoCMC(key){
   periodoAtualCMC=key?chaveParaPeriodo_(key):{tipo:'mes'};
   limparPeriodoCustomCMC();
@@ -2069,6 +2078,86 @@ function badgeSemCal_(linha){
   return '<span class="tag tB" title="Estoque inicial '+(linha.eiData||'')+' ('+(linha.eiDesvioDias||0)+'d) · Estoque final '+(linha.efData||'')+' ('+(linha.efDesvioDias||0)+'d)">aprox. ±'+desvio+'d</span>';
 }
 
+// ── Período de VENDAS E COMPRAS de cada semana de análise ──
+// Um intervalo só (compras e vendas nunca diferem). O estoque inicial/final da semana vêm dos inventários
+// salvos em Ajustes > Inventário > Semanas do Mês. Sem período marcado, o CMV/CMC da semana usa as datas das contagens.
+var SEMCAL_PERIODOS={}, SEMCAL_SEMANAS_SALVAS=[], SEMCAL_PERIODOS_MES='';
+function semCalIsoParaBR_(s){return s?s.slice(8,10)+'/'+s.slice(5,7)+'/'+s.slice(0,4):'';}
+function semCalBRParaIso_(s){var m=String(s||'').match(/^(\d{2})\/(\d{2})\/(\d{4})$/);return m?m[3]+'-'+m[2]+'-'+m[1]:'';}
+function carregarSemCalPeriodos(){
+  var mes=mesSemCal, pend=3, per={}, sem=[];
+  function fim(){
+    if(--pend>0)return;
+    if(mes!==mesSemCal)return;               // trocou de mês antes de chegar
+    SEMCAL_PERIODOS=per; SEMCAL_SEMANAS_SALVAS=sem; SEMCAL_PERIODOS_MES=mes;
+    rSemCalPeriodos();
+  }
+  google.script.run.withSuccessHandler(function(j){try{var r=JSON.parse(j);if(r.ok)per=r.periodos||{};}catch(e){}fim();})
+    .withFailureHandler(function(){fim();}).listarPeriodosSemanas(SENHA_ATUAL,mes,ANO_OPERACIONAL);
+  google.script.run.withSuccessHandler(function(j){try{var r=JSON.parse(j);if(r.ok)sem=r.semanas||[];}catch(e){}fim();})
+    .withFailureHandler(function(){fim();}).listarSemanasSalvas(SENHA_ATUAL,mes,ANO_OPERACIONAL);
+  if(INVENTARIOS_SALVOS.length){fim();}
+  else google.script.run.withSuccessHandler(function(j){try{var r=JSON.parse(j);if(r.ok)INVENTARIOS_SALVOS=r.inventarios||[];}catch(e){}fim();})
+    .withFailureHandler(function(){fim();}).listarInventariosSalvos(SENHA_ATUAL);
+}
+function rSemCalPeriodos(){
+  var el=document.getElementById('semcal-periodos');
+  if(!el)return;
+  if(SEMCAL_PERIODOS_MES!==mesSemCal){el.innerHTML='';return;}
+  function rotuloInv(id){var o=INVENTARIOS_SALVOS.filter(function(x){return x.id===id;})[0];return o?o.label:'(inventário removido)';}
+  var unidades=(uniSemCal==='TODAS')?SEMCAL_UNIDADES:[uniSemCal];
+  var semanasCal=SEMCAL_CACHE[mesSemCal]||[];
+  var linhas=[1,2,3,4].map(function(n){
+    var inv=unidades.map(function(u){
+      var s=SEMCAL_SEMANAS_SALVAS.filter(function(x){return x.semanaNum===n&&x.unidade===u;})[0];
+      if(!s)return uniSemCal==='TODAS'?'':'<span style="color:var(--fg3)">sem inventários configurados</span>';
+      return (uniSemCal==='TODAS'?'<b>'+nomeUni(u)+'</b> ':'')+rotuloInv(s.inventarioInicialId)+' → '+rotuloInv(s.inventarioFinalId);
+    }).filter(Boolean).join('<br>')||'<span style="color:var(--fg3)">sem inventários configurados</span>';
+    var p=SEMCAL_PERIODOS[n]||{ini:'',fim:''};
+    var opts='<option value="">Semana calendário…</option>'+semanasCal.map(function(w){
+      var a=semCalBRParaIso_(w.segunda), b=semCalBRParaIso_(w.domingo);
+      return '<option value="'+a+'|'+b+'">'+w.segunda.slice(0,5)+' a '+w.domingo.slice(0,5)+'</option>';
+    }).join('');
+    var estiloIn='font-size:12px;padding:5px 7px;border:1px solid var(--ln2);border-radius:7px;background:var(--bg3);color:var(--fg);font-family:inherit;';
+    return '<tr>'+
+      '<td class="hi">Semana '+n+'</td>'+
+      '<td style="font-size:12px;">'+inv+'</td>'+
+      '<td><div style="display:flex;gap:6px;align-items:center;">'+
+        '<input type="date" id="semcal-per-ini-'+n+'" value="'+p.ini+'" style="'+estiloIn+'">'+
+        '<span style="font-size:12px;color:var(--fg2);">até</span>'+
+        '<input type="date" id="semcal-per-fim-'+n+'" value="'+p.fim+'" style="'+estiloIn+'"></div></td>'+
+      '<td><select onchange="preencherPeriodoSemCal('+n+',this.value)" style="'+estiloIn+'">'+opts+'</select></td>'+
+      '<td class="r"><button type="button" class="gd-close" onclick="salvarPeriodoSemCal('+n+')">Salvar</button>'+
+        (p.ini?' <button type="button" class="gd-close" onclick="salvarPeriodoSemCal('+n+',true)">Limpar</button>':'')+'</td></tr>';
+  }).join('');
+  el.innerHTML='<div class="card" style="margin-bottom:14px;"><div style="font-weight:700;margin-bottom:10px;">Período de vendas e compras por semana de análise</div>'+
+    '<div class="twrap"><table><thead><tr><th>Semana de análise</th><th>Inventários (início → fim)</th><th>Período de vendas e compras</th><th>Atalho</th><th></th></tr></thead>'+
+    '<tbody>'+linhas+'</tbody></table></div><div id="semcal-per-status" style="font-size:12px;margin-top:8px;"></div></div>';
+}
+function preencherPeriodoSemCal(n,valor){
+  if(!valor)return;
+  var p=valor.split('|');
+  document.getElementById('semcal-per-ini-'+n).value=p[0];
+  document.getElementById('semcal-per-fim-'+n).value=p[1];
+}
+function salvarPeriodoSemCal(n,limpar){
+  var st=document.getElementById('semcal-per-status');
+  var ini=limpar?'':document.getElementById('semcal-per-ini-'+n).value;
+  var fim=limpar?'':document.getElementById('semcal-per-fim-'+n).value;
+  st.textContent='Salvando Semana '+n+'...';st.style.color='var(--fg3)';
+  var mes=mesSemCal;
+  google.script.run.withSuccessHandler(function(j){
+    var r;try{r=JSON.parse(j);}catch(e){r=null;}
+    if(!r||!r.ok){st.textContent=(r&&r.erro)||'Erro ao salvar.';st.style.color='var(--rd)';return;}
+    SEMCAL_PERIODOS=r.periodos||{};
+    ANALISE_SEMANAL_CACHE={};     // o seletor de CMC/CMV recalcula com o período novo
+    rSemCalPeriodos();
+    var st2=document.getElementById('semcal-per-status');
+    if(st2){st2.textContent=limpar?('Semana '+n+': período removido (volta a usar as datas das contagens).'):('Semana '+n+': período de vendas e compras salvo.');st2.style.color='var(--ac2)';}
+  }).withFailureHandler(function(err){st.textContent='Falha: '+(err.message||err);st.style.color='var(--rd)';})
+  .salvarPeriodoSemana(SENHA_ATUAL,{mes:mes,ano:ANO_OPERACIONAL,semanaNum:n,ini:ini,fim:fim});
+}
+
 function rSemCal(){
   if(!MESES.length)return;
   var cont=document.getElementById('semcal-content');
@@ -2086,6 +2175,7 @@ function rSemCal(){
     useg.dataset.ready='1';
   }
 
+  carregarSemCalPeriodos();
   cont.innerHTML='<div class="card"><div class="empty">Calculando semanas de '+(ML_MAP[mesSemCal]||mesSemCal)+'...</div></div>';
 
   if(SEMCAL_CACHE[mesSemCal]){rSemCalPintar_(SEMCAL_CACHE[mesSemCal]);return;}
@@ -2101,6 +2191,7 @@ function rSemCal(){
 }
 
 function rSemCalPintar_(semanas){
+  rSemCalPeriodos();   // o atalho "Semana calendário" usa estas semanas
   var cont=document.getElementById('semcal-content');
   if(!semanas||!semanas.length){cont.innerHTML='<div class="card"><div class="empty">Sem semanas para exibir.</div></div>';return;}
 
@@ -2222,8 +2313,17 @@ function setMesCMV(m){mesCMV=m;periodoAtualCMV={tipo:'mes'};limparPeriodoCustomC
 // o que é exibido, sem re-perguntar as datas (ver aplicarPeriodoCustomCMV).
 function setUniCMV(u){uniCMV=u;document.querySelectorAll('#cmv-useg button').forEach(function(b){b.classList.toggle('on',b.textContent===(u==='TODAS'?'Todas':nomeUni(u)));});atualizarLabelCustomCMV_();rCMV();}
 
-// Desativado -- ver comentário em atualizarGranularidadeCMC().
-function atualizarGranularidadeCMV(){}
+// Mesma ideia de atualizarGranularidadeCMC(), pro CMV.
+function atualizarGranularidadeCMV(){
+  var mesNoMomento=mesCMV;
+  var jaTinhaCache=!!ANALISE_SEMANAL_CACHE[mesNoMomento];
+  obterAnaliseSemanalCache_(mesNoMomento, function(){
+    if(mesCMV!==mesNoMomento)return;
+    if(periodoAtualCMV.tipo==='custom')return;
+    montarGranSeg_('cmv-granseg', mesNoMomento, periodoAtualCMV, 'setPeriodoCMV');
+    if(!jaTinhaCache&&periodoAtualCMV.tipo!=='mes')rCMV();
+  });
+}
 function setPeriodoCMV(key){
   periodoAtualCMV=key?chaveParaPeriodo_(key):{tipo:'mes'};
   limparPeriodoCustomCMV();
@@ -2241,6 +2341,11 @@ function valorEvolucaoCMV(key){
   return dadosPeriodoCMV(mesCMV, chaveParaPeriodo_(key));
 }
 
+// Semana de análise escolhida no CMV: mostra de onde vem o período de vendas e compras.
+function avisoPeriodoSemanaCMV_(d){
+  if(periodoAtualCMV.tipo==='mes'||periodoAtualCMV.tipo==='custom'||!d||!d.invInicio)return '';
+  return ' <span class="tag '+(d.periodoMarcado?'tA':'tB')+'" title="Estoque inicial: contagem de '+d.invInicio+' · Estoque final: contagem de '+d.invFim+(d.periodoMarcado?'':' · marque o período de vendas e compras na aba Semana Calendário')+'">vendas e compras: '+(d.periodoMarcado?'período marcado':'datas das contagens')+'</span>';
+}
 function rCMV(){
   atualizarGranularidadeCMV();
   cmvGrupoAberto=null;
@@ -2298,7 +2403,7 @@ function rCMV(){
     '<div class="metric lead"><div class="metric-l">CMV Real · '+labelAtualCMV+(periodoAtualCMV.tipo!=='mes'&&periodoAtualCMV.tipo!=='custom'?' · '+(ML_MAP[mesCMV]||mesCMV):'')+sufUni+'</div>'+
       '<div class="metric-v'+(cmvAtipico?' rd':'')+'">'+fR2(d.cmv)+'</div>'+
       '<div class="metric-sub" style="color:'+(cmvAtipico?'var(--rd)':'var(--fg3)')+'">'+
-        (cmvAtipico?'&#9888; CMV negativo — confira as contagens de estoque':(d.data_ei||'')+' a '+(d.data_ef||'')+avisoAproximado)+
+        (cmvAtipico?'&#9888; CMV negativo — confira as contagens de estoque':(d.data_ei||'')+' a '+(d.data_ef||'')+avisoAproximado+avisoPeriodoSemanaCMV_(d))+
       '</div></div>'+
     '<div class="metric"><div class="metric-l">Estoque Inicial</div><div class="metric-v az">'+fR(d.ei)+'</div></div>'+
     '<div class="metric"><div class="metric-l">Compras</div><div class="metric-v am">'+fR(d.compras)+'</div></div>'+
@@ -4028,6 +4133,7 @@ function salvarSemanaRow(n){
       var res;try{res=JSON.parse(json);}catch(e){status.textContent='Erro ao salvar.';status.style.color='var(--rd)';return;}
       if(!res.ok){status.textContent=res.erro||'Erro ao salvar.';status.style.color='var(--rd)';return;}
       SEMANAS_MES_SALVAS=soSemanasDoMesAtual_(res.semanas);
+      ANALISE_SEMANAL_CACHE={};   // semana mudou: o seletor de CMC/CMV refaz o cálculo
       status.textContent='Semana '+n+' salva.';status.style.color='var(--ac2)';
       rSemanasMesTable();
     })
