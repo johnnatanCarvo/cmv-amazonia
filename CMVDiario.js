@@ -1,13 +1,15 @@
 // ============================================================
 //  CMV DIÁRIO E POR PERÍODO (qualquer faixa de datas, dia a dia)
 // ============================================================
-// Pensado pro Açaí na Cuia, mas vale pro negócio ativo. Dia a dia NÃO existe estoque contado, então o
-// número diário é o de FLUXO:
-//   - faturamento e CMV Teórico (vendas do dia x ficha x custo do litro/insumo do mês);
-//   - compras externas do dia (CMC) e CMC% sobre o faturamento;
-//   - Açaí: latas consumidas e litros produzidos (produção do Cloudfy) e o rendimento (L por lata).
-// O CMV REAL (estoque inicial + compras - estoque final) só existe pro PERÍODO e só quando há contagem
-// perto das duas pontas: vem de calcularCMVPersonalizadoTodas_ (contagem real mais próxima, até 10 dias).
+// Pensado pro Açaí na Cuia, mas vale pro negócio ativo.
+//  - Fluxo (todo negócio): faturamento, compras externas (CMC), CMV Teórico (vendas x ficha x custo do litro/insumo
+//    do mês) e, no Açaí, latas consumidas e litros produzidos (produção do Cloudfy).
+//  - CMV REAL: no Açaí o estoque é contado todo dia, então ele sai DIA A DIA e no período, da cadeia de contagens:
+//      CMV do dia = estoque da contagem anterior + compras do intervalo - estoque da contagem do dia.
+//    A contagem de um dia vale como o estoque do FECHAMENTO daquele dia (mesma convenção do resto do painel:
+//    as compras entram depois da contagem anterior e até a contagem final, inclusive). Dia sem contagem fica sem
+//    CMV real e a contagem seguinte cobre o intervalo todo ("N dias").
+//    Nos outros negócios o CMV real do período vem de calcularCMVPersonalizadoTodas_ (contagem mais próxima, até 10 dias).
 var CMV_DIARIO_MAX_DIAS = 93;
 
 function calcularCMVDiario(senha, iniISO, fimISO, negocio) {
@@ -25,18 +27,34 @@ function calcularCMVDiario(senha, iniISO, fimISO, negocio) {
 
 function cmvDiarioISO_(info) { return info.ano + '-' + pad2(info.mes) + '-' + pad2(info.dia); }
 function cmvDiarioBR_(info) { return pad2(info.dia) + '/' + pad2(info.mes) + '/' + info.ano; }
+function cmvDiarioInfoDeTs_(ts) { return { ano: Number(ts.slice(0, 4)), mes: Number(ts.slice(4, 6)), dia: Number(ts.slice(6, 8)) }; }
+function cmvDiarioDiaSeguinte_(info) { var d = new Date(info.ano, info.mes - 1, info.dia + 1); return { ano: d.getFullYear(), mes: d.getMonth() + 1, dia: d.getDate() }; }
 
 function cmvDiario_(iniISO, fimISO) {
   var ini = parseISOData_(iniISO), fim = parseISOData_(fimISO);
   if (!ini || !fim) throw new Error('Informe as duas datas do período.');
-  var tsIni = new Date(ini.ano, ini.mes - 1, ini.dia).getTime(), tsFim = new Date(fim.ano, fim.mes - 1, fim.dia).getTime();
-  if (tsFim < tsIni) throw new Error('A data final é anterior à inicial.');
-  var nDias = Math.round((tsFim - tsIni) / 86400000) + 1;
+  var tsIniMs = new Date(ini.ano, ini.mes - 1, ini.dia).getTime(), tsFimMs = new Date(fim.ano, fim.mes - 1, fim.dia).getTime();
+  if (tsFimMs < tsIniMs) throw new Error('A data final é anterior à inicial.');
+  var nDias = Math.round((tsFimMs - tsIniMs) / 86400000) + 1;
   if (nDias > CMV_DIARIO_MAX_DIAS) throw new Error('O período pode ter no máximo ' + CMV_DIARIO_MAX_DIAS + ' dias.');
 
   var unidades = filiaisDoNegocioAtivo_();
   var ehUnidade = {}; unidades.forEach(function(u) { ehUnidade[u.toUpperCase()] = true; });
   var iniKey = ini.ano + pad2(ini.mes) + pad2(ini.dia), fimKey = fim.ano + pad2(fim.mes) + pad2(fim.dia);
+  var mostraProducao = (NEGOCIO_ATIVO === 'ACAI NA CUIA');
+
+  // Açaí: a contagem anterior ao período é o estoque inicial. Os baldes de compra/venda começam no dia seguinte a
+  // ela, pra o primeiro CMV real cobrir o intervalo certo mesmo que a contagem seja de antes do período.
+  var contagens = mostraProducao ? contagensDiariasAcai_() : [];
+  var contagemAntes = null;
+  contagens.forEach(function(c) { if (c.ts < iniKey) contagemAntes = c; });
+  var iniInterno = ini;
+  if (contagemAntes) {
+    var diaSeg = cmvDiarioDiaSeguinte_(cmvDiarioInfoDeTs_(contagemAntes.ts));
+    if ((diaSeg.ano + pad2(diaSeg.mes) + pad2(diaSeg.dia)) < iniKey) iniInterno = diaSeg;
+  }
+  var iniInternoKey = iniInterno.ano + pad2(iniInterno.mes) + pad2(iniInterno.dia);
+  var tsIniInternoMs = new Date(iniInterno.ano, iniInterno.mes - 1, iniInterno.dia).getTime();
 
   var rowsVendas  = lerVendasCompleto_();
   var rowsCompras = lerComprasCompleto_();
@@ -65,18 +83,18 @@ function cmvDiario_(iniISO, fimISO) {
     return memoCusto[k];
   }
 
-  // um balde por dia (todos os dias do período, mesmo sem movimento) e por unidade
-  var dias = {}, ordem = [];
+  // um balde por dia (todos os dias, mesmo sem movimento) e por unidade
+  var dias = {}, ordemInterna = [];
   function vazio() { return { fat: 0, compras: 0, transf: 0, cmvTeorico: 0, semFicha: 0 }; }
-  for (var t = tsIni; t <= tsFim; t += 86400000) {
+  for (var t = tsIniInternoMs; t <= tsFimMs; t += 86400000) {
     var d = new Date(t + 12 * 3600000);          // meio-dia: evita virada por horário de verão
     var info = { ano: d.getFullYear(), mes: d.getMonth() + 1, dia: d.getDate() };
-    var b = { iso: cmvDiarioISO_(info), data: cmvDiarioBR_(info), mes: info.mes, ano: info.ano, porUnidade: {}, producao: null };
+    var b = { iso: cmvDiarioISO_(info), data: cmvDiarioBR_(info), ts: info.ano + pad2(info.mes) + pad2(info.dia), mes: info.mes, ano: info.ano, porUnidade: {}, producao: null };
     unidades.forEach(function(u) { b.porUnidade[u] = vazio(); });
-    dias[b.iso] = b; ordem.push(b.iso);
+    dias[b.iso] = b; ordemInterna.push(b.iso);
   }
 
-  // ── vendas: faturamento e CMV Teórico ──
+  // ── vendas: faturamento e CMV Teórico (só o período pedido entra nos produtos) ──
   var produtosPeriodo = {};
   for (var i = 1; i < rowsVendas.length; i++) {
     var r = rowsVendas[i];
@@ -86,7 +104,7 @@ function cmvDiario_(iniISO, fimISO) {
     var di = parseDataCompleta(r[C_VENDAS.data]);
     if (!di) continue;
     var key = di.ano + pad2(di.mes) + pad2(di.dia);
-    if (key < iniKey || key > fimKey) continue;
+    if (key < iniInternoKey || key > fimKey) continue;
     var produto = limpaCelula(r[C_VENDAS.produto]);
     if (!produto || naoEhVenda_(produto)) continue;
     if (GRUPOS_EXCLUIR_ABC.indexOf(limpaCelula(r[C_VENDAS.grupo]).toUpperCase()) >= 0) continue;
@@ -98,13 +116,15 @@ function cmvDiario_(iniISO, fimISO) {
     var custoUn = temFicha ? custoUnitario(nomeFicha, di.mes, di.ano) : null;
     if (qtd > 0 && custoUn !== null) bUni.cmvTeorico += custoUn * qtd;
     else if (!temFicha || custoUn === null) bUni.semFicha += valor;
-    var pk = cod || produto;
-    var p = produtosPeriodo[pk] = produtosPeriodo[pk] || { produto: produto, qtd: 0, valor: 0, custo: 0, temFicha: temFicha };
-    if (valor > (p.maiorValor || 0)) { p.maiorValor = valor; p.produto = (fichaPorCodigo[cod] && fichaPorCodigo[cod].nome) || produto; }
-    p.qtd += qtd; p.valor += valor; if (qtd > 0 && custoUn !== null) p.custo += custoUn * qtd;
+    if (key >= iniKey) {
+      var pk = cod || produto;
+      var p = produtosPeriodo[pk] = produtosPeriodo[pk] || { produto: produto, qtd: 0, valor: 0, custo: 0, temFicha: temFicha };
+      if (valor > (p.maiorValor || 0)) { p.maiorValor = valor; p.produto = (fichaPorCodigo[cod] && fichaPorCodigo[cod].nome) || produto; }
+      p.qtd += qtd; p.valor += valor; if (qtd > 0 && custoUn !== null) p.custo += custoUn * qtd;
+    }
   }
 
-  // ── compras externas (CMC): transferência entre unidades fica de fora, como no resto do painel ──
+  // ── compras externas (CMC): transferência entre unidades fica separada, como no resto do painel ──
   for (var j = 1; j < rowsCompras.length; j++) {
     var rc = rowsCompras[j];
     if (!rc || rc.length < 18) continue;
@@ -113,7 +133,7 @@ function cmvDiario_(iniISO, fimISO) {
     var dc = parseDataCompleta(rc[C_COMPRAS.data]);
     if (!dc) continue;
     var keyC = dc.ano + pad2(dc.mes) + pad2(dc.dia);
-    if (keyC < iniKey || keyC > fimKey) continue;
+    if (keyC < iniInternoKey || keyC > fimKey) continue;
     var total = numVal(rc[C_COMPRAS.total]);
     var forn = limpaCelula(rc[C_COMPRAS_FORNECEDOR]).toUpperCase();
     var bC = dias[dc.ano + '-' + pad2(dc.mes) + '-' + pad2(dc.dia)].porUnidade[unidadeOriginal_(unidades, filC)];
@@ -121,15 +141,12 @@ function cmvDiario_(iniISO, fimISO) {
   }
 
   // ── Açaí na Cuia: produção do Cloudfy (latas consumidas, litros produzidos) ──
-  var mostraProducao = (NEGOCIO_ATIVO === 'ACAI NA CUIA');
-  var custoLataMes = {};
-  var custoProducaoMeses = [];
+  var custoLataMes = {}, custoProducaoMeses = [];
   if (mostraProducao) {
     var cache = cfyLerCacheProducaoAcai_() || [];
     var resumoMes = cfyCustoProducaoAcai_(historico);
     resumoMes.forEach(function(m) {
       custoLataMes[m.ano + '|' + m.mes] = m;
-      // só os meses que o período toca
       var chave = m.ano * 100 + m.mes;
       if (chave >= ini.ano * 100 + ini.mes && chave <= fim.ano * 100 + fim.mes) custoProducaoMeses.push(m);
     });
@@ -143,23 +160,44 @@ function cmvDiario_(iniISO, fimISO) {
     });
   }
 
-  // ── fecha cada dia e o período ──
+  // ── Açaí: estoque de cada contagem (a do dia anterior ao período e as do período) ──
+  var estoqueDaContagem = {};         // ts -> valor do estoque (R$) naquela contagem
+  var avisosEstoque = [];
+  var realPeriodoAcai = null;
+  var usadas = contagens.filter(function(c) { return c.ts >= (contagemAntes ? contagemAntes.ts : iniKey) && c.ts <= fimKey; });
+  if (mostraProducao && usadas.length) {
+    var itensPorId = lerItensPorContagem_(usadas.map(function(c) { return c.id; }));
+    var catalogo = preAgregarCatalogoProdutos(rowsCompras, rowsVendas);
+    var catalogoPorCodigo = preAgregarCatalogoPorCodigo(rowsCompras);
+    usadas.forEach(function(c) {
+      var v = valorizarItensInventario_(itensPorId[c.id] || [], NOMES_MESES[c.mes], c.ano, historico, fichasMap, catalogo, 'Contagem ' + c.data, catalogoPorCodigo, fichaPorCodigo);
+      estoqueDaContagem[c.ts] = v.total;
+      (v.semPreco || []).forEach(function(sp) { avisosEstoque.push(c.data + ': "' + sp.produto + '" sem preço — ficou fora do estoque'); });
+    });
+  }
+
+  // ── fecha cada dia e o período (só os dias pedidos aparecem; os do intervalo extra só alimentam o CMV real) ──
   function fechar(o) {
     return { fat: r2(o.fat), compras: r2(o.compras), transf: r2(o.transf), cmvTeorico: r2(o.cmvTeorico), semFicha: r2(o.semFicha),
              cmc_pct: calcularPct(o.compras, o.fat), cmv_teorico_pct: calcularPct(o.cmvTeorico, o.fat) };
   }
   var totalPorUnidade = {}; unidades.forEach(function(u) { totalPorUnidade[u] = vazio(); });
   var producaoTotal = { latas: 0, litrosMedio: 0, litrosGrosso: 0 };
-  var listaDias = ordem.map(function(iso) {
+  var somaIntervalo = {};   // ts -> { fat, compras (externas + transferência recebida) } de TODAS as unidades, pro CMV real
+  var listaDias = [];
+  var contagemAnteriorTs = contagemAntes ? contagemAntes.ts : null;
+  ordemInterna.forEach(function(iso) {
     var bd = dias[iso];
-    var todas = vazio();
-    var porUni = {};
+    var todas = vazio(), porUni = {};
     unidades.forEach(function(u) {
       var o = bd.porUnidade[u];
-      ['fat', 'compras', 'transf', 'cmvTeorico', 'semFicha'].forEach(function(k) { todas[k] += o[k]; totalPorUnidade[u][k] += o[k]; });
+      ['fat', 'compras', 'transf', 'cmvTeorico', 'semFicha'].forEach(function(k) { todas[k] += o[k]; });
       porUni[u] = fechar(o);
     });
-    var linha = { iso: iso, data: bd.data, todas: fechar(todas), porUnidade: porUni, producao: null };
+    somaIntervalo[bd.ts] = { fat: todas.fat, compras: todas.compras + todas.transf };
+    if (bd.ts < iniKey) return;                      // dia do intervalo extra
+    unidades.forEach(function(u) { ['fat', 'compras', 'transf', 'cmvTeorico', 'semFicha'].forEach(function(k) { totalPorUnidade[u][k] += bd.porUnidade[u][k]; }); });
+    var linha = { iso: iso, data: bd.data, todas: fechar(todas), porUnidade: porUni, producao: null, real: null };
     if (bd.producao) {
       var pr = bd.producao, litros = pr.litrosMedio + pr.litrosGrosso;
       var m = custoLataMes[bd.ano + '|' + bd.mes];
@@ -169,8 +207,50 @@ function cmvDiario_(iniISO, fimISO) {
         custoLitroDia: (pr.latas > 0 && litros > 0 && custoLata !== null && custoLata !== undefined) ? r4(pr.latas * custoLata / litros) : null };
       producaoTotal.latas += pr.latas; producaoTotal.litrosMedio += pr.litrosMedio; producaoTotal.litrosGrosso += pr.litrosGrosso;
     }
-    return linha;
+    listaDias.push(linha);
   });
+
+  // CMV real diário (Açaí): cada contagem fecha o intervalo desde a anterior
+  if (mostraProducao) {
+    var ordemTs = ordemInterna.map(function(iso) { return dias[iso].ts; });
+    function somaEntre(tsDe, tsAte) {   // dias em (tsDe, tsAte]
+      var s = { fat: 0, compras: 0, dias: 0 };
+      ordemTs.forEach(function(ts) { if (ts > tsDe && ts <= tsAte && somaIntervalo[ts]) { s.fat += somaIntervalo[ts].fat; s.compras += somaIntervalo[ts].compras; s.dias++; } });
+      return s;
+    }
+    var ultimaTs = contagemAnteriorTs;
+    var primeiraEiTs = contagemAnteriorTs;
+    // sem contagem ANTES do período (ex.: a unidade acabou de começar a contar), a primeira contagem do próprio período
+    // vira o estoque inicial e o CMV real cobre do dia seguinte a ela até a última contagem.
+    if (primeiraEiTs === null) { var dentro = usadas.filter(function(c) { return c.ts >= iniKey; }); if (dentro.length >= 2) primeiraEiTs = dentro[0].ts; }
+    usadas.forEach(function(c) {
+      if (c.ts < iniKey) return;                       // a contagem anterior ao período só serve de ponto de partida
+      var linhaDia = null;
+      for (var q = 0; q < listaDias.length; q++) if (listaDias[q].iso === cmvDiarioISO_(cmvDiarioInfoDeTs_(c.ts))) { linhaDia = listaDias[q]; break; }
+      if (ultimaTs !== null && estoqueDaContagem[ultimaTs] !== undefined && linhaDia) {
+        var s = somaEntre(ultimaTs, c.ts);
+        var ei = estoqueDaContagem[ultimaTs], ef = estoqueDaContagem[c.ts];
+        var cmv = ei + s.compras - ef;
+        linhaDia.real = { ei: r2(ei), ef: r2(ef), compras: r2(s.compras), cmv: r2(cmv), cmv_pct: calcularPct(cmv, s.fat), dias: s.dias,
+                          eiData: cmvDiarioBR_(cmvDiarioInfoDeTs_(ultimaTs)), efData: c.data };
+      }
+      ultimaTs = c.ts;
+    });
+    // período: da contagem anterior ao início até a última contagem do período
+    var ultimaDoPeriodo = null;
+    usadas.forEach(function(c) { if (c.ts >= iniKey) ultimaDoPeriodo = c; });
+    if (primeiraEiTs !== null && ultimaDoPeriodo && estoqueDaContagem[primeiraEiTs] !== undefined) {
+      var sp = somaEntre(primeiraEiTs, ultimaDoPeriodo.ts);
+      var eiP = estoqueDaContagem[primeiraEiTs], efP = estoqueDaContagem[ultimaDoPeriodo.ts];
+      var cmvP = eiP + sp.compras - efP;
+      realPeriodoAcai = { disponivel: true, ei: r2(eiP), ef: r2(efP), compras: r2(sp.compras), cmv: r2(cmvP), cmv_pct: calcularPct(cmvP, sp.fat), faturamento: r2(sp.fat), dias: sp.dias,
+                          eiData: cmvDiarioBR_(cmvDiarioInfoDeTs_(primeiraEiTs)), efData: ultimaDoPeriodo.data,
+                          porUnidade: {} };
+      realPeriodoAcai.porUnidade[unidades[0]] = { disponivel: true, ei: realPeriodoAcai.ei, ef: realPeriodoAcai.ef, compras: realPeriodoAcai.compras, cmv: realPeriodoAcai.cmv,
+                          cmv_pct: realPeriodoAcai.cmv_pct, eiData: realPeriodoAcai.eiData, efData: realPeriodoAcai.efData, eiDesvioDias: 0, efDesvioDias: 0 };
+    }
+  }
+
   var totalTodas = vazio();
   unidades.forEach(function(u) { ['fat', 'compras', 'transf', 'cmvTeorico', 'semFicha'].forEach(function(k) { totalTodas[k] += totalPorUnidade[u][k]; }); });
   var totalUni = {}; unidades.forEach(function(u) { totalUni[u] = fechar(totalPorUnidade[u]); });
@@ -180,9 +260,13 @@ function cmvDiario_(iniISO, fimISO) {
     return { produto: p.produto, qtd: r2(p.qtd), valor: r2(p.valor), custo_teorico: r2(p.custo), tem_ficha: p.temFicha };
   }).sort(function(a, b) { return b.valor - a.valor; });
 
-  // ── CMV REAL do período, quando há contagem perto das duas pontas ──
+  // ── CMV REAL do período ──
   var real = null;
-  if (nDias >= 2) {
+  if (mostraProducao) {
+    real = realPeriodoAcai || { disponivel: false, erro: contagens.length
+      ? 'Faltam contagens do Açaí: preciso de uma contagem antes do período (estoque inicial) e de outra dentro dele.'
+      : 'Ainda não há contagem do Açaí concluída no app de Contagem.' };
+  } else if (nDias >= 2) {
     try {
       var rr = calcularCMVPersonalizadoTodas_(cmvDiarioBR_(ini), cmvDiarioBR_(fim));
       var porUniReal = {};
@@ -202,12 +286,14 @@ function cmvDiario_(iniISO, fimISO) {
   return {
     negocio: NEGOCIO_ATIVO, unidades: unidades, dataInicio: cmvDiarioBR_(ini), dataFim: cmvDiarioBR_(fim), nDias: nDias,
     mostraProducao: mostraProducao,
+    realDiario: mostraProducao,
     dias: listaDias,
     total: { todas: fechar(totalTodas), porUnidade: totalUni },
     producao: mostraProducao ? { latas: r2(producaoTotal.latas), litros: r2(litrosTot), litrosMedio: r2(producaoTotal.litrosMedio), litrosGrosso: r2(producaoTotal.litrosGrosso),
       rendimento: (producaoTotal.latas > 0 && litrosTot > 0) ? r4(litrosTot / producaoTotal.latas) : null } : null,
     produtos: produtos.slice(0, 40),
     custoProducao: custoProducaoMeses,
+    avisosEstoque: avisosEstoque.slice(0, 10),
     real: real
   };
 }

@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-10-23.2';
+var VERSAO_APP = '2026-10-23.3';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -1287,7 +1287,12 @@ function listarContagensDisponiveis(senha, unidade) {
 
 function obterInventariosSalvos_() {
   var valor = PropertiesService.getScriptProperties().getProperty('INVENTARIOS_SEMANAIS_SALVOS');
-  return valor ? JSON.parse(valor) : [];
+  var lista = valor ? JSON.parse(valor) : [];
+  // Açaí na Cuia conta o estoque TODO DIA: cada dia contado já é um inventário (ver AcaiContagem.js), sem ninguém
+  // salvar nada. Entram DEPOIS dos salvos à mão (que ganham o empate na escolha do mais próximo) e são só leitura:
+  // quem grava (salvarInventarioSemanal/excluirInventarioSalvo) lê a propriedade direto e nunca os persiste.
+  if (typeof inventariosAutoAcai_ === 'function') lista = lista.concat(inventariosAutoAcai_());
+  return lista;
 }
 
 // Lista as seleções de inventário semanal já salvas (Script Properties).
@@ -1739,7 +1744,7 @@ function calcularAnaliseSemanal(senha, mes, ano, negocio) {
     // ser do mês anterior, por isso as somas de período usam as versões
     // "Cross" abaixo, que aceitam início/fim em meses diferentes.
     var mesFimNum = Number(Object.keys(NOMES_MESES).filter(function(k) { return NOMES_MESES[k] === mes; })[0]);
-    var semanasSalvas = obterSemanasSalvas_().filter(function(s) { return s.mes === mes && s.ano === anoNum; });
+    var semanasSalvas = obterSemanasSalvas_().filter(function(s) { return s.mes === mes && s.ano === anoNum && filialDoNegocioAtivo_(s.unidade); });
     if (!semanasSalvas.length) {
       return JSON.stringify({ ok: true, semanas: {}, quinzenas: {}, avisos: [] });
     }
@@ -2482,9 +2487,7 @@ function buscarItensDoInventarioSalvo(senha, inventarioId) {
     return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
   }
   try {
-    var props = PropertiesService.getScriptProperties();
-    var valor = props.getProperty('INVENTARIOS_SEMANAIS_SALVOS');
-    var lista = valor ? JSON.parse(valor) : [];
+    var lista = obterInventariosSalvos_();
     var inv = null;
     for (var i = 0; i < lista.length; i++) { if (lista[i].id === inventarioId) { inv = lista[i]; break; } }
     if (!inv) return JSON.stringify({ ok: false, erro: 'Seleção de inventário não encontrada.' });
@@ -2977,9 +2980,7 @@ function valorizarItensInventario_(itens, mesNome, ano, historicoPorInsumo, fich
 function gerarLinhasEstoqueDeInventariosSalvos_(rowsEstoque, rowsCompras, rowsVendas, historicoPorInsumo, fichasMap, rowsFichas) {
   var avisos = [];
   var semPrecoTotal = [];
-  var props = PropertiesService.getScriptProperties();
-  var valorProp = props.getProperty('INVENTARIOS_SEMANAIS_SALVOS');
-  var inventarios = valorProp ? JSON.parse(valorProp) : [];
+  var inventarios = obterInventariosSalvos_();   // salvos à mão + contagens diárias automáticas do Açaí
   if (!inventarios.length) return { linhas: [], avisos: avisos, semPreco: semPrecoTotal };
 
   // 1. Meses que já têm contagem via CSV — esses meses NÃO usam inventário salvo.

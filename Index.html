@@ -2187,6 +2187,9 @@ function rDiarioPintar_(){
   var tot=uni==='TODAS'?d.total.todas:d.total.porUnidade[uni];
   var pctCls=function(p){return (p>35)?'rd':(p>30)?'am':'ac';};
   var mostra=!!d.mostraProducao;
+  var realDia=!!d.realDiario;   // Açaí: estoque contado todo dia -> CMV real dia a dia
+  var real=d.real, rl=null;     // CMV real do período (usado no rodapé da tabela e no cartão)
+  if(real&&real.disponivel){rl=(uni==='TODAS')?real:(real.porUnidade&&real.porUnidade[uni]&&real.porUnidade[uni].disponivel?real.porUnidade[uni]:null);}
   var temPct=function(p){return p!==null&&p!==undefined?fP(p):'--';};
 
   var linhas=d.dias.map(function(dia){
@@ -2199,18 +2202,18 @@ function rDiarioPintar_(){
       '<td class="r">'+temPct(l.cmc_pct)+'</td>'+
       '<td class="r" style="font-weight:600;">'+fR(l.cmvTeorico)+'</td>'+
       '<td class="r '+(l.cmv_teorico_pct!==null?pctCls(l.cmv_teorico_pct):'')+'">'+temPct(l.cmv_teorico_pct)+'</td>'+
+      (realDia?celulasRealDia_(dia.real,pctCls):'')+
       (mostra?('<td class="r">'+(pr&&pr.latas?fmtN1_(pr.latas):'--')+'</td><td class="r">'+(pr&&pr.litros?fmtN1_(pr.litros):'--')+'</td><td class="r">'+(pr&&pr.rendimento?fmtN2_(pr.rendimento):'--')+'</td>'):'')+
     '</tr>';
   }).join('');
   var rodape='<tr style="font-weight:700;border-top:2px solid var(--ln2);">'+
       '<td>Período</td><td class="r">'+fR(tot.fat)+'</td><td class="r">'+fR(tot.compras)+'</td><td class="r">'+temPct(tot.cmc_pct)+'</td>'+
       '<td class="r">'+fR(tot.cmvTeorico)+'</td><td class="r">'+temPct(tot.cmv_teorico_pct)+'</td>'+
+      (realDia?(rl?('<td class="r">'+fR(rl.cmv)+'</td><td class="r">'+temPct(rl.cmv_pct)+'</td>'):'<td class="r">--</td><td class="r">--</td>'):'')+
       (mostra&&d.producao?('<td class="r">'+fmtN1_(d.producao.latas)+'</td><td class="r">'+fmtN1_(d.producao.litros)+'</td><td class="r">--</td>'):(mostra?'<td></td><td></td><td></td>':''))+
     '</tr>';
 
   // cartões do período
-  var real=d.real, rl=null;
-  if(real&&real.disponivel){rl=(uni==='TODAS')?real:(real.porUnidade&&real.porUnidade[uni]&&real.porUnidade[uni].disponivel?real.porUnidade[uni]:null);}
   var cartaoReal;
   if(rl){
     // com uma unidade só (ou uma unidade escolhida) as datas das contagens são dela; com várias, cada uma tem as suas
@@ -2236,16 +2239,28 @@ function rDiarioPintar_(){
   var avisos=[];
   if(tot.semFicha>0)avisos.push(fR(tot.semFicha)+' em vendas sem ficha técnica ficam fora do CMV Teórico (ex.: itens de revenda).');
   if(mostra)avisos.push('Latas e litros dia a dia dependem de quando a produção é lançada no Cloudfy; o rendimento e o custo do litro valem pelo mês.');
+  if(realDia)avisos.push('CMV real diário: a contagem de cada dia vale como o estoque do fechamento; compras entram depois da contagem anterior até a do dia.');
+  (d.avisosEstoque||[]).forEach(function(a){avisos.push('⚠ '+a);});
   var avisoFicha=avisos.length?'<div style="font-size:12px;color:var(--fg3);margin:8px 0 0;">'+avisos.join(' ')+'</div>':'';
 
   var thProd=mostra?'<th class="r">Latas</th><th class="r">Litros</th><th class="r">L/lata</th>':'';
-  var tabela='<div class="card" style="margin-top:14px;"><div class="twrap"><table><thead><tr><th>Dia</th><th class="r">Faturamento</th><th class="r">Compras</th><th class="r">CMC%</th><th class="r">CMV Teórico</th><th class="r">CMV Teór.%</th>'+thProd+'</tr></thead><tbody>'+linhas+rodape+'</tbody></table></div></div>';
+  var tabela='<div class="card" style="margin-top:14px;"><div class="twrap"><table><thead><tr><th>Dia</th><th class="r">Faturamento</th><th class="r">Compras</th><th class="r">CMC%</th><th class="r">CMV Teórico</th><th class="r">CMV Teór.%</th>'+(realDia?'<th class="r">CMV Real</th><th class="r">CMV Real%</th>':'')+thProd+'</tr></thead><tbody>'+linhas+rodape+'</tbody></table></div></div>';
 
   var prods=d.produtos.slice(0,15).map(function(p){
     return '<tr><td>'+p.produto+(p.tem_ficha?'':' <span class="tag tC">sem ficha</span>')+'</td><td class="r">'+fmtN1_(p.qtd)+'</td><td class="r">'+fR(p.valor)+'</td><td class="r">'+(p.tem_ficha?fR(p.custo_teorico):'--')+'</td></tr>';
   }).join('');
   var tabProd='<div class="card" style="margin-top:14px;"><div class="card-h"><div class="card-t">Produtos vendidos no período</div></div><div class="twrap"><table><thead><tr><th>Produto</th><th class="r">Qtd.</th><th class="r">Vendido</th><th class="r">Custo teórico</th></tr></thead><tbody>'+prods+'</tbody></table></div></div>';
   cont.innerHTML=cartoes+avisoFicha+tabela+tabProd;
+}
+// CMV real de um dia (Açaí): estoque da contagem anterior + compras do intervalo - estoque da contagem do dia.
+// Dia sem contagem fica em branco; depois de um intervalo sem contagem, a seguinte cobre os N dias (etiqueta "Nd").
+function celulasRealDia_(real,pctCls){
+  if(!real)return '<td class="r" style="color:var(--fg3)">--</td><td class="r" style="color:var(--fg3)">--</td>';
+  var tag=real.dias>1?' <span class="tag tB" title="'+real.dias+' dias: da contagem de '+real.eiData+' à de '+real.efData+'">'+real.dias+'d</span>':'';
+  var tip='EI '+fR(real.ei)+' + Compras '+fR(real.compras)+' − EF '+fR(real.ef)+' (contagens de '+real.eiData+' e '+real.efData+')';
+  var neg=real.cmv<0;
+  return '<td class="r" style="font-weight:600;'+(neg?'color:var(--rd)':'')+'" title="'+tip+'">'+fR(real.cmv)+tag+'</td>'+
+         '<td class="r '+(real.cmv_pct!==null&&real.cmv_pct!==undefined?pctCls(real.cmv_pct):'')+'">'+(real.cmv_pct!==null&&real.cmv_pct!==undefined?fP(real.cmv_pct):'--')+'</td>';
 }
 function fmtN1_(v){return (Math.round((v||0)*10)/10).toLocaleString('pt-BR',{minimumFractionDigits:0,maximumFractionDigits:1});}
 function fmtN2_(v){return (Math.round((v||0)*100)/100).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});}
@@ -4116,12 +4131,14 @@ function carregarInventariosSalvos(){
 }
 
 function rInventarioSalvosLista(){
-  document.getElementById('inventario-salvos-count').textContent=INVENTARIOS_SALVOS.length+' semana(s) salva(s)';
-  if(!INVENTARIOS_SALVOS.length){
+  // contagens diárias automáticas (Açaí) servem de opção nas Semanas do Mês, mas não são "salvas" por ninguém
+  var salvosAMao=INVENTARIOS_SALVOS.filter(function(i){return !i.auto;});
+  document.getElementById('inventario-salvos-count').textContent=salvosAMao.length+' semana(s) salva(s)'+(salvosAMao.length<INVENTARIOS_SALVOS.length?' · '+(INVENTARIOS_SALVOS.length-salvosAMao.length)+' contagem(ns) diária(s) automática(s)':'');
+  if(!salvosAMao.length){
     document.getElementById('inventario-salvos-body').innerHTML='<tr><td colspan="4" class="empty">Nenhuma semana salva ainda.</td></tr>';
     return;
   }
-  document.getElementById('inventario-salvos-body').innerHTML=INVENTARIOS_SALVOS.map(function(inv){
+  document.getElementById('inventario-salvos-body').innerHTML=salvosAMao.map(function(inv){
     var idEsc=inv.id.replace(/'/g,"\\'");
     return '<tr><td class="hi">'+inv.label+'</td>'+
       '<td>'+nomeUni(inv.unidade)+'</td>'+
