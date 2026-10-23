@@ -1081,7 +1081,7 @@ function processarCMV(rowsEstoque, rowsCompras, historicoPorInsumo, fichasMap) {
     aberturasZeroEstoque_().forEach(function(az) {
       if (primeiraReal && az.ts >= primeiraReal) return;
       if (!contagensPorData[az.ts]) contagensPorData[az.ts] = {
-        ts: az.ts, mes: az.mes, ano: az.ano, dia: az.dia,
+        ts: az.ts, mes: az.mes, ano: az.ano, dia: az.dia, abertura: true,
         total: 0, porGrupo: {}, porFilial: {}, porFilialGrupo: {}, porProdGrupo: {}, porProdGrupoFilial: {},
         porProdGrupoQtd: {}, porProdGrupoFilialQtd: {},
         porProdGrupoFontes: {}, porProdGrupoFilialFontes: {}
@@ -1119,8 +1119,16 @@ function processarCMV(rowsEstoque, rowsCompras, historicoPorInsumo, fichasMap) {
     var cA = contagensPorData[datasOrdenadas[kp]], cB = contagensPorData[datasOrdenadas[kp + 1]];
     if (cA.ano === cB.ano && cA.mes === cB.mes) inicioDiaCMV[NOMES_MESES[cB.mes]] = cA.dia;
   }
+  // Abertura (estoque zero) num mês ANTERIOR ao da contagem final: as compras dos dias seguintes à abertura, ainda no mês
+  // anterior, fazem parte do período e somam no mês do CMV (ex.: abertura em 27/09, CMV de outubro leva as de 28 a 30/09).
+  var desvioAbertura = null;
+  for (var ka = 0; ka < datasOrdenadas.length - 1; ka++) {
+    var cX = contagensPorData[datasOrdenadas[ka]], cY = contagensPorData[datasOrdenadas[ka + 1]];
+    if (cX.abertura && (cX.ano !== cY.ano || cX.mes !== cY.mes)) desvioAbertura = { ano: cX.ano, mes: cX.mes, dia: cX.dia, para: NOMES_MESES[cY.mes] };
+  }
   var comprasMes = (rowsCompras && rowsCompras.length > 1)
     ? agregarComprasPeriodoCMV_(rowsCompras, function(dataInfo) {
+        if (desvioAbertura && dataInfo.ano === desvioAbertura.ano && dataInfo.mes === desvioAbertura.mes && dataInfo.dia > desvioAbertura.dia) return desvioAbertura.para;
         return mesDentroDaJanela_(dataInfo, limiteDiaCMV, inicioDiaCMV);
       })
     : {};
@@ -1288,7 +1296,7 @@ function processarCMV(rowsEstoque, rowsCompras, historicoPorInsumo, fichasMap) {
       // nessa data (ver limiteDiaCMV acima), então o rótulo e o número
       // finalmente falam do mesmo período.
       // contagem inicial no próprio mês (negócio que começou a contar no meio dele): a data real, não o dia 1
-      data_ei:       (ei.ano === ef.ano && ei.mes === ef.mes) ? (pad2(ei.dia)+'/'+pad2(ef.mes)+'/'+ef.ano) : ('01/'+pad2(ef.mes)+'/'+ef.ano),
+      data_ei:       ((ei.ano === ef.ano && ei.mes === ef.mes) || ei.abertura) ? (pad2(ei.dia)+'/'+pad2(ei.mes)+'/'+ei.ano) : ('01/'+pad2(ef.mes)+'/'+ef.ano),
       data_ef:       tsEF.slice(6,8)+'/'+tsEF.slice(4,6)+'/'+tsEF.slice(0,4),
       grupos:        grupos,
       filiais:       filiais

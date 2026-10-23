@@ -14,10 +14,10 @@ var ACAI_UNIDADE_CONTAGEM = 'ACAI NA CUIA';
 var CONTAGENS_ACAI_MEMO_ = undefined;   // vale só durante a execução
 
 // ABERTURA COM ESTOQUE ZERO: a unidade começou a operar em outubro/2026 e não existe contagem de setembro. Combinado com o
-// cliente: o estoque inicial é R$ 0 em 30/09/2026. Vira uma "contagem" sintética (sem itens) nessa data, e assim o CMV
+// cliente: o estoque inicial é R$ 0 em 27/09/2026 (o CMV de outubro começa aí; as compras de 28 a 30/09 entram). Vira uma "contagem" sintética (sem itens) nessa data, e assim o CMV
 // do mês, das semanas e do dia enxergam o estoque inicial zero sem ninguém digitar nada. Só vale se não houver contagem
 // real nessa data ou antes dela.
-var ACAI_ABERTURA_ZERO = { ts: '20260930', id: 'ABERTURA-ZERO' };
+var ACAI_ABERTURA_ZERO = { ts: '20260927', id: 'ABERTURA-ZERO' };
 
 function aberturasZeroEstoque_() {
   if (NEGOCIO_ATIVO !== 'ACAI NA CUIA') return [];
