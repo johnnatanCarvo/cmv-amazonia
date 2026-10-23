@@ -172,8 +172,10 @@ function aplicarTransferenciasAcai_(rows) {
 // Linhas de VENDA do Açaí para o que ele transferiu às unidades: os pedidos da tabela (02 a 22/10) e, depois da janela,
 // as notas que o Cloudfy trouxer com o Açaí como fornecedor de uma unidade de outro negócio. Valor = valor do pedido/nota
 // (preço de transferência); quantidade em litros. Layout de C_VENDAS.
+var TRANSF_VENDA_MEMO_ = undefined;   // vale só durante a execução
 function linhasVendaTransferenciasAcai_() {
   if (NEGOCIO_ATIVO !== 'ACAI NA CUIA' || !ACAI_TRANSFERENCIA_COMO_VENDA) return [];
+  if (TRANSF_VENDA_MEMO_ !== undefined) return TRANSF_VENDA_MEMO_;
   var origem = linhasTransferenciasAcai_();
   var fim = '00000000';
   origem.forEach(function(l) { var k = chaveDataBR_(l[C_COMPRAS.data]); if (k > fim) fim = k; });
@@ -199,6 +201,20 @@ function linhasVendaTransferenciasAcai_() {
     v.destino = l[C_COMPRAS.filial];
     return v;
   });
+  TRANSF_VENDA_MEMO_ = origem;
+  return origem;
+}
+
+// Quanto do faturamento de um período (dia inicial EXCLUSIVO, final inclusive) é açaí transferido às unidades.
+function somaTransfVendaPeriodo_(mesIni, anoIni, diaIniExcl, mesFim, anoFim, diaFim) {
+  var a = anoIni * 10000 + mesIni * 100 + diaIniExcl, b = anoFim * 10000 + mesFim * 100 + diaFim, s = 0;
+  linhasVendaTransferenciasAcai_().forEach(function(v) {
+    var d = parseDataCompleta(v[C_VENDAS.data]);
+    if (!d) return;
+    var k = d.ano * 10000 + d.mes * 100 + d.dia;
+    if (k > a && k <= b) s += numVal(v[C_VENDAS.valor]);
+  });
+  return r2(s);
 }
 
 // Transferências do Açaí que contam como venda, somadas por mês (nome do mês -> R$), pra tela dizer quanto do faturamento é isso.
@@ -212,6 +228,18 @@ function transferenciasComoVendaPorMes_() {
   });
   Object.keys(porMes).forEach(function(m) { porMes[m] = r2(porMes[m]); });
   return porMes;
+}
+
+// { 'OUTUBRO': '27/09/2026' }: mês cujo período de compras/vendas começa antes do dia 1 por causa da abertura com estoque zero.
+function inicioPeriodoPorMes_() {
+  var out = {};
+  try {
+    (typeof aberturasZeroEstoque_ === 'function' ? aberturasZeroEstoque_() : []).forEach(function(a) {
+      var d = new Date(a.ano, a.mes - 1, a.dia + 1);
+      out[NOMES_MESES[a.mes % 12 + 1]] = pad2(d.getDate()) + '/' + pad2(d.getMonth() + 1) + '/' + d.getFullYear();
+    });
+  } catch (e) {}
+  return out;
 }
 
 function filialConhecida_(nome) {

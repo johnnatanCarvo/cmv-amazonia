@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-10-23.18';
+var VERSAO_APP = '2026-10-23.19';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -413,6 +413,8 @@ function getPayload(senha, negocio) {
       comprasNaoIntegradas: cfyComprasNaoIntegradas(),
       // Açaí: quanto do faturamento de cada mês é açaí transferido às unidades (conta como venda)
       transferenciasComoVenda: transferenciasComoVendaPorMes_(),
+      // Mês cujo período começa antes do dia 1 (Açaí: abertura com estoque zero em 26/09, outubro começa em 27/09)
+      inicioPeriodoPorMes: inicioPeriodoPorMes_(),
       // Quais meses/dias já vêm da API e quais ainda dependem do CSV. Sem isso
       // visível, um mês pela metade (vendas chegam de 3 em 3 dias) passa por
       // completo e o faturamento aparece menor do que é.
@@ -1904,13 +1906,14 @@ function calcularAnaliseSemanal(senha, mes, ano, negocio) {
         var cmcSem = processarComprasIntervaloDiasCross_(rowsCompras, mesIniNum, anoIni, diaInicio, mesFimP, anoFimP, diaFim);
         injetarFaturamentoCmcPeriodo_(cmcSem, porDiaVendas, mesIniNum, anoIni, diaInicio, mesFimP, anoFimP, diaFim);
         return { ei: null, ef: null, compras: r2(compraUni), faturamento: r2(vendaUni), cmv: null, cmc_pct: calcularPct(compraUni, vendaUni), cmv_pct: null,
-                 semContagem: true, cmcDetalhado: cmcSem };
+                 semContagem: true, cmcDetalhado: cmcSem, transfVenda: somaTransfVendaPeriodo_(mesIniNum, anoIni, diaInicio, mesFimP, anoFimP, diaFim) };
       }
       var cmv = r2(ei + compraUni - ef);
       var resultado = {
         ei: r2(ei), ef: r2(ef), compras: r2(compraUni), faturamento: r2(vendaUni), cmv: cmv,
         cmc_pct: calcularPct(compraUni, vendaUni),
-        cmv_pct: calcularPct(cmv, vendaUni)
+        cmv_pct: calcularPct(cmv, vendaUni),
+        transfVenda: somaTransfVendaPeriodo_(mesIniNum, anoIni, diaInicio, mesFimP, anoFimP, diaFim)
       };
       if (eiPorProduto && efPorProduto) {
         var cmcDetalhado = processarComprasIntervaloDiasCross_(rowsCompras, mesIniNum, anoIni, diaInicio, mesFimP, anoFimP, diaFim);
@@ -1927,7 +1930,7 @@ function calcularAnaliseSemanal(senha, mes, ano, negocio) {
     function consolidarTodas(mapaPorUnidade) {
       var unidades = Object.keys(mapaPorUnidade);
       if (!unidades.length) return null;
-      var ei = 0, ef = 0, compras = 0, faturamento = 0, semContagemAlguma = false, saidaLiq = 0, saidaPrecoLiq = 0;
+      var ei = 0, ef = 0, compras = 0, faturamento = 0, semContagemAlguma = false, saidaLiq = 0, saidaPrecoLiq = 0, transfVendaSoma = 0;
       unidades.forEach(function(u) {
         // Entre unidades do negócio saída e entrada se anulam; o que sobra foi para FORA (Açaí -> lojas).
         var dt = mapaPorUnidade[u].cmvDetalhado;
@@ -1938,12 +1941,14 @@ function calcularAnaliseSemanal(senha, mes, ano, negocio) {
         if (mapaPorUnidade[u].ei === null || mapaPorUnidade[u].ef === null) semContagemAlguma = true;
         else { ei += mapaPorUnidade[u].ei; ef += mapaPorUnidade[u].ef; }
         compras += mapaPorUnidade[u].compras; faturamento += mapaPorUnidade[u].faturamento;
+        transfVendaSoma += mapaPorUnidade[u].transfVenda || 0;
       });
       var cmv = semContagemAlguma ? null : r2(ei + compras - ef);
       return {
         ei: semContagemAlguma ? null : r2(ei), ef: semContagemAlguma ? null : r2(ef), compras: r2(compras), faturamento: r2(faturamento), cmv: cmv,
         cmc_pct: calcularPct(compras, faturamento), cmv_pct: cmv === null ? null : calcularPct(cmv, faturamento),
         semContagem: semContagemAlguma,
+        transfVenda: r2(transfVendaSoma),
         saida: saidaLiq > 0.005 ? r2(saidaLiq) : 0,
         saidaPreco: saidaLiq > 0.005 ? r2(saidaPrecoLiq) : 0,
         unidadesIncompletas: unidades.length < filiaisDoNegocioAtivo_().length

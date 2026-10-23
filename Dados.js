@@ -1310,6 +1310,10 @@ function processarCMV(rowsEstoque, rowsCompras, historicoPorInsumo, fichasMap) {
       // nessa data (ver limiteDiaCMV acima), então o rótulo e o número
       // finalmente falam do mesmo período.
       // contagem inicial no próprio mês (negócio que começou a contar no meio dele): a data real, não o dia 1
+      // datas REAIS das contagens (data_ei/data_ef acima são o período de compras e vendas)
+      contagem_ei:   pad2(ei.dia)+'/'+pad2(ei.mes)+'/'+ei.ano,
+      contagem_ef:   tsEF.slice(6,8)+'/'+tsEF.slice(4,6)+'/'+tsEF.slice(0,4),
+      ei_abertura:   !!ei.abertura,
       data_ei:       ei.abertura ? cmvDiaSeguinteBR_(ei) : ((ei.ano === ef.ano && ei.mes === ef.mes) ? (pad2(ei.dia)+'/'+pad2(ei.mes)+'/'+ei.ano) : ('01/'+pad2(ef.mes)+'/'+ef.ano)),
       data_ef:       tsEF.slice(6,8)+'/'+tsEF.slice(4,6)+'/'+tsEF.slice(0,4),
       grupos:        grupos,

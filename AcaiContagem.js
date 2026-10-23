@@ -84,7 +84,7 @@ function contagensDiariasAcai_() {
 // Inventários automáticos no mesmo formato dos salvos à mão ({id, label, unidade, contagemIds}).
 function inventariosAutoAcai_() {
   return contagensDiariasAcai_().map(function(c) {
-    return { id: 'AUTO-' + c.id, label: 'Contagem ' + c.data, unidade: ACAI_UNIDADE_CONTAGEM, contagemIds: [c.id], auto: true };
+    return { id: 'AUTO-' + c.id, label: c.sintetica ? 'Abertura (estoque zero)' : 'Contagem ' + c.data, unidade: ACAI_UNIDADE_CONTAGEM, contagemIds: [c.id], auto: true };
   });
 }
 

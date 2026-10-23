@@ -973,7 +973,70 @@ var SEMCAL_CACHE={}, mesSemCal='', uniSemCal='TODAS';
 var AVISOSINVENTARIO=[];
 var COMPRAS_NAO_INTEGRADAS=[];
 var TRANSF_COMO_VENDA={};   // Açaí: mês -> R$ de açaí transferido às unidades que conta como venda
-function notaTransfVenda_(mes){var v=(TRANSF_COMO_VENDA||{})[mes]||0;return v>0?' · inclui R$ '+Math.round(v).toLocaleString('pt-BR')+' transferidos às unidades':'';}
+var INICIO_PERIODO_MES={};   // mês -> 'dd/mm/aaaa' quando o período do mês começa antes do dia 1 (Açaí: abertura com estoque zero)
+var MESES_NOMES_=['JANEIRO','FEVEREIRO','MARÇO','ABRIL','MAIO','JUNHO','JULHO','AGOSTO','SETEMBRO','OUTUBRO','NOVEMBRO','DEZEMBRO'];
+
+// Semana/quinzena escolhida: o bloco calculado no servidor (uma ou todas as unidades). null no mês inteiro.
+function infoPeriodoAnalise_(mes,periodo,uni){
+  var dados=ANALISE_SEMANAL_CACHE[mes];
+  if(!dados||!periodo||(periodo.tipo!=='semana'&&periodo.tipo!=='quinzena'))return null;
+  var bloco=periodo.tipo==='semana'?(dados.semanas||{})[periodo.num]:(dados.quinzenas||{})[periodo.nome];
+  if(!bloco)return null;
+  var chaves=(uni&&uni!=='TODAS')?[uni]:Object.keys(bloco).filter(function(k){return k!=='TODAS';});
+  var lista=chaves.map(function(k){return bloco[k];}).filter(Boolean);
+  if(!lista.length)return null;
+  var a=lista[0];
+  return {ini:a.dataInicio,fim:a.dataFim,ei:a.invInicio,ef:a.invFim,labelEi:a.labelInicial||'',semContagem:!!a.semContagem,
+    igual:lista.every(function(x){return x.dataInicio===a.dataInicio&&x.dataFim===a.dataFim;}),
+    transfVenda:lista.reduce(function(s,x){return s+(x.transfVenda||0);},0)};
+}
+function notaTransfVenda_(mes,periodo,uni){
+  var info=infoPeriodoAnalise_(mes,periodo,uni);
+  var v=info?info.transfVenda:((TRANSF_COMO_VENDA||{})[mes]||0);
+  return v>0?' · inclui R$ '+Math.round(v).toLocaleString('pt-BR')+' transferidos às unidades':'';
+}
+// Faixa fixa "Período considerado": compras, vendas e contagens de TODA visão (mês, semana, quinzena).
+function faixaPeriodoHtml_(p){
+  if(!p)return '';
+  var iv=function(x){return (x&&x[0]&&x[1])?x[0]+' a '+x[1]:'--';};
+  var cont='';
+  if(p.contagens){
+    cont=' &nbsp;·&nbsp; <b>Contagens:</b> '+(p.contagens.semContagem?'sem contagem no período':
+      (p.contagens.ei||'--')+(p.contagens.abertura?' (abertura, estoque R$ 0)':'')+' &rarr; '+(p.contagens.ef||'--'));
+  }
+  return '<div class="faixa-periodo" style="grid-column:1/-1;margin:0 0 10px;padding:8px 12px;border:1px solid var(--ln);border-radius:8px;font-size:12px;color:var(--fg2);line-height:1.6;">'+
+    '<b>Período considerado</b> &nbsp;·&nbsp; <b>Compras:</b> '+iv(p.compras)+' &nbsp;·&nbsp; <b>Vendas:</b> '+iv(p.vendas)+cont+(p.nota?' <span style="color:var(--fg3)">'+p.nota+'</span>':'')+'</div>';
+}
+// CMC: mês inteiro (do início do período, que pode ser antes do dia 1, até hoje no mês corrente) ou a semana/quinzena
+function faixaPeriodoCMC_(){
+  var info=infoPeriodoAnalise_(mesAtual,periodoAtualCMC,uniAtual);
+  if(info){
+    var iv=[info.ini,info.fim];
+    return faixaPeriodoHtml_({compras:iv,vendas:iv,contagens:null,nota:info.igual?'':'(as unidades têm períodos diferentes; mostrando a primeira)'});
+  }
+  if(periodoAtualCMC.tipo!=='mes')return '';
+  var mi=MESES_NOMES_.indexOf(mesAtual); if(mi<0)return '';
+  var hoje=new Date(), ano=hoje.getFullYear(); if(mi>hoje.getMonth())ano-=1;
+  var p2=function(n){return (n<10?'0':'')+n;};
+  var ini=INICIO_PERIODO_MES[mesAtual]||('01/'+p2(mi+1)+'/'+ano);
+  var ultimo=new Date(ano,mi+1,0).getDate();
+  var fimDia=(ano===hoje.getFullYear()&&mi===hoje.getMonth())?Math.min(hoje.getDate(),ultimo):ultimo;
+  var fim=p2(fimDia)+'/'+p2(mi+1)+'/'+ano;
+  return faixaPeriodoHtml_({compras:[ini,fim],vendas:[ini,fim],contagens:null});
+}
+// CMV: período de compras/vendas e as contagens que abrem e fecham
+function faixaPeriodoCMV_(){
+  var info=infoPeriodoAnalise_(mesCMV,periodoAtualCMV,uniCMV);
+  if(info){
+    var iv=[info.ini,info.fim];
+    return faixaPeriodoHtml_({compras:iv,vendas:iv,contagens:{ei:info.ei,ef:info.ef,abertura:/abertura/i.test(info.labelEi),semContagem:info.semContagem},
+      nota:info.igual?'':'(as unidades têm períodos diferentes; mostrando a primeira)'});
+  }
+  if(periodoAtualCMV.tipo!=='mes')return '';
+  var c=CMV[mesCMV]; if(!c)return '';
+  var iv2=[c.data_ei,c.data_ef];
+  return faixaPeriodoHtml_({compras:iv2,vendas:iv2,contagens:{ei:c.contagem_ei||c.data_ei,ef:c.contagem_ef||c.data_ef,abertura:!!c.ei_abertura}});
+}
 var COBERTURA_CLOUDFY={compras:[],vendas:[]};
 var abcOrder='valor', custoCache=null, uniABC='TODAS', mesABC='TODOS';
 var custoMesA='', custoMesB='';
@@ -1180,6 +1243,7 @@ function aplicarPayload_(res){
   AVISOSINVENTARIO=res.avisosInventario||[];
   COMPRAS_NAO_INTEGRADAS=res.comprasNaoIntegradas||[];
   TRANSF_COMO_VENDA=res.transferenciasComoVenda||{};
+  INICIO_PERIODO_MES=res.inicioPeriodoPorMes||{};
   COBERTURA_CLOUDFY=res.coberturaCloudfy||{compras:[],vendas:[]};
 }
 function mostrarErro(m){document.getElementById('load-msg').style.display='none';var e=document.getElementById('load-err');e.style.display='block';e.textContent=m;}
@@ -1761,6 +1825,7 @@ function rMes(){
       '<span style="color:var(--fg3)">vs '+labelAnterior+'</span>';
   }
   var html='';
+  html+=faixaPeriodoCMC_();
   html+='<div class="metric lead"><div class="metric-l">CMC Total · '+labelAtual+((periodoAtualCMC.tipo==='mes'||periodoAtualCMC.tipo==='custom')?' 2026':' · '+(ML_MAP[mesAtual]||mesAtual))+sufUni+'</div>'+
     '<div class="metric-v">'+fR2(d.cmc_total)+'</div><div class="metric-sub">'+trendHtml+'</div></div>';
   // Em "Todas" não existe versão com transferência: entre as unidades o que
@@ -1773,7 +1838,7 @@ function rMes(){
   var temPctComTransf=(pctComTransf!==null&&pctComTransf!==undefined);
   if(fat>0){
     html+='<div class="metric"><div class="metric-l">Faturamento</div><div class="metric-v ac">'+fR(fat)+'</div>'+
-      '<div class="metric-sub" style="color:var(--fg3)">Vendas do mês'+notaTransfVenda_(mesAtual)+'</div></div>';
+      '<div class="metric-sub" style="color:var(--fg3)">Vendas do '+(periodoAtualCMC.tipo==='mes'?'mês':'período')+notaTransfVenda_(mesAtual,periodoAtualCMC,uniAtual)+'</div></div>';
     html+='<div class="metric'+(temTransf?'':' w2')+'"><div class="metric-l">CMC sobre Faturamento</div>'+
       '<div class="metric-v '+(pctFat>42?'rd':'ac')+'">'+fP(pctFat)+'</div>'+
       '<div class="metric-sub" style="color:var(--fg3)">'+
@@ -2630,7 +2695,7 @@ function rCMV(){
   // só mostrar uma data "diferente" da que a pessoa digitou, sem explicar.
   var desvioCMV=(periodoAtualCMV.tipo==='custom'&&uniCMV!=='TODAS')?Math.max(d.eiDesvioDias||0,d.efDesvioDias||0):0;
   var avisoAproximado=desvioCMV>0?' <span class="tag tB" title="Estoque inicial '+(d.data_ei||'')+' ('+(d.eiDesvioDias||0)+'d de diferença) · Estoque final '+(d.data_ef||'')+' ('+(d.efDesvioDias||0)+'d de diferença)">contagem aproximada</span>':'';
-  var html='<div class="metrics" style="grid-template-columns:1.4fr 1fr 1fr 1fr 1fr;">'+
+  var html=faixaPeriodoCMV_()+'<div class="metrics" style="grid-template-columns:1.4fr 1fr 1fr 1fr 1fr;">'+
     '<div class="metric lead"><div class="metric-l">CMV Real · '+labelAtualCMV+(periodoAtualCMV.tipo!=='mes'&&periodoAtualCMV.tipo!=='custom'?' · '+(ML_MAP[mesCMV]||mesCMV):'')+sufUni+'</div>'+
       '<div class="metric-v'+(cmvAtipico?' rd':'')+'">'+fR2(d.cmv)+'</div>'+
       '<div class="metric-sub" style="color:'+(cmvAtipico?'var(--rd)':'var(--fg3)')+'">'+
@@ -2640,7 +2705,7 @@ function rCMV(){
     '<div class="metric"><div class="metric-l">Compras</div><div class="metric-v am">'+fR(d.compras)+'</div>'+'</div>'+
     '<div class="metric"><div class="metric-l">Estoque Final</div><div class="metric-v az">'+fR(d.ef)+'</div></div>'+
     '<div class="metric"><div class="metric-l">CMV sobre Faturamento</div><div class="metric-v '+pctCls+'">'+pctTxt+'</div>'+
-      '<div class="metric-sub" style="color:var(--fg3)">'+(d.fat>0?fR(d.fat)+' vendas'+notaTransfVenda_(mesCMV):'sem faturamento')+'</div></div>'+
+      '<div class="metric-sub" style="color:var(--fg3)">'+(d.fat>0?fR(d.fat)+' vendas'+notaTransfVenda_(mesCMV,periodoAtualCMV,uniCMV):'sem faturamento')+'</div></div>'+
   '</div>';
   // Açaí: transferência às lojas fora da compra, num KPI próprio (e o CMV sobre o faturamento que inclui essas transferências como venda)
   if(saidaBloco){
