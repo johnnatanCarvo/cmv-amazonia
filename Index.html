@@ -984,6 +984,7 @@ function rotuloNegocio_(chave){
   for(var i=0;i<NEGOCIOS_DISP.length;i++)if(NEGOCIOS_DISP[i].chave===chave)return NEGOCIOS_DISP[i].rotulo;
   return '';
 }
+var ABRIR_APOS_TROCA=null;   // função a rodar quando a troca de negócio terminar
 function trocarNegocio(chave){
   if(NEGOCIO_TROCANDO||chave===NEGOCIO_ATUAL)return;
   NEGOCIO_TROCANDO=true;rNegSeletor();
@@ -998,8 +999,10 @@ function trocarNegocio(chave){
       zerarEstadoDeNegocio_();
       absorverNegocio_(res);
       montarSeletores_();
+      if(ABRIR_APOS_TROCA){var depois=ABRIR_APOS_TROCA;ABRIR_APOS_TROCA=null;try{depois();}catch(eDepois){}}
     })
     .withFailureHandler(function(e){
+      ABRIR_APOS_TROCA=null;
       esconderAvisoAtualizandoPainel();
       NEGOCIO_TROCANDO=false;rNegSeletor();
       alert('Falha ao trocar de negócio: '+(e.message||e));
@@ -1388,6 +1391,8 @@ function montarUnidadesDoNegocio_(){
   if(box){
     box.innerHTML=fs.map(function(f){
       return '<button class="'+(f===inventarioUnidadeAtual?'on':'')+'" data-u="'+f+'" onclick="setInventarioUnidade(\''+f+'\')">'+nomeUni(f)+'</button>';
+    }).join('')+NEGOCIOS_DISP.filter(function(n){return n.chave!==NEGOCIO_ATUAL;}).map(function(n){
+      return '<button type="button" data-u="" title="O painel trabalha um negócio por vez: troca para '+n.rotulo+' e volta para esta tela" style="border-style:dashed;" onclick="irParaInventarioDoNegocio(\''+n.chave.replace(/'/g,"\\'")+'\')">'+n.rotulo+' ↗</button>';
     }).join('');
   }
 }
@@ -3607,6 +3612,12 @@ var INVENTARIO_CONTAGENS=[];      // contagens carregadas pra unidade atual
 var INVENTARIO_MARCADOS={};       // {id: true} — sobrevive ao filtro de busca
 var INVENTARIOS_SALVOS=[];        // selecoes ja salvas (todas as unidades)
 var INVENTARIO_EDITANDO_ID=null;  // se estiver editando uma selecao salva
+
+// Troca o painel para outro negócio e reabre Ajustes > Inventário já nas unidades dele.
+function irParaInventarioDoNegocio(chave){
+  ABRIR_APOS_TROCA=function(){go('ajustes');setAjustesSub('inventario');};
+  trocarNegocio(chave);
+}
 
 function setInventarioUnidade(u){
   inventarioUnidadeAtual=u;
