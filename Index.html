@@ -411,6 +411,7 @@ main{max-width:none;margin:0;margin-left:var(--side-w);padding:calc(var(--top-h)
     <button class="tab" data-sec="custo" data-t="Variação de Custo" onclick="go('custo')"><svg viewBox="0 0 24 24"><path d="M3 17l6-6 4 4 8-8M15 7h6v6"/></svg>Variação de Custo</button>
     <button class="tab" data-sec="demanda" data-t="Demanda de Insumos" onclick="go('demanda')"><svg viewBox="0 0 24 24"><path d="M3 7l9-4 9 4v10l-9 4-9-4zM3 7l9 4 9-4M12 11v10"/></svg>Demanda de Insumos</button>
     <button class="tab" data-sec="semcal" data-t="Semana Calendário" onclick="go('semcal')"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>Semana Calendário</button>
+    <button class="tab" data-sec="diario" data-t="CMV Diário" onclick="go('diario')"><svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16M8 15v-4M12 15V8M16 15v-6"/></svg>CMV Diário</button>
     <button class="tab" data-sec="upload" data-t="Relatórios" onclick="go('upload')"><svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5M4 20h16"/></svg>Relatórios</button>
     <button class="tab" data-sec="ajustes" data-t="Ajustes" onclick="go('ajustes')"><svg viewBox="0 0 24 24"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg>Ajustes</button>
   </div>
@@ -655,6 +656,34 @@ main{max-width:none;margin:0;margin-left:var(--side-w);padding:calc(var(--top-h)
 
     <div id="semcal-periodos"></div>
     <div id="semcal-content"></div>
+  </section>
+
+  <!-- ===== CMV DIÁRIO / POR PERÍODO ===== -->
+  <section id="diario">
+    <div class="shead">
+      <div>
+        <div class="eyebrow">CMC e CMV</div>
+        <div class="stitle">CMV Diário e por Período</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;align-items:flex-end;">
+        <div class="useg" id="diario-useg"></div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">
+          <input type="date" id="diario-ini" style="font-size:12px;padding:5px 7px;border:1px solid var(--ln2);border-radius:7px;background:var(--bg3);color:var(--fg);font-family:inherit;">
+          <span style="font-size:12px;color:var(--fg2);">até</span>
+          <input type="date" id="diario-fim" style="font-size:12px;padding:5px 7px;border:1px solid var(--ln2);border-radius:7px;background:var(--bg3);color:var(--fg);font-family:inherit;">
+          <button type="button" class="gd-close" id="diario-btn" onclick="calcularDiario()">Calcular</button>
+        </div>
+        <div class="mseg" id="diario-preset">
+          <button onclick="diarioPreset('ontem')">Ontem</button>
+          <button onclick="diarioPreset('7')">7 dias</button>
+          <button onclick="diarioPreset('14')">14 dias</button>
+          <button onclick="diarioPreset('mes')">Mês atual</button>
+          <button onclick="diarioPreset('mesant')">Mês anterior</button>
+        </div>
+      </div>
+    </div>
+    <div id="diario-status" style="font-size:12px;margin-bottom:10px;color:var(--fg3);"></div>
+    <div id="diario-content"></div>
   </section>
 
   <!-- ===== CMV TEÓRICO ===== -->
@@ -1018,6 +1047,7 @@ function zerarEstadoDeNegocio_(){
   mesTeorico='';uniTeorico='TODAS';
   mesDemanda='';uniDemanda='TODAS';
   SEMCAL_CACHE={};mesSemCal='';uniSemCal='TODAS';
+  DIARIO_DADOS=null;diarioUni='TODAS';
   custoCache=null;uniABC='TODAS';mesABC='TODOS';custoMesA='';custoMesB='';
   ANALISE_SEMANAL_CACHE={};periodoAtualCMC={tipo:'mes'};periodoAtualCMV={tipo:'mes'};
   CUSTOM_CMC_CACHE={};CUSTOM_CMV_CACHE={};
@@ -1067,6 +1097,7 @@ function go(id){
   if(id==='custo') rCusto();
   if(id==='cmv')   rCMV();
   if(id==='semcal')rSemCal();
+  if(id==='diario')rDiario();
   if(id==='teorico')rTeorico();
   if(id==='demanda')rDemanda();
   if(id==='ajustes')carregarAjustesSub(ajustesSubAtual);
@@ -2097,6 +2128,127 @@ function badgeSemCal_(linha){
   if(desvio===0)return '<span class="tag tA">exato</span>';
   return '<span class="tag tB" title="Estoque inicial '+(linha.eiData||'')+' ('+(linha.eiDesvioDias||0)+'d) · Estoque final '+(linha.efData||'')+' ('+(linha.efDesvioDias||0)+'d)">aprox. ±'+desvio+'d</span>';
 }
+
+/* ====== CMV DIÁRIO E POR PERÍODO ====== */
+// Dia a dia não existe estoque contado: o número diário é de FLUXO (faturamento, compras, CMV Teórico e, no
+// Açaí, a produção de latas e litros). O CMV REAL (estoque inicial + compras - estoque final) é do PERÍODO,
+// e só aparece quando há contagem perto das duas pontas.
+var DIARIO_DADOS=null, diarioUni='TODAS';
+function diarioISO_(d){return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');}
+function diarioPreset(p){
+  var hoje=new Date(), ini, fim;
+  if(p==='ontem'){fim=new Date(hoje.getFullYear(),hoje.getMonth(),hoje.getDate()-1);ini=fim;}
+  else if(p==='7'||p==='14'){fim=new Date(hoje.getFullYear(),hoje.getMonth(),hoje.getDate()-1);ini=new Date(fim.getFullYear(),fim.getMonth(),fim.getDate()-(Number(p)-1));}
+  else if(p==='mes'){ini=new Date(hoje.getFullYear(),hoje.getMonth(),1);fim=new Date(hoje.getFullYear(),hoje.getMonth(),hoje.getDate());}
+  else {ini=new Date(hoje.getFullYear(),hoje.getMonth()-1,1);fim=new Date(hoje.getFullYear(),hoje.getMonth(),0);}
+  document.getElementById('diario-ini').value=diarioISO_(ini);
+  document.getElementById('diario-fim').value=diarioISO_(fim);
+  calcularDiario();
+}
+function setUniDiario(u){
+  diarioUni=u;
+  document.querySelectorAll('#diario-useg button').forEach(function(b){b.classList.toggle('on',b.dataset.u===u);});
+  rDiarioPintar_();
+}
+function rDiario(){
+  var fs=filiaisDoNegocio_();
+  var useg=document.getElementById('diario-useg');
+  if(fs.length>1){
+    useg.style.display='';
+    useg.innerHTML='<button data-u="TODAS" class="'+(diarioUni==='TODAS'?'on':'')+'" onclick="setUniDiario(\'TODAS\')">Todas</button>'+
+      fs.map(function(f){return '<button data-u="'+f+'" class="'+(diarioUni===f?'on':'')+'" onclick="setUniDiario(\''+f+'\')">'+nomeUni(f)+'</button>';}).join('');
+  }else{useg.style.display='none';useg.innerHTML='';diarioUni='TODAS';}
+  if(!document.getElementById('diario-ini').value){diarioPreset('14');return;}   // primeira vez: últimos 14 dias
+  if(!DIARIO_DADOS)calcularDiario();else rDiarioPintar_();
+}
+function calcularDiario(){
+  var ini=document.getElementById('diario-ini').value, fim=document.getElementById('diario-fim').value;
+  var st=document.getElementById('diario-status'), btn=document.getElementById('diario-btn');
+  if(!ini||!fim){st.style.color='var(--rd)';st.textContent='Escolha a data inicial e a final.';return;}
+  if(ini>fim){st.style.color='var(--rd)';st.textContent='A data inicial não pode ser depois da final.';return;}
+  btn.disabled=true;st.style.color='var(--fg3)';st.textContent='Calculando...';
+  var negocio=NEGOCIO_ATUAL;
+  google.script.run
+    .withSuccessHandler(function(json){
+      btn.disabled=false;
+      if(negocio!==NEGOCIO_ATUAL)return;      // trocou de negócio no meio do cálculo
+      var res;try{res=JSON.parse(json);}catch(e){res=null;}
+      if(!res||!res.ok){st.style.color='var(--rd)';st.textContent=(res&&res.erro)||'Não foi possível calcular.';return;}
+      st.textContent='';DIARIO_DADOS=res;rDiarioPintar_();
+    })
+    .withFailureHandler(function(err){btn.disabled=false;st.style.color='var(--rd)';st.textContent='Falha: '+(err.message||err);})
+    .calcularCMVDiario(SENHA_ATUAL,ini,fim,NEGOCIO_ATUAL);
+}
+function rDiarioPintar_(){
+  var cont=document.getElementById('diario-content'), d=DIARIO_DADOS;
+  if(!d){cont.innerHTML='';return;}
+  var uni=(diarioUni==='TODAS'||d.unidades.indexOf(diarioUni)<0)?'TODAS':diarioUni;
+  function lin(dia){return uni==='TODAS'?dia.todas:dia.porUnidade[uni];}
+  var tot=uni==='TODAS'?d.total.todas:d.total.porUnidade[uni];
+  var pctCls=function(p){return (p>35)?'rd':(p>30)?'am':'ac';};
+  var mostra=!!d.mostraProducao;
+  var temPct=function(p){return p!==null&&p!==undefined?fP(p):'--';};
+
+  var linhas=d.dias.map(function(dia){
+    var l=lin(dia), pr=dia.producao;
+    var vazio=!l.fat&&!l.compras&&!(pr&&(pr.latas||pr.litros));
+    return '<tr'+(vazio?' style="opacity:.45"':'')+'>'+
+      '<td class="hi">'+dia.data.slice(0,5)+'</td>'+
+      '<td class="r">'+fR(l.fat)+'</td>'+
+      '<td class="r">'+fR(l.compras)+'</td>'+
+      '<td class="r">'+temPct(l.cmc_pct)+'</td>'+
+      '<td class="r" style="font-weight:600;">'+fR(l.cmvTeorico)+'</td>'+
+      '<td class="r '+(l.cmv_teorico_pct!==null?pctCls(l.cmv_teorico_pct):'')+'">'+temPct(l.cmv_teorico_pct)+'</td>'+
+      (mostra?('<td class="r">'+(pr&&pr.latas?fmtN1_(pr.latas):'--')+'</td><td class="r">'+(pr&&pr.litros?fmtN1_(pr.litros):'--')+'</td><td class="r">'+(pr&&pr.rendimento?fmtN2_(pr.rendimento):'--')+'</td>'):'')+
+    '</tr>';
+  }).join('');
+  var rodape='<tr style="font-weight:700;border-top:2px solid var(--ln2);">'+
+      '<td>Período</td><td class="r">'+fR(tot.fat)+'</td><td class="r">'+fR(tot.compras)+'</td><td class="r">'+temPct(tot.cmc_pct)+'</td>'+
+      '<td class="r">'+fR(tot.cmvTeorico)+'</td><td class="r">'+temPct(tot.cmv_teorico_pct)+'</td>'+
+      (mostra&&d.producao?('<td class="r">'+fmtN1_(d.producao.latas)+'</td><td class="r">'+fmtN1_(d.producao.litros)+'</td><td class="r">--</td>'):(mostra?'<td></td><td></td><td></td>':''))+
+    '</tr>';
+
+  // cartões do período
+  var real=d.real, rl=null;
+  if(real&&real.disponivel){rl=(uni==='TODAS')?real:(real.porUnidade&&real.porUnidade[uni]&&real.porUnidade[uni].disponivel?real.porUnidade[uni]:null);}
+  var cartaoReal;
+  if(rl){
+    // com uma unidade só (ou uma unidade escolhida) as datas das contagens são dela; com várias, cada uma tem as suas
+    var rU=(uni!=='TODAS')?rl:((d.unidades.length===1&&real.porUnidade&&real.porUnidade[d.unidades[0]])?real.porUnidade[d.unidades[0]]:null);
+    var desvio=rU?Math.max(rU.eiDesvioDias||0,rU.efDesvioDias||0):0;
+    cartaoReal='<div class="metric lead"><div class="metric-l">CMV Real do período'+(uni==='TODAS'?'':' · '+nomeUni(uni))+'</div>'+
+      '<div class="metric-v">'+fR2(rl.cmv)+'</div>'+
+      '<div class="metric-sub">'+(rl.cmv_pct!==null&&rl.cmv_pct!==undefined?fP(rl.cmv_pct)+' do faturamento · ':'')+'EI '+fR(rl.ei)+' + Compras '+fR(rl.compras)+' − EF '+fR(rl.ef)+
+        (rU&&rU.eiData?' · contagens de '+rU.eiData+' e '+rU.efData+(desvio>0?' (±'+desvio+'d)':''):'')+'</div></div>';
+  }else{
+    cartaoReal='<div class="metric lead"><div class="metric-l">CMV Real do período</div><div class="metric-v" style="color:var(--fg3)">--</div>'+
+      '<div class="metric-sub">'+((real&&real.erro)?String(real.erro).replace(/</g,'&lt;'):'Sem contagem de estoque perto das duas datas (até 10 dias). Salve os inventários em Ajustes › Inventário.')+'</div></div>';
+  }
+  var mesProd=(d.custoProducao&&d.custoProducao.length)?d.custoProducao[d.custoProducao.length-1]:null;
+  var cartoes='<div class="metrics" style="grid-template-columns:1.4fr 1fr 1fr 1fr 1fr;">'+cartaoReal+
+    '<div class="metric"><div class="metric-l">Faturamento</div><div class="metric-v">'+fR(tot.fat)+'</div><div class="metric-sub">'+d.nDias+' dia(s) · '+d.dataInicio+' a '+d.dataFim+'</div></div>'+
+    '<div class="metric"><div class="metric-l">Compras (CMC)</div><div class="metric-v am">'+fR(tot.compras)+'</div><div class="metric-sub">'+temPct(tot.cmc_pct)+' do faturamento</div></div>'+
+    '<div class="metric"><div class="metric-l">CMV Teórico</div><div class="metric-v az">'+fR(tot.cmvTeorico)+'</div><div class="metric-sub">'+temPct(tot.cmv_teorico_pct)+' do faturamento</div></div>'+
+    '<div class="metric"><div class="metric-l">'+(mostra?'Rendimento do mês':'Sem ficha')+'</div><div class="metric-v">'+
+      (mostra?(mesProd&&mesProd.rendimento?fmtN2_(mesProd.rendimento)+' L/lata':'--'):fR(tot.semFicha))+'</div>'+
+      '<div class="metric-sub">'+(mostra?((mesProd&&mesProd.custoLitro?'litro a '+fR2(mesProd.custoLitro)+' · ':'')+(d.producao?'no período: '+fmtN1_(d.producao.latas)+' latas, '+fmtN1_(d.producao.litros)+' L':'sem produção no período')):'vendas sem ficha técnica')+'</div></div>'+
+  '</div>';
+  var avisos=[];
+  if(tot.semFicha>0)avisos.push(fR(tot.semFicha)+' em vendas sem ficha técnica ficam fora do CMV Teórico (ex.: itens de revenda).');
+  if(mostra)avisos.push('Latas e litros dia a dia dependem de quando a produção é lançada no Cloudfy; o rendimento e o custo do litro valem pelo mês.');
+  var avisoFicha=avisos.length?'<div style="font-size:12px;color:var(--fg3);margin:8px 0 0;">'+avisos.join(' ')+'</div>':'';
+
+  var thProd=mostra?'<th class="r">Latas</th><th class="r">Litros</th><th class="r">L/lata</th>':'';
+  var tabela='<div class="card" style="margin-top:14px;"><div class="twrap"><table><thead><tr><th>Dia</th><th class="r">Faturamento</th><th class="r">Compras</th><th class="r">CMC%</th><th class="r">CMV Teórico</th><th class="r">CMV Teór.%</th>'+thProd+'</tr></thead><tbody>'+linhas+rodape+'</tbody></table></div></div>';
+
+  var prods=d.produtos.slice(0,15).map(function(p){
+    return '<tr><td>'+p.produto+(p.tem_ficha?'':' <span class="tag tC">sem ficha</span>')+'</td><td class="r">'+fmtN1_(p.qtd)+'</td><td class="r">'+fR(p.valor)+'</td><td class="r">'+(p.tem_ficha?fR(p.custo_teorico):'--')+'</td></tr>';
+  }).join('');
+  var tabProd='<div class="card" style="margin-top:14px;"><div class="card-h"><div class="card-t">Produtos vendidos no período</div></div><div class="twrap"><table><thead><tr><th>Produto</th><th class="r">Qtd.</th><th class="r">Vendido</th><th class="r">Custo teórico</th></tr></thead><tbody>'+prods+'</tbody></table></div></div>';
+  cont.innerHTML=cartoes+avisoFicha+tabela+tabProd;
+}
+function fmtN1_(v){return (Math.round((v||0)*10)/10).toLocaleString('pt-BR',{minimumFractionDigits:0,maximumFractionDigits:1});}
+function fmtN2_(v){return (Math.round((v||0)*100)/100).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2});}
 
 // ── Período de VENDAS E COMPRAS de cada semana de análise ──
 // Um intervalo só (compras e vendas nunca diferem). O estoque inicial/final da semana vêm dos inventários
