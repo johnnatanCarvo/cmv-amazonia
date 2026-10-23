@@ -727,6 +727,9 @@ function agregarComprasPeriodoCMV_(rows, resolverPeriodo) {
 
       // Saída na filial de origem (enviou)
       comprasMes[mnC].saidaFilial[filOrigemCMV] = (comprasMes[mnC].saidaFilial[filOrigemCMV] || 0) + totC;
+      // mesma saída pelo valor da nota (preço de transferência); a linha do Açaí é gravada a custo e guarda a nota em C_COMPRAS_VALOR_NOTA
+      if (!comprasMes[mnC].saidaFilialPreco) comprasMes[mnC].saidaFilialPreco = {};
+      comprasMes[mnC].saidaFilialPreco[filOrigemCMV] = (comprasMes[mnC].saidaFilialPreco[filOrigemCMV] || 0) + (numVal(rc[C_COMPRAS_VALOR_NOTA]) || totC);
       if (!comprasMes[mnC].saidaFilialGrupo) comprasMes[mnC].saidaFilialGrupo = {};
       if (!comprasMes[mnC].saidaFilialGrupo[filOrigemCMV]) comprasMes[mnC].saidaFilialGrupo[filOrigemCMV] = {};
       if (!comprasMes[mnC].saidaFilialGrupo[filOrigemCMV][grC]) comprasMes[mnC].saidaFilialGrupo[filOrigemCMV][grC] = { valor:0, qtd:0 };
@@ -747,6 +750,7 @@ function agregarComprasPeriodoCMV_(rows, resolverPeriodo) {
       // saiu do estoque. Fica separada das compras (que seguem só as compras) e o CMV consolidado desconta (a filial
       // já desconta pela saidaFilial).
       comprasMes[mnC].saidaExterna = (comprasMes[mnC].saidaExterna || 0) + totC;
+      comprasMes[mnC].saidaExternaPreco = (comprasMes[mnC].saidaExternaPreco || 0) + (numVal(rc[C_COMPRAS_VALOR_NOTA]) || totC);
       if (!comprasMes[mnC].saidaExternaGrupo) comprasMes[mnC].saidaExternaGrupo = {};
       if (!comprasMes[mnC].saidaExternaGrupo[grC]) comprasMes[mnC].saidaExternaGrupo[grC] = { valor:0, qtd:0, prod:{} };
       var sxg = comprasMes[mnC].saidaExternaGrupo[grC];
@@ -1244,6 +1248,7 @@ function processarCMV(rowsEstoque, rowsCompras, historicoPorInsumo, fichasMap) {
         cmv_puro: r2(cmvPuro),
         transf_entrada: r2(entradaTransf),
         transf_saida:   r2(saidaTransf),
+        transf_saida_preco: r2((cMes && cMes.saidaFilialPreco && cMes.saidaFilialPreco[f]) || 0),
         transf_saldo:   r2(entradaTransf - saidaTransf),
         grupos: gruposF
       };
@@ -1259,6 +1264,7 @@ function processarCMV(rowsEstoque, rowsCompras, historicoPorInsumo, fichasMap) {
       ef_total:      r2(ef.total),
       compras_total: r2(compras),
       saida_transf_total: r2(saidaExt),
+      saida_transf_preco_total: r2((cMes && cMes.saidaExternaPreco) || 0),
       cmv_total:     r2(cmvReal),
       cmv_pct:       null,
       faturamento:   0,

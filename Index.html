@@ -1606,7 +1606,7 @@ function dadosPeriodoCMV(mesNome, periodo){
     if(!consolidado)return null;
     return {ei:consolidado.ei,ef:consolidado.ef,compras:consolidado.compras,cmv:consolidado.cmv,
       pct:consolidado.cmv_pct,fat:consolidado.faturamento,data_ei:null,data_ef:null,grupos:null,
-      transfEntrada:0,transfSaida:consolidado.saida||0,transfSaldo:0,cmvAjustado:consolidado.cmv,pctAjustado:consolidado.cmv_pct};
+      transfEntrada:0,transfSaida:consolidado.saida||0,transfSaidaPreco:consolidado.saidaPreco||0,transfSaldo:0,cmvAjustado:consolidado.cmv,pctAjustado:consolidado.cmv_pct};
   }
   var unidadeBloco=bloco[uniCMV];
   if(!unidadeBloco||!unidadeBloco.cmvDetalhado)return null;
@@ -1618,7 +1618,7 @@ function dadosPeriodoCMV(mesNome, periodo){
   return {ei:f.ei,ef:f.ef,compras:f.compras,cmv:f.cmv,pct:pct,fat:fatFil,
     data_ei:unidadeBloco.dataInicio||null,data_ef:unidadeBloco.dataFim||null,grupos:(f.grupos||null),
     invInicio:unidadeBloco.invInicio||null,invFim:unidadeBloco.invFim||null,periodoMarcado:!!unidadeBloco.periodoMarcado,auto:!!unidadeBloco.auto,
-    transfEntrada:f.transf_entrada||0,transfSaida:f.transf_saida||0,transfSaldo:f.transf_saldo||0,
+    transfEntrada:f.transf_entrada||0,transfSaida:f.transf_saida||0,transfSaidaPreco:f.transf_saida_preco||0,transfSaldo:f.transf_saldo||0,
     cmvAjustado:f.cmv,pctAjustado:pct,
     cmvSemAjuste:(f.cmv_sem_ajuste!==undefined?f.cmv_sem_ajuste:f.cmv),pctSemAjuste:pctSemAjuste,
     comprasPuro:(f.compras_puro!==undefined?f.compras_puro:f.compras),
@@ -2487,7 +2487,7 @@ function extrairCMVCustom_(){
   return {ei:f.ei,ef:f.ef,compras:f.compras,cmv:f.cmv,pct:pct,fat:fatFil,
     data_ei:f.eiData||resultado.dataInicio||null,data_ef:f.efData||resultado.dataFim||null,grupos:(f.grupos||null),
     eiDesvioDias:f.eiDesvioDias||0,efDesvioDias:f.efDesvioDias||0,
-    transfEntrada:f.transf_entrada||0,transfSaida:f.transf_saida||0,transfSaldo:f.transf_saldo||0,
+    transfEntrada:f.transf_entrada||0,transfSaida:f.transf_saida||0,transfSaidaPreco:f.transf_saida_preco||0,transfSaldo:f.transf_saldo||0,
     cmvAjustado:f.cmv,pctAjustado:pct,
     cmvSemAjuste:(f.cmv_sem_ajuste!==undefined?f.cmv_sem_ajuste:f.cmv),pctSemAjuste:pctSemAjuste,
     comprasPuro:(f.compras_puro!==undefined?f.compras_puro:f.compras),
@@ -2506,13 +2506,13 @@ function cmvDados(mes){
   var c=CMV[mes];if(!c)return null;
   if(uniCMV==='TODAS')return {ei:c.ei_total,ef:c.ef_total,compras:c.compras_total-(c.saida_transf_total||0),cmv:c.cmv_total,
     pct:c.cmv_pct,fat:c.faturamento,data_ei:c.data_ei,data_ef:c.data_ef,grupos:c.grupos,
-    transfEntrada:0,transfSaida:c.saida_transf_total||0,transfSaldo:0,cmvAjustado:c.cmv_total,pctAjustado:c.cmv_pct};
+    transfEntrada:0,transfSaida:c.saida_transf_total||0,transfSaidaPreco:c.saida_transf_preco_total||0,transfSaldo:0,cmvAjustado:c.cmv_total,pctAjustado:c.cmv_pct};
   if(c.filiais&&c.filiais[uniCMV]){
     var f=c.filiais[uniCMV];
     // O CMV da filial JÁ é o ajustado: compras inclui a entrada e desconta a saída.
     return {ei:f.ei,ef:f.ef,compras:f.compras,cmv:f.cmv,pct:f.cmv_pct,fat:f.faturamento,
       data_ei:c.data_ei,data_ef:c.data_ef,grupos:(f.grupos||null),
-      transfEntrada:f.transf_entrada||0,transfSaida:f.transf_saida||0,transfSaldo:f.transf_saldo||0,
+      transfEntrada:f.transf_entrada||0,transfSaida:f.transf_saida||0,transfSaidaPreco:f.transf_saida_preco||0,transfSaldo:f.transf_saldo||0,
       cmvAjustado:f.cmv,pctAjustado:f.cmv_pct,cmvSemAjuste:(f.cmv_sem_ajuste!==undefined?f.cmv_sem_ajuste:f.cmv),
       pctSemAjuste:(f.cmv_pct_sem_ajuste!==undefined?f.cmv_pct_sem_ajuste:f.cmv_pct),
       comprasPuro:(f.compras_puro!==undefined?f.compras_puro:f.compras),
@@ -2634,11 +2634,25 @@ function rCMV(){
         (cmvAtipico?'&#9888; CMV negativo — confira as contagens de estoque':(d.data_ei||'')+' a '+(d.data_ef||'')+avisoAproximado+avisoPeriodoSemanaCMV_(d))+
       '</div></div>'+
     '<div class="metric"><div class="metric-l">Estoque Inicial</div><div class="metric-v az">'+fR(d.ei)+'</div></div>'+
-    '<div class="metric"><div class="metric-l">Compras</div><div class="metric-v am">'+fR(d.compras)+'</div>'+(saidaBloco?'<div class="metric-sub" style="color:var(--fg3)">+ '+fR(d.transfSaida)+' transferido às unidades, à parte</div>':'')+'</div>'+
+    '<div class="metric"><div class="metric-l">Compras</div><div class="metric-v am">'+fR(d.compras)+'</div>'+'</div>'+
     '<div class="metric"><div class="metric-l">Estoque Final</div><div class="metric-v az">'+fR(d.ef)+'</div></div>'+
     '<div class="metric"><div class="metric-l">CMV sobre Faturamento</div><div class="metric-v '+pctCls+'">'+pctTxt+'</div>'+
       '<div class="metric-sub" style="color:var(--fg3)">'+(d.fat>0?fR(d.fat)+' vendas':'sem faturamento')+'</div></div>'+
   '</div>';
+  // Açaí: transferência às lojas fora da compra, num KPI próprio (e o CMV sobre o faturamento que inclui essas transferências como venda)
+  if(saidaBloco){
+    var precoTr=d.transfSaidaPreco||d.transfSaida, fatTrC=(d.fat||0)+precoTr;
+    var pctTrC=(d.cmv!==null&&d.cmv!==undefined&&fatTrC>0)?d.cmv/fatTrC*100:null;
+    html+='<div class="metrics" style="grid-template-columns:1.4fr 1fr 1fr 1fr 1fr;margin-top:10px;">'+
+      '<div class="metric lead"><div class="metric-l">Transferido às Unidades · '+labelAtualCMV+sufUni+'</div>'+
+        '<div class="metric-v am">'+fR2(precoTr)+'</div>'+
+        '<div class="metric-sub" style="color:var(--fg3)">a preço de transferência · '+fR(d.transfSaida)+' a custo (o que sai do estoque)</div></div>'+
+      '<div class="metric"><div class="metric-l">CMV c/ Transferências</div><div class="metric-v '+(pctTrC!==null&&pctTrC>35?'rd':pctTrC!==null&&pctTrC>30?'am':'ac')+'">'+(pctTrC!==null?fP(pctTrC):'--')+'</div>'+
+        '<div class="metric-sub" style="color:var(--fg3)">CMV &divide; (vendas + transferências)</div></div>'+
+      '<div class="metric"><div class="metric-l">Vendas + Transferências</div><div class="metric-v az">'+fR(fatTrC)+'</div>'+
+        '<div class="metric-sub" style="color:var(--fg3)">'+fR(d.fat||0)+' vendas + '+fR(precoTr)+'</div></div>'+
+    '</div>';
+  }
   // Rastro da origem: vale pra "Todas" e pra unidade isolada.
   if(periodoAtualCMV.tipo==='custom')html+=blocoOrigemContagensCMV_();
 
