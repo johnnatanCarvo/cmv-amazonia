@@ -1585,7 +1585,7 @@ function dadosPeriodoCMC(mesNome, periodo, unidade){
     var f=d.filiais[unidade];
     var trUni=(tr&&tr.filiais&&tr.filiais[unidade])?tr.filiais[unidade]:null;
     return {cmc_total:f.cmc_total,faturamento:f.faturamento||0,grupos:f.grupos,transf:tr,transfUni:trUni,
-      transfSaldo:f.transf_saldo||0,transfEntrada:f.transf_entrada||0,transfSaida:f.transf_saida||0,
+      transfSaldo:f.transf_saldo||0,transfEntrada:f.transf_entrada||0,transfSaida:f.transf_saida||0,transfSaidaPreco:f.transf_saida_preco||0,
       transfEntradaQtd:f.transf_entrada_qtd||0,transfSaidaQtd:f.transf_saida_qtd||0,
       cmcComTransf:(f.cmc_com_transf!==undefined?f.cmc_com_transf:f.cmc_total),
       cmcPctFatComTransf:(f.cmc_pct_fat_com_transf!==undefined?f.cmc_pct_fat_com_transf:null)};
@@ -1679,17 +1679,17 @@ function extrairCMCPorUnidade_(d){
   if(uniAtual==='TODAS'){
     // Entre unidades do mesmo negócio o que sai de uma entra na outra (líquido zero). O que sobra é transferência
     // para FORA do negócio (Açaí enviando às lojas): aparece como "enviado" e abate o CMC, igual ao CMV.
-    var liqSai=0, liqSaiQtd=0;
-    if(tr&&tr.filiais){Object.keys(tr.filiais).forEach(function(k){var x=tr.filiais[k];liqSai+=(x.saida||0)-(x.entrada||0);liqSaiQtd+=(x.saida_qtd||0)-(x.entrada_qtd||0);});}
-    if(liqSai<0.005){liqSai=0;liqSaiQtd=0;}
-    return {cmc_total:d.cmc_total,faturamento:d.faturamento||0,grupos:d.grupos,transf:tr,transfUni:null,transfSaldo:tr?tr.total:0,transfEntrada:0,transfSaida:liqSai,
+    var liqSai=0, liqSaiQtd=0, liqSaiPreco=0;
+    if(tr&&tr.filiais){Object.keys(tr.filiais).forEach(function(k){var x=tr.filiais[k];liqSai+=(x.saida||0)-(x.entrada||0);liqSaiQtd+=(x.saida_qtd||0)-(x.entrada_qtd||0);liqSaiPreco+=(x.saida_preco||x.saida||0)-(x.entrada||0);});}
+    if(liqSai<0.005){liqSai=0;liqSaiQtd=0;liqSaiPreco=0;}
+    return {cmc_total:d.cmc_total,faturamento:d.faturamento||0,grupos:d.grupos,transf:tr,transfUni:null,transfSaldo:tr?tr.total:0,transfEntrada:0,transfSaida:liqSai,transfSaidaPreco:liqSaiPreco,
       transfEntradaQtd:0,transfSaidaQtd:liqSaiQtd,cmcComTransf:d.cmc_total,cmcPctFatComTransf:d.cmc_pct_fat};
   }
   if(d.filiais&&d.filiais[uniAtual]){
     var f=d.filiais[uniAtual];
     var trUni=(tr&&tr.filiais&&tr.filiais[uniAtual])?tr.filiais[uniAtual]:null;
     return {cmc_total:f.cmc_total,faturamento:f.faturamento||0,grupos:f.grupos,transf:tr,transfUni:trUni,
-      transfSaldo:f.transf_saldo||0,transfEntrada:f.transf_entrada||0,transfSaida:f.transf_saida||0,
+      transfSaldo:f.transf_saldo||0,transfEntrada:f.transf_entrada||0,transfSaida:f.transf_saida||0,transfSaidaPreco:f.transf_saida_preco||0,
       transfEntradaQtd:f.transf_entrada_qtd||0,transfSaidaQtd:f.transf_saida_qtd||0,
       cmcComTransf:(f.cmc_com_transf!==undefined?f.cmc_com_transf:f.cmc_total),
       cmcPctFatComTransf:(f.cmc_pct_fat_com_transf!==undefined?f.cmc_pct_fat_com_transf:null)};
@@ -1814,9 +1814,17 @@ function rMes(){
   }
 
   if(blocoTransf){
-    html+='<div class="metric w2"><div class="metric-l">Transferido às Unidades (a custo)</div>'+
-      '<div class="metric-v am">'+fR2(d.transfSaida)+'</div>'+
-      '<div class="metric-sub" style="color:var(--fg3)">'+(d.transfSaidaQtd>0?fQ(d.transfSaidaQtd)+' litros · ':'')+'bloco à parte: fora do CMC e do faturamento</div></div>';
+    html+='<div class="metric w2"><div class="metric-l">Transferido às Unidades</div>'+
+      '<div class="metric-v am">'+fR2(d.transfSaidaPreco||d.transfSaida)+'</div>'+
+      '<div class="metric-sub" style="color:var(--fg3)">'+(d.transfSaidaQtd>0?fQ(d.transfSaidaQtd)+' litros · ':'')+'a preço de transferência · '+fR(d.transfSaida)+' a custo</div></div>';
+    // CMC com as transferências: elas são venda do Açaí às lojas, então entram no denominador. A compra não é abatida.
+    var fatTr=(d.faturamento||0)+(d.transfSaidaPreco||0);
+    if(fatTr>0&&d.transfSaidaPreco>0){
+      var pctTr=d.cmc_total/fatTr*100;
+      html+='<div class="metric w2"><div class="metric-l">CMC c/ Transferências sobre Fat.</div>'+
+        '<div class="metric-v '+(pctTr>42?'rd':'ac')+'">'+fP(pctTr)+'</div>'+
+        '<div class="metric-sub" style="color:var(--fg3)">CMC '+fR(d.cmc_total)+' &divide; (vendas '+fR(d.faturamento||0)+' + transferências '+fR(d.transfSaidaPreco)+')</div></div>';
+    }
   }
 
   document.getElementById('mes-metrics').innerHTML=html;

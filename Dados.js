@@ -246,6 +246,8 @@ function processarComprasPorPeriodo_(rows, resolverPeriodo) {
       }
       transf[mesNome].filiais[filOrig].saida    += total;
       transf[mesNome].filiais[filOrig].saidaQtd += qtd;
+      // valor da nota (preço de transferência); a saída do Açaí é gravada a custo e a nota guarda o preço
+      transf[mesNome].filiais[filOrig].saidaPreco = (transf[mesNome].filiais[filOrig].saidaPreco || 0) + (numVal(r[C_COMPRAS_VALOR_NOTA]) || total);
       continue;  // não entra no CMC de compra externa
     }
 
@@ -377,6 +379,7 @@ function processarComprasPorPeriodo_(rows, resolverPeriodo) {
         saida:       r2(saida),
         entrada_qtd: r2(entradaQtd),
         saida_qtd:   r2(saidaQtd),
+        saida_preco: r2(tf.saidaPreco || 0),
         saldo:       r2(entrada - saida),
         origens: origens,
         produtos: produtosConsolidados
@@ -388,6 +391,7 @@ function processarComprasPorPeriodo_(rows, resolverPeriodo) {
         cmc[mes].filiais[fil].transf_saldo       = r2(entrada - saida);
         cmc[mes].filiais[fil].transf_entrada_qtd = r2(entradaQtd);
         cmc[mes].filiais[fil].transf_saida_qtd   = r2(saidaQtd);
+        cmc[mes].filiais[fil].transf_saida_preco = r2(tf.saidaPreco || 0);
       }
     });
   });

@@ -18,6 +18,8 @@
 var FILIAL_ACAI = 'ACAI NA CUIA';
 var TRANSF_ACAI_PRECO_LITRO = 20;
 var TRANSF_ACAI_COD = '1238';
+// Coluna livre da linha de compras onde a saída do Açaí guarda o valor da NOTA (preço de transferência); o total da linha vira custo.
+var C_COMPRAS_VALOR_NOTA = 12;
 
 // [data, nº do pedido, filial de destino, valor do pedido em R$]
 var TRANSF_ACAI_PEDIDOS = [
@@ -187,6 +189,7 @@ function filtrarComprasNegocio_(rows) {
 
   var custos = preAgregarCustoMedioPorInsumo(base);   // sem as saídas: o custo vem da lata e da produção
   extras.forEach(function(r) {
+    r[C_COMPRAS_VALOR_NOTA] = numVal(r[C_COMPRAS.total]);   // o valor da nota/pedido (preço de transferência) antes de trocar pelo custo
     var prod = String(r[C_COMPRAS.produto] || '').trim();
     if (prod !== ACAI_NOME_MEDIO && prod !== ACAI_NOME_GROSSO) return;
     var d = parseDataCompleta(r[C_COMPRAS.data]);
