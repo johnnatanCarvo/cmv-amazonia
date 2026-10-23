@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-10-23.14';
+var VERSAO_APP = '2026-10-23.15';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -2882,6 +2882,10 @@ function lerDataPorContagemId_() {
       dataPorContagemId[String(rc[0]).trim()] = paraTextoData_(rc[1]) || paraTextoData_(rc[7]);
     }
   }
+  // contagem sintética de abertura com estoque zero (Açaí): não está na planilha, mas tem data
+  if (typeof aberturasZeroEstoque_ === 'function') {
+    aberturasZeroEstoque_().forEach(function(a) { dataPorContagemId[ACAI_ABERTURA_ZERO.id] = pad2(a.dia) + '/' + pad2(a.mes) + '/' + a.ano + ' 00:00'; });
+  }
   return dataPorContagemId;
 }
 
@@ -3043,6 +3047,7 @@ function gerarLinhasEstoqueDeInventariosSalvos_(rowsEstoque, rowsCompras, rowsVe
   var porMes = {}; // 'ano-mes' -> { unidade: {inv, info} }
   inventarios.forEach(function(inv) {
     if (!inv.contagemIds || !inv.contagemIds.length) return;
+    if (inv.contagemIds[0] === ACAI_ABERTURA_ZERO.id) return;   // abertura com estoque zero: tratada dentro do processarCMV
     // Inventário de unidade de outro negócio não entra: o painel trabalha um
     // negócio por vez e misturar aqui contaminaria o estoque do CMV.
     if (!filialDoNegocioAtivo_(inv.unidade)) return;
@@ -3100,6 +3105,7 @@ function gerarLinhasEstoqueDeInventariosSalvos_(rowsEstoque, rowsCompras, rowsVe
       if (primeiroNum === null || n < primeiroNum) { primeiroNum = n; primeiraChave = ch; }
     });
     if (primeiraChave === null) return;
+    if (aberturasZeroEstoque_().some(function(a) { return a.unidade === u; })) return;   // já existe estoque inicial (zero) definido
     var ant = (primeiroNum - 1);
     var chAnt = Math.floor((ant - 1) / 12) + '-' + (((ant - 1) % 12) + 1);
     if (porMes[chAnt] || mesesComCSV[chAnt]) return;                       // já tem fechamento do mês anterior

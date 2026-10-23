@@ -13,6 +13,20 @@
 var ACAI_UNIDADE_CONTAGEM = 'ACAI NA CUIA';
 var CONTAGENS_ACAI_MEMO_ = undefined;   // vale só durante a execução
 
+// ABERTURA COM ESTOQUE ZERO: a unidade começou a operar em outubro/2026 e não existe contagem de setembro. Combinado com o
+// cliente: o estoque inicial é R$ 0 em 30/09/2026. Vira uma "contagem" sintética (sem itens) nessa data, e assim o CMV
+// do mês, das semanas e do dia enxergam o estoque inicial zero sem ninguém digitar nada. Só vale se não houver contagem
+// real nessa data ou antes dela.
+var ACAI_ABERTURA_ZERO = { ts: '20260930', id: 'ABERTURA-ZERO' };
+
+function aberturasZeroEstoque_() {
+  if (NEGOCIO_ATIVO !== 'ACAI NA CUIA') return [];
+  var ts = ACAI_ABERTURA_ZERO.ts;
+  var real = contagensDiariasAcai_().filter(function(c) { return !c.sintetica; });
+  if (real.length && real[0].ts <= ts) return [];
+  return [{ unidade: ACAI_UNIDADE_CONTAGEM, ts: ts, ano: Number(ts.slice(0, 4)), mes: Number(ts.slice(4, 6)), dia: Number(ts.slice(6, 8)) }];
+}
+
 // 'dd/MM/yyyy HH:mm' -> 'yyyyMMddHHmm' (ordenável); sem hora -> 0000
 function chaveDataHoraContagem_(txt) {
   var s = String(txt == null ? '' : txt).trim();
@@ -49,6 +63,11 @@ function contagensDiariasAcai_() {
     Logger.log('Contagens diárias do Açaí indisponíveis: ' + err.message);
   }
   var lista = Object.keys(porDia).sort().map(function(k) { return porDia[k]; });
+  var tsZ = ACAI_ABERTURA_ZERO.ts;
+  if (lista.length && lista[0].ts > tsZ) {
+    lista.unshift({ id: ACAI_ABERTURA_ZERO.id, ano: Number(tsZ.slice(0, 4)), mes: Number(tsZ.slice(4, 6)), dia: Number(tsZ.slice(6, 8)),
+                    ts: tsZ, data: tsZ.slice(6, 8) + '/' + tsZ.slice(4, 6) + '/' + tsZ.slice(0, 4), hora: tsZ + '0000', sintetica: true });
+  }
   CONTAGENS_ACAI_MEMO_ = lista;
   return lista;
 }

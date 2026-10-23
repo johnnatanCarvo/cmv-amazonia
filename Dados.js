@@ -1075,6 +1075,19 @@ function processarCMV(rowsEstoque, rowsCompras, historicoPorInsumo, fichasMap) {
     }
   }
 
+  // Abertura com estoque zero (Açaí): contagem sem itens numa data anterior à primeira contagem real.
+  if (typeof aberturasZeroEstoque_ === 'function') {
+    var primeiraReal = Object.keys(contagensPorData).sort()[0];
+    aberturasZeroEstoque_().forEach(function(az) {
+      if (primeiraReal && az.ts >= primeiraReal) return;
+      if (!contagensPorData[az.ts]) contagensPorData[az.ts] = {
+        ts: az.ts, mes: az.mes, ano: az.ano, dia: az.dia,
+        total: 0, porGrupo: {}, porFilial: {}, porFilialGrupo: {}, porProdGrupo: {}, porProdGrupoFilial: {},
+        porProdGrupoQtd: {}, porProdGrupoFilialQtd: {},
+        porProdGrupoFontes: {}, porProdGrupoFilialFontes: {}
+      };
+    });
+  }
   var datasOrdenadas = Object.keys(contagensPorData).sort();
   Logger.log('Contagens de estoque: ' + datasOrdenadas.join(', '));
   if (recuperadosPorCodigo > 0) {
