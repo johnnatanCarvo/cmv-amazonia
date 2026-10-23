@@ -145,9 +145,11 @@ function limiteDiaPorMesDeEstoque_(rowsEstoque) {
 
 // Aplica o limite acima num dataInfo: devolve o nome do mês, ou null quando a
 // linha cai depois do fechamento daquele mês (aí ela é ignorada).
-function mesDentroDaJanela_(dataInfo, limiteDiaPorMes) {
+function mesDentroDaJanela_(dataInfo, limiteDiaPorMes, inicioDiaPorMes) {
   var m = NOMES_MESES[dataInfo.mes];
   if (limiteDiaPorMes && limiteDiaPorMes[m] && dataInfo.dia > limiteDiaPorMes[m]) return null;
+  // Estoque inicial contado NO PRÓPRIO mês: o que foi comprado até aquele dia já está nele.
+  if (inicioDiaPorMes && inicioDiaPorMes[m] && dataInfo.dia <= inicioDiaPorMes[m]) return null;
   return m;
 }
 
@@ -1088,9 +1090,16 @@ function processarCMV(rowsEstoque, rowsCompras, historicoPorInsumo, fichasMap) {
     var mJ = NOMES_MESES[cJ.mes];
     if (!limiteDiaCMV[mJ] || cJ.dia > limiteDiaCMV[mJ]) limiteDiaCMV[mJ] = cJ.dia;
   });
+  // Par de contagens consecutivas dentro do MESMO mês (o negócio começou a contar no meio dele, sem contagem do mês anterior):
+  // as compras só valem depois da contagem inicial.
+  var inicioDiaCMV = {};
+  for (var kp = 0; kp < datasOrdenadas.length - 1; kp++) {
+    var cA = contagensPorData[datasOrdenadas[kp]], cB = contagensPorData[datasOrdenadas[kp + 1]];
+    if (cA.ano === cB.ano && cA.mes === cB.mes) inicioDiaCMV[NOMES_MESES[cB.mes]] = cA.dia;
+  }
   var comprasMes = (rowsCompras && rowsCompras.length > 1)
     ? agregarComprasPeriodoCMV_(rowsCompras, function(dataInfo) {
-        return mesDentroDaJanela_(dataInfo, limiteDiaCMV);
+        return mesDentroDaJanela_(dataInfo, limiteDiaCMV, inicioDiaCMV);
       })
     : {};
 

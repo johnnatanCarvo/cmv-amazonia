@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-10-23.7';
+var VERSAO_APP = '2026-10-23.8';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -3070,8 +3070,39 @@ function gerarLinhasEstoqueDeInventariosSalvos_(rowsEstoque, rowsCompras, rowsVe
   var fichaPorCodigo = preAgregarFichaPorCodigo(rowsFichas);
   var linhas = [];
 
-  chavesMes.forEach(function(chaveMes) {
-    var porUnidade = porMes[chaveMes];
+  // Contagem de ABERTURA: unidade que começou a contar no meio do mês e não tem contagem do mês anterior (nem CSV) fica
+  // sem estoque inicial, e o CMV do mês não saía. A primeira contagem automática do mês vira o estoque inicial, e as compras
+  // só valem depois dela (processarCMV cuida disso ao ver duas contagens no mesmo mês).
+  var aberturas = [];
+  var unidadesVistas = {};
+  inventarios.forEach(function(inv) { if (inv.auto && filialDoNegocioAtivo_(inv.unidade)) unidadesVistas[inv.unidade] = true; });
+  Object.keys(unidadesVistas).forEach(function(u) {
+    var doMes = {};   // 'ano-mes' -> primeira contagem automática da unidade
+    inventarios.forEach(function(inv) {
+      if (!inv.auto || inv.unidade !== u || !inv.contagemIds || !inv.contagemIds.length) return;
+      var info = resolverDataInventario_(inv, dataPorContagemId);
+      if (!info) return;
+      var ch = info.ano + '-' + info.mes;
+      if (!doMes[ch] || info.ts < doMes[ch].info.ts) doMes[ch] = { inv: inv, info: info };
+    });
+    var primeiraChave = null, primeiroNum = null;
+    Object.keys(doMes).forEach(function(ch) {
+      var n = doMes[ch].info.ano * 12 + doMes[ch].info.mes;
+      if (primeiroNum === null || n < primeiroNum) { primeiroNum = n; primeiraChave = ch; }
+    });
+    if (primeiraChave === null) return;
+    var ant = (primeiroNum - 1);
+    var chAnt = Math.floor((ant - 1) / 12) + '-' + (((ant - 1) % 12) + 1);
+    if (porMes[chAnt] || mesesComCSV[chAnt]) return;                       // já tem fechamento do mês anterior
+    var ab = doMes[primeiraChave];
+    var fechamento = porMes[primeiraChave] && porMes[primeiraChave][u];
+    if (!fechamento || fechamento.info.ts === ab.info.ts) return;          // só uma contagem no mês: nada a abrir
+    aberturas.push({ unidade: u, entry: ab });
+    avisos.push('Contagem de abertura de ' + u + ': sem contagem do mês anterior, o CMV de ' + NOMES_MESES[ab.info.mes] + '/' + ab.info.ano +
+                ' começa na primeira contagem (' + String(ab.info.dia).padStart(2, '0') + '/' + String(ab.info.mes).padStart(2, '0') + ').');
+  });
+
+  function emitirLinhasDoMes_(porUnidade) {
     var unidades = Object.keys(porUnidade);
 
     // Data sintética compartilhada por TODAS as unidades desse mês: a mais
@@ -3117,7 +3148,9 @@ function gerarLinhasEstoqueDeInventariosSalvos_(rowsEstoque, rowsCompras, rowsVe
         linhas.push(linha);
       });
     });
-  });
+  }
+  chavesMes.forEach(function(chaveMes) { emitirLinhasDoMes_(porMes[chaveMes]); });
+  aberturas.forEach(function(a) { var p = {}; p[a.unidade] = a.entry; emitirLinhasDoMes_(p); });
 
   return { linhas: linhas, avisos: avisos, semPreco: semPrecoTotal };
 }

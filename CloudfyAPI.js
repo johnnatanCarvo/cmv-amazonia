@@ -370,7 +370,12 @@ function cfyComprasLinhas_(codFilial, nomeFilial, dataIni, dataFim, mapaGrupos, 
 function cfyComprasNaoIntegradas() {
   try {
     var bruto = PropertiesService.getScriptProperties().getProperty('CFY_NAO_INTEGRADO');
-    return bruto ? JSON.parse(bruto) : {};
+    var porMes = bruto ? JSON.parse(bruto) : {};
+    // Só as filiais do negócio ativo: quem olha o Açaí não tem o que fazer com nota pendente do Marco.
+    Object.keys(porMes).forEach(function(m) {
+      porMes[m] = (porMes[m] || []).filter(function(f) { return filialDoNegocioAtivo_(f.filial); });
+    });
+    return porMes;
   } catch (err) {
     return {};
   }
