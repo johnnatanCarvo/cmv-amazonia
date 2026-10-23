@@ -145,8 +145,22 @@ function limiteDiaPorMesDeEstoque_(rowsEstoque) {
 
 // Aplica o limite acima num dataInfo: devolve o nome do mês, ou null quando a
 // linha cai depois do fechamento daquele mês (aí ela é ignorada).
+// 'dd/mm/aaaa' do dia seguinte a uma contagem de abertura: é o primeiro dia do período que ela abre.
+function cmvDiaSeguinteBR_(c) {
+  var d = new Date(c.ano, c.mes - 1, c.dia + 1);
+  return pad2(d.getDate()) + '/' + pad2(d.getMonth() + 1) + '/' + d.getFullYear();
+}
+
 function mesDentroDaJanela_(dataInfo, limiteDiaPorMes, inicioDiaPorMes) {
   var m = NOMES_MESES[dataInfo.mes];
+  // Açaí: o período de outubro começa depois da abertura com estoque zero (27/09). Compras do mês da abertura, dos dias
+  // seguintes a ela, pertencem ao mês SEGUINTE (CMC e CMV de outubro) -- e setembro fica sem CMC próprio.
+  if (typeof aberturasZeroEstoque_ === 'function') {
+    var abz = aberturasZeroEstoque_();
+    if (abz.length && dataInfo.ano === abz[0].ano && dataInfo.mes === abz[0].mes && dataInfo.dia > abz[0].dia) {
+      return NOMES_MESES[dataInfo.mes % 12 + 1];
+    }
+  }
   if (limiteDiaPorMes && limiteDiaPorMes[m] && dataInfo.dia > limiteDiaPorMes[m]) return null;
   // Estoque inicial contado NO PRÓPRIO mês: o que foi comprado até aquele dia já está nele.
   if (inicioDiaPorMes && inicioDiaPorMes[m] && dataInfo.dia <= inicioDiaPorMes[m]) return null;
@@ -1296,7 +1310,7 @@ function processarCMV(rowsEstoque, rowsCompras, historicoPorInsumo, fichasMap) {
       // nessa data (ver limiteDiaCMV acima), então o rótulo e o número
       // finalmente falam do mesmo período.
       // contagem inicial no próprio mês (negócio que começou a contar no meio dele): a data real, não o dia 1
-      data_ei:       ((ei.ano === ef.ano && ei.mes === ef.mes) || ei.abertura) ? (pad2(ei.dia)+'/'+pad2(ei.mes)+'/'+ei.ano) : ('01/'+pad2(ef.mes)+'/'+ef.ano),
+      data_ei:       ei.abertura ? cmvDiaSeguinteBR_(ei) : ((ei.ano === ef.ano && ei.mes === ef.mes) ? (pad2(ei.dia)+'/'+pad2(ei.mes)+'/'+ei.ano) : ('01/'+pad2(ef.mes)+'/'+ef.ano)),
       data_ef:       tsEF.slice(6,8)+'/'+tsEF.slice(4,6)+'/'+tsEF.slice(0,4),
       grupos:        grupos,
       filiais:       filiais

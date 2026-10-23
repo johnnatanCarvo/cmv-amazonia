@@ -14,16 +14,25 @@ var ACAI_UNIDADE_CONTAGEM = 'ACAI NA CUIA';
 var CONTAGENS_ACAI_MEMO_ = undefined;   // vale só durante a execução
 
 // ABERTURA COM ESTOQUE ZERO: a unidade começou a operar em outubro/2026 e não existe contagem de setembro. Combinado com o
-// cliente: o estoque inicial é R$ 0 em 27/09/2026 (o CMV de outubro começa aí; as compras de 28 a 30/09 entram). Vira uma "contagem" sintética (sem itens) nessa data, e assim o CMV
+// cliente: estoque inicial R$ 0 no FECHAMENTO de 26/09/2026, ou seja, o período de outubro começa em 27/09 (compras de 27 a 30/09 entram
+// no CMV e no CMC de outubro, e setembro deixa de ter CMC próprio). Vira uma "contagem" sintética (sem itens) nessa data, e assim o CMV
 // do mês, das semanas e do dia enxergam o estoque inicial zero sem ninguém digitar nada. Só vale se não houver contagem
 // real nessa data ou antes dela.
-var ACAI_ABERTURA_ZERO = { ts: '20260927', id: 'ABERTURA-ZERO' };
+var ACAI_ABERTURA_ZERO = { ts: '20260926', id: 'ABERTURA-ZERO' };
+
+// A abertura só faz sentido se a primeira contagem REAL vier depois do mês da abertura: com contagem real no próprio mês da
+// abertura (ou antes), ela é o estoque inicial e a abertura sintética atrapalharia.
+function aberturaZeroAplicavel_(primeiraRealTs) {
+  if (!primeiraRealTs) return false;
+  var ts = ACAI_ABERTURA_ZERO.ts;
+  return primeiraRealTs.slice(0, 6) > ts.slice(0, 6);
+}
 
 function aberturasZeroEstoque_() {
   if (NEGOCIO_ATIVO !== 'ACAI NA CUIA') return [];
   var ts = ACAI_ABERTURA_ZERO.ts;
   var real = contagensDiariasAcai_().filter(function(c) { return !c.sintetica; });
-  if (real.length && real[0].ts <= ts) return [];
+  if (!aberturaZeroAplicavel_(real.length ? real[0].ts : null)) return [];
   return [{ unidade: ACAI_UNIDADE_CONTAGEM, ts: ts, ano: Number(ts.slice(0, 4)), mes: Number(ts.slice(4, 6)), dia: Number(ts.slice(6, 8)) }];
 }
 
@@ -64,7 +73,7 @@ function contagensDiariasAcai_() {
   }
   var lista = Object.keys(porDia).sort().map(function(k) { return porDia[k]; });
   var tsZ = ACAI_ABERTURA_ZERO.ts;
-  if (lista.length && lista[0].ts > tsZ) {
+  if (lista.length && aberturaZeroAplicavel_(lista[0].ts)) {
     lista.unshift({ id: ACAI_ABERTURA_ZERO.id, ano: Number(tsZ.slice(0, 4)), mes: Number(tsZ.slice(4, 6)), dia: Number(tsZ.slice(6, 8)),
                     ts: tsZ, data: tsZ.slice(6, 8) + '/' + tsZ.slice(4, 6) + '/' + tsZ.slice(0, 4), hora: tsZ + '0000', sintetica: true });
   }
