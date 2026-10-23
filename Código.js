@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-10-23.6';
+var VERSAO_APP = '2026-10-23.7';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -668,7 +668,7 @@ function lerComprasCompleto_() {
   // Filtro de negócio no ponto único de leitura: tudo que roda daqui pra
   // frente (CMC, CMV, ABC, teórico) já nasce no escopo certo, sem precisar
   // passar o negócio por dezenas de funções.
-  if (!cache || !cache.linhas.length) return filtrarNegocio_(rowsCSV, C_COMPRAS.filial);
+  if (!cache || !cache.linhas.length) return filtrarComprasNegocio_(rowsCSV);
 
   // Todo mês coberto pelo cache tem prioridade sobre o CSV: o cache vem da API
   // e já inclui nota lançada em atraso, que a exportação manual perdia.
@@ -682,7 +682,7 @@ function lerComprasCompleto_() {
              (rowsCSV.length - filtrado.length) + ' substituídas pelo cache da API (' +
              Object.keys(cache.meses).join(', ') + ' -- ' + cache.linhas.length + ' linhas, atualizado ' +
              (cfyComprasAtualizadoEm() || 'data desconhecida') + ')');
-  return filtrarNegocio_(filtrado.concat(cache.linhas), C_COMPRAS.filial);
+  return filtrarComprasNegocio_(filtrado.concat(cache.linhas));
 }
 
 // Ponto único de leitura de VENDAS. Mesma ideia das compras, mas a
@@ -3541,16 +3541,18 @@ function agregarComprasPorProduto(rowsComprasPreLidas) {
 
     if (!porMes[mesNome]) porMes[mesNome] = { produtos: {}, unidades: {}, filiais: {} };
     var bucket = porMes[mesNome];
-    if (!bucket.filiais[filial]) bucket.filiais[filial] = { produtos: {}, unidades: {} };
 
     var fornecedor = limpaCelula(cel[C_COMPRAS_FORNECEDOR]);
-    var pareceTransf = fornecedor.toUpperCase().indexOf(TRANSFERENCIA_MARCADOR) >= 0;
-    var filOrig = pareceTransf ? filialOrigem(fornecedor) : null;
-    var ehTransf = pareceTransf && filOrig !== filial;
+    var clsQ = classificarTransferencia_(fornecedor, filial);
+    var filOrig = clsQ ? clsQ.origem : null;
+    var ehTransf = !!clsQ;
 
     bucket.unidades[produto] = unid;
-    bucket.filiais[filial].unidades[produto] = unid;
-    bucket.filiais[filial].produtos[produto] = (bucket.filiais[filial].produtos[produto] || 0) + qtd;
+    if (!clsQ || clsQ.entra) {
+      if (!bucket.filiais[filial]) bucket.filiais[filial] = { produtos: {}, unidades: {} };
+      bucket.filiais[filial].unidades[produto] = unid;
+      bucket.filiais[filial].produtos[produto] = (bucket.filiais[filial].produtos[produto] || 0) + qtd;
+    }
 
     if (ehTransf) {
       if (!bucket.filiais[filOrig]) bucket.filiais[filOrig] = { produtos: {}, unidades: {} };

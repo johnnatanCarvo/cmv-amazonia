@@ -2225,7 +2225,7 @@ function rDiarioPintar_(){
     var desvio=rU?Math.max(rU.eiDesvioDias||0,rU.efDesvioDias||0):0;
     cartaoReal='<div class="metric lead"><div class="metric-l">CMV Real do período'+(uni==='TODAS'?'':' · '+nomeUni(uni))+'</div>'+
       '<div class="metric-v">'+fR2(rl.cmv)+'</div>'+
-      '<div class="metric-sub">'+(rl.cmv_pct!==null&&rl.cmv_pct!==undefined?fP(rl.cmv_pct)+' do faturamento · ':'')+'EI '+fR(rl.ei)+' + Compras '+fR(rl.compras)+' − EF '+fR(rl.ef)+
+      '<div class="metric-sub">'+(rl.cmv_pct!==null&&rl.cmv_pct!==undefined?fP(rl.cmv_pct)+' do faturamento · ':'')+'EI '+fR(rl.ei)+' + Compras '+fR(rl.compras)+(rl.saida?' − Saída p/ unidades '+fR(rl.saida):'')+' − EF '+fR(rl.ef)+
         (rU&&rU.eiData?' · contagens de '+rU.eiData+' e '+rU.efData+(desvio>0?' (±'+desvio+'d)':''):'')+'</div></div>';
   }else{
     cartaoReal='<div class="metric lead"><div class="metric-l">CMV Real do período</div><div class="metric-v" style="color:var(--fg3)">--</div>'+
@@ -2242,6 +2242,7 @@ function rDiarioPintar_(){
   '</div>';
   var avisos=[];
   if(tot.semFicha>0)avisos.push(fR(tot.semFicha)+' em vendas sem ficha técnica ficam fora do CMV Teórico (ex.: itens de revenda).');
+  if(tot.saida>0)avisos.push('Açaí enviado às unidades do Amazônia na Cuia no período: '+fR(tot.saida)+', pelo custo do litro. Sai do estoque do Açaí e entra como compra nas unidades; o CMV real já desconta.');
   if(mostra)avisos.push('Latas e litros dia a dia dependem de quando a produção é lançada no Cloudfy; o rendimento e o custo do litro valem pelo mês.');
   if(realDia)avisos.push('CMV real diário: a contagem de cada dia vale como o estoque do fechamento; compras entram depois da contagem anterior até a do dia.');
   (d.avisosEstoque||[]).forEach(function(a){avisos.push('⚠ '+a);});
@@ -2261,7 +2262,7 @@ function rDiarioPintar_(){
 function celulasRealDia_(real,pctCls){
   if(!real)return '<td class="r" style="color:var(--fg3)">--</td><td class="r" style="color:var(--fg3)">--</td>';
   var tag=real.dias>1?' <span class="tag tB" title="'+real.dias+' dias: da contagem de '+real.eiData+' à de '+real.efData+'">'+real.dias+'d</span>':'';
-  var tip='EI '+fR(real.ei)+' + Compras '+fR(real.compras)+' − EF '+fR(real.ef)+' (contagens de '+real.eiData+' e '+real.efData+')';
+  var tip='EI '+fR(real.ei)+' + Compras '+fR(real.compras)+(real.saida?' − Saída p/ unidades '+fR(real.saida):'')+' − EF '+fR(real.ef)+' (contagens de '+real.eiData+' e '+real.efData+')';
   var neg=real.cmv<0;
   return '<td class="r" style="font-weight:600;'+(neg?'color:var(--rd)':'')+'" title="'+tip+'">'+fR(real.cmv)+tag+'</td>'+
          '<td class="r '+(real.cmv_pct!==null&&real.cmv_pct!==undefined?pctCls(real.cmv_pct):'')+'">'+(real.cmv_pct!==null&&real.cmv_pct!==undefined?fP(real.cmv_pct):'--')+'</td>';

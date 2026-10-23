@@ -210,20 +210,14 @@ function processarComprasPorPeriodo_(rows, resolverPeriodo) {
 
     // Detectar transferência interna pelo nome do fornecedor
     var fornecedor = limpaCelula(r[C_COMPRAS_FORNECEDOR]);
-    var pareceTransf = fornecedor.toUpperCase().indexOf(TRANSFERENCIA_MARCADOR) >= 0;
     var filDestino = filial;
-    var filOrig = pareceTransf ? filialOrigem(fornecedor) : null;
-    // So tratamos como transferencia se a origem resolvida for uma filial
-    // DIFERENTE do destino. Se resolver pra mesma filial (fornecedor nao
-    // mapeado em MAPA_ORIGEM_FILIAL, ou mapeado por engano pra si mesma),
-    // registrar como transferencia geraria uma "entrada" sem "saida"
-    // correspondente, inflando o CMC/CMV da unidade sem motivo real.
-    var ehTransf = pareceTransf && filOrig !== filDestino;
-
-    if (pareceTransf && !ehTransf) {
-      Logger.log('AVISO: transferencia com origem igual ao destino (' + filDestino +
-                  '), fornecedor="' + fornecedor + '". Tratando como compra externa.');
-    }
+    // Só é transferência se a origem for uma filial DIFERENTE do destino (origem igual
+    // geraria uma "entrada" sem "saída"). classificarTransferencia_ também decide o que o
+    // negócio ativo enxerga: o Açaí é fornecedor de fora para o Amazônia, e para o Açaí
+    // a transferência é só saída, porque a unidade que recebeu fica fora do negócio.
+    var clsT = classificarTransferencia_(fornecedor, filDestino);
+    var filOrig = clsT ? clsT.origem : null;
+    var ehTransf = !!clsT;
 
     if (ehTransf) {
       // Acumular como transferência, fora do CMC de compra externa.
@@ -231,16 +225,18 @@ function processarComprasPorPeriodo_(rows, resolverPeriodo) {
       if (!transf[mesNome]) transf[mesNome] = { total:0, filiais:{} };
       transf[mesNome].total += total;
 
-      // Registro de ENTRADA na filial de destino
-      if (!transf[mesNome].filiais[filDestino]) {
-        transf[mesNome].filiais[filDestino] = { total:0, entrada:0, saida:0, entradaQtd:0, saidaQtd:0, origens:{}, produtos:[] };
+      // Registro de ENTRADA na filial de destino (só se ela é do negócio ativo)
+      if (clsT.entra) {
+        if (!transf[mesNome].filiais[filDestino]) {
+          transf[mesNome].filiais[filDestino] = { total:0, entrada:0, saida:0, entradaQtd:0, saidaQtd:0, origens:{}, produtos:[] };
+        }
+        var tfD = transf[mesNome].filiais[filDestino];
+        tfD.total      += total;
+        tfD.entrada    += total;
+        tfD.entradaQtd += qtd;
+        tfD.origens[fornecedor] = (tfD.origens[fornecedor] || 0) + total;
+        tfD.produtos.push({ nome:prod, grupo:grupo, origem:fornecedor, destino:filDestino, qtd:r2(qtd), valor:r2(total), data:limpaCelula(r[C_COMPRAS.data]) });
       }
-      var tfD = transf[mesNome].filiais[filDestino];
-      tfD.total      += total;
-      tfD.entrada    += total;
-      tfD.entradaQtd += qtd;
-      tfD.origens[fornecedor] = (tfD.origens[fornecedor] || 0) + total;
-      tfD.produtos.push({ nome:prod, grupo:grupo, origem:fornecedor, destino:filDestino, qtd:r2(qtd), valor:r2(total), data:limpaCelula(r[C_COMPRAS.data]) });
 
       // Registro de SAÍDA na filial de origem
       if (!transf[mesNome].filiais[filOrig]) {
@@ -698,20 +694,15 @@ function agregarComprasPeriodoCMV_(rows, resolverPeriodo) {
     // Transferência: registrar entrada (destino) e saída (origem) separadamente,
     // com quebra por grupo (para o CMV por grupo dentro de uma unidade).
     var fornC = limpaCelula(rc[C_COMPRAS_FORNECEDOR]);
-    var pareceTransfCMV = fornC.toUpperCase().indexOf(TRANSFERENCIA_MARCADOR) >= 0;
-    var filOrigemCMV = pareceTransfCMV ? filialOrigem(fornC) : null;
-    // Mesmo ajuste do processarCompras: so tratar como transferencia real
-    // se a origem resolvida for diferente do destino. Caso contrario, cai
-    // para compra externa normal (evita entrada sem saida correspondente).
-    var ehTransfCMV = pareceTransfCMV && filOrigemCMV !== filC;
-    if (pareceTransfCMV && !ehTransfCMV) {
-      Logger.log('AVISO (CMV): transferencia com origem igual ao destino (' + filC +
-                  '), fornecedor="' + fornC + '". Tratando como compra externa.');
-    }
+    // Mesmo critério do CMC: origem diferente do destino e visão do negócio ativo.
+    var clsCMV = classificarTransferencia_(fornC, filC);
+    var filOrigemCMV = clsCMV ? clsCMV.origem : null;
+    var ehTransfCMV = !!clsCMV;
     if (ehTransfCMV) {
       var qtdTC = numVal(rc[C_COMPRAS.qtd]);
 
-      // Entrada na filial de destino (recebeu)
+      // Entrada na filial de destino (recebeu), se ela é do negócio ativo
+      if (clsCMV.entra) {
       if (!comprasMes[mnC].entradaFilial) comprasMes[mnC].entradaFilial = {};
       comprasMes[mnC].entradaFilial[filC] = (comprasMes[mnC].entradaFilial[filC] || 0) + totC;
       if (!comprasMes[mnC].entradaFilialGrupo) comprasMes[mnC].entradaFilialGrupo = {};
@@ -726,6 +717,7 @@ function agregarComprasPeriodoCMV_(rows, resolverPeriodo) {
       if (!comprasMes[mnC].entradaProdGrupoFilial[filC][grC][prodC]) comprasMes[mnC].entradaProdGrupoFilial[filC][grC][prodC] = { valor:0, qtd:0 };
       comprasMes[mnC].entradaProdGrupoFilial[filC][grC][prodC].valor += totC;
       comprasMes[mnC].entradaProdGrupoFilial[filC][grC][prodC].qtd   += qtdTC;
+      }
 
       // Saída na filial de origem (enviou)
       comprasMes[mnC].saidaFilial[filOrigemCMV] = (comprasMes[mnC].saidaFilial[filOrigemCMV] || 0) + totC;
@@ -744,6 +736,20 @@ function agregarComprasPeriodoCMV_(rows, resolverPeriodo) {
     }
 
     var qtdC = numVal(rc[C_COMPRAS.qtd]);
+    if (ehTransfCMV && !clsCMV.entra) {
+      // Saída do Açaí para uma unidade de OUTRO negócio: não é compra e o destino não é daqui. A mercadoria
+      // saiu do estoque, então o consolidado fica líquido dela (a filial já desconta pela saidaFilial).
+      comprasMes[mnC].total -= totC;
+      comprasMes[mnC].grupos[grC] = (comprasMes[mnC].grupos[grC] || 0) - totC;
+      comprasMes[mnC].saidaExterna = (comprasMes[mnC].saidaExterna || 0) + totC;
+      if (grC && prodC) {
+        if (!comprasMes[mnC].prodGrupo[grC]) comprasMes[mnC].prodGrupo[grC] = {};
+        if (!comprasMes[mnC].prodGrupo[grC][prodC]) comprasMes[mnC].prodGrupo[grC][prodC] = { valor:0, qtd:0 };
+        comprasMes[mnC].prodGrupo[grC][prodC].valor -= totC;
+        comprasMes[mnC].prodGrupo[grC][prodC].qtd   -= qtdC;
+      }
+      continue;
+    }
 
     // Totais CONSOLIDADOS (empresa toda): excluem transferência por completo.
     // Uma transferência não é uma segunda compra: a mercadoria já foi contada
@@ -1668,10 +1674,7 @@ function preAgregarCustoMedioPorInsumo(rowsCompras) {
 
     var filial = limpaCelula(r[C_COMPRAS.filial]) || 'OUTRA';
     var fornecedor = limpaCelula(r[C_COMPRAS_FORNECEDOR]);
-    var pareceTransf = fornecedor.toUpperCase().indexOf(TRANSFERENCIA_MARCADOR) >= 0;
-    var filOrig = pareceTransf ? filialOrigem(fornecedor) : null;
-    var ehTransf = pareceTransf && filOrig !== filial;
-    if (ehTransf) continue;
+    if (classificarTransferencia_(fornecedor, filial)) continue;
 
     var produto = limpaCelula(r[C_COMPRAS.produto]);
     if (!produto) continue;
@@ -1920,16 +1923,16 @@ function preAgregarComprasPorDia(rowsCompras) {
 
     var filial = limpaCelula(r[C_COMPRAS.filial]) || 'OUTRA';
     var fornecedor = limpaCelula(r[C_COMPRAS_FORNECEDOR]);
-    var pareceTransf = fornecedor.toUpperCase().indexOf(TRANSFERENCIA_MARCADOR) >= 0;
-    var filOrig = pareceTransf ? filialOrigem(fornecedor) : null;
-    var ehTransf = pareceTransf && filOrig !== filial;
+    var clsD = classificarTransferencia_(fornecedor, filial);
 
-    if (!b.filiais[filial]) b.filiais[filial] = 0;
-    b.filiais[filial] += total;
+    if (!clsD || clsD.entra) {
+      if (!b.filiais[filial]) b.filiais[filial] = 0;
+      b.filiais[filial] += total;
+    }
 
-    if (ehTransf) {
-      if (!b.filiais[filOrig]) b.filiais[filOrig] = 0;
-      b.filiais[filOrig] -= total;
+    if (clsD) {
+      if (!b.filiais[clsD.origem]) b.filiais[clsD.origem] = 0;
+      b.filiais[clsD.origem] -= total;
     } else {
       b.total += total;
     }

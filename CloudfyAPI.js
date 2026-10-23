@@ -547,7 +547,7 @@ function diagnosticarComprasCache() {
     var v = numVal(r[C_COMPRAS.total]);
     o.linhas++; o.total += v;
     o.dias[d.slice(0, 2)] = true;
-    if (String(r[C_COMPRAS_FORNECEDOR] || '').toUpperCase().indexOf(TRANSFERENCIA_MARCADOR) >= 0) o.transf += v;
+    if (origemTransferencia_(r[C_COMPRAS_FORNECEDOR])) o.transf += v;
   });
 
   var linhas = ['CACHE DE COMPRAS — atualizado em ' + (cfyComprasAtualizadoEm() || '?'),

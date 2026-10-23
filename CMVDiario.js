@@ -85,7 +85,7 @@ function cmvDiario_(iniISO, fimISO) {
 
   // um balde por dia (todos os dias, mesmo sem movimento) e por unidade
   var dias = {}, ordemInterna = [];
-  function vazio() { return { fat: 0, compras: 0, transf: 0, cmvTeorico: 0, semFicha: 0 }; }
+  function vazio() { return { fat: 0, compras: 0, transf: 0, saida: 0, cmvTeorico: 0, semFicha: 0 }; }
   for (var t = tsIniInternoMs; t <= tsFimMs; t += 86400000) {
     var d = new Date(t + 12 * 3600000);          // meio-dia: evita virada por horário de verão
     var info = { ano: d.getFullYear(), mes: d.getMonth() + 1, dia: d.getDate() };
@@ -129,15 +129,22 @@ function cmvDiario_(iniISO, fimISO) {
     var rc = rowsCompras[j];
     if (!rc || rc.length < 18) continue;
     var filC = limpaCelula(rc[C_COMPRAS.filial]).toUpperCase();
-    if (!ehUnidade[filC]) continue;
+    var forn = limpaCelula(rc[C_COMPRAS_FORNECEDOR]).toUpperCase();
+    var cls = classificarTransferencia_(forn, filC);
+    // transferência do Açaí para outro negócio: a linha é de uma unidade de fora, mas a SAÍDA é do Açaí
+    if (!ehUnidade[filC] && !(cls && cls.sai && ehUnidade[cls.origem.toUpperCase()])) continue;
     var dc = parseDataCompleta(rc[C_COMPRAS.data]);
     if (!dc) continue;
     var keyC = dc.ano + pad2(dc.mes) + pad2(dc.dia);
     if (keyC < iniInternoKey || keyC > fimKey) continue;
     var total = numVal(rc[C_COMPRAS.total]);
-    var forn = limpaCelula(rc[C_COMPRAS_FORNECEDOR]).toUpperCase();
-    var bC = dias[dc.ano + '-' + pad2(dc.mes) + '-' + pad2(dc.dia)].porUnidade[unidadeOriginal_(unidades, filC)];
-    if (forn.indexOf(TRANSFERENCIA_MARCADOR) >= 0) bC.transf += total; else bC.compras += total;
+    var bDia = dias[dc.ano + '-' + pad2(dc.mes) + '-' + pad2(dc.dia)];
+    if (cls) {
+      if (cls.entra) bDia.porUnidade[unidadeOriginal_(unidades, filC)].transf += total;
+      if (cls.sai && ehUnidade[cls.origem.toUpperCase()]) bDia.porUnidade[unidadeOriginal_(unidades, cls.origem.toUpperCase())].saida += total;
+    } else {
+      bDia.porUnidade[unidadeOriginal_(unidades, filC)].compras += total;
+    }
   }
 
   // ── Açaí na Cuia: produção do Cloudfy (latas consumidas, litros produzidos) ──
@@ -178,7 +185,7 @@ function cmvDiario_(iniISO, fimISO) {
 
   // ── fecha cada dia e o período (só os dias pedidos aparecem; os do intervalo extra só alimentam o CMV real) ──
   function fechar(o) {
-    return { fat: r2(o.fat), compras: r2(o.compras), transf: r2(o.transf), cmvTeorico: r2(o.cmvTeorico), semFicha: r2(o.semFicha),
+    return { fat: r2(o.fat), compras: r2(o.compras), transf: r2(o.transf), saida: r2(o.saida), cmvTeorico: r2(o.cmvTeorico), semFicha: r2(o.semFicha),
              cmc_pct: calcularPct(o.compras, o.fat), cmv_teorico_pct: calcularPct(o.cmvTeorico, o.fat) };
   }
   var totalPorUnidade = {}; unidades.forEach(function(u) { totalPorUnidade[u] = vazio(); });
@@ -191,12 +198,12 @@ function cmvDiario_(iniISO, fimISO) {
     var todas = vazio(), porUni = {};
     unidades.forEach(function(u) {
       var o = bd.porUnidade[u];
-      ['fat', 'compras', 'transf', 'cmvTeorico', 'semFicha'].forEach(function(k) { todas[k] += o[k]; });
+      ['fat', 'compras', 'transf', 'saida', 'cmvTeorico', 'semFicha'].forEach(function(k) { todas[k] += o[k]; });
       porUni[u] = fechar(o);
     });
-    somaIntervalo[bd.ts] = { fat: todas.fat, compras: todas.compras + todas.transf };
+    somaIntervalo[bd.ts] = { fat: todas.fat, compras: todas.compras + todas.transf, saida: todas.saida };
     if (bd.ts < iniKey) return;                      // dia do intervalo extra
-    unidades.forEach(function(u) { ['fat', 'compras', 'transf', 'cmvTeorico', 'semFicha'].forEach(function(k) { totalPorUnidade[u][k] += bd.porUnidade[u][k]; }); });
+    unidades.forEach(function(u) { ['fat', 'compras', 'transf', 'saida', 'cmvTeorico', 'semFicha'].forEach(function(k) { totalPorUnidade[u][k] += bd.porUnidade[u][k]; }); });
     var linha = { iso: iso, data: bd.data, todas: fechar(todas), porUnidade: porUni, producao: null, real: null };
     if (bd.producao) {
       var pr = bd.producao, litros = pr.litrosMedio + pr.litrosGrosso;
@@ -214,8 +221,8 @@ function cmvDiario_(iniISO, fimISO) {
   if (mostraProducao) {
     var ordemTs = ordemInterna.map(function(iso) { return dias[iso].ts; });
     function somaEntre(tsDe, tsAte) {   // dias em (tsDe, tsAte]
-      var s = { fat: 0, compras: 0, dias: 0 };
-      ordemTs.forEach(function(ts) { if (ts > tsDe && ts <= tsAte && somaIntervalo[ts]) { s.fat += somaIntervalo[ts].fat; s.compras += somaIntervalo[ts].compras; s.dias++; } });
+      var s = { fat: 0, compras: 0, saida: 0, dias: 0 };
+      ordemTs.forEach(function(ts) { if (ts > tsDe && ts <= tsAte && somaIntervalo[ts]) { s.fat += somaIntervalo[ts].fat; s.compras += somaIntervalo[ts].compras; s.saida += somaIntervalo[ts].saida; s.dias++; } });
       return s;
     }
     var ultimaTs = contagemAnteriorTs;
@@ -230,8 +237,8 @@ function cmvDiario_(iniISO, fimISO) {
       if (ultimaTs !== null && estoqueDaContagem[ultimaTs] !== undefined && linhaDia) {
         var s = somaEntre(ultimaTs, c.ts);
         var ei = estoqueDaContagem[ultimaTs], ef = estoqueDaContagem[c.ts];
-        var cmv = ei + s.compras - ef;
-        linhaDia.real = { ei: r2(ei), ef: r2(ef), compras: r2(s.compras), cmv: r2(cmv), cmv_pct: calcularPct(cmv, s.fat), dias: s.dias,
+        var cmv = ei + s.compras - s.saida - ef;
+        linhaDia.real = { ei: r2(ei), ef: r2(ef), compras: r2(s.compras), saida: r2(s.saida), cmv: r2(cmv), cmv_pct: calcularPct(cmv, s.fat), dias: s.dias,
                           eiData: cmvDiarioBR_(cmvDiarioInfoDeTs_(ultimaTs)), efData: c.data };
       }
       ultimaTs = c.ts;
@@ -242,17 +249,17 @@ function cmvDiario_(iniISO, fimISO) {
     if (primeiraEiTs !== null && ultimaDoPeriodo && estoqueDaContagem[primeiraEiTs] !== undefined) {
       var sp = somaEntre(primeiraEiTs, ultimaDoPeriodo.ts);
       var eiP = estoqueDaContagem[primeiraEiTs], efP = estoqueDaContagem[ultimaDoPeriodo.ts];
-      var cmvP = eiP + sp.compras - efP;
-      realPeriodoAcai = { disponivel: true, ei: r2(eiP), ef: r2(efP), compras: r2(sp.compras), cmv: r2(cmvP), cmv_pct: calcularPct(cmvP, sp.fat), faturamento: r2(sp.fat), dias: sp.dias,
+      var cmvP = eiP + sp.compras - sp.saida - efP;
+      realPeriodoAcai = { disponivel: true, ei: r2(eiP), ef: r2(efP), compras: r2(sp.compras), saida: r2(sp.saida), cmv: r2(cmvP), cmv_pct: calcularPct(cmvP, sp.fat), faturamento: r2(sp.fat), dias: sp.dias,
                           eiData: cmvDiarioBR_(cmvDiarioInfoDeTs_(primeiraEiTs)), efData: ultimaDoPeriodo.data,
                           porUnidade: {} };
-      realPeriodoAcai.porUnidade[unidades[0]] = { disponivel: true, ei: realPeriodoAcai.ei, ef: realPeriodoAcai.ef, compras: realPeriodoAcai.compras, cmv: realPeriodoAcai.cmv,
+      realPeriodoAcai.porUnidade[unidades[0]] = { disponivel: true, ei: realPeriodoAcai.ei, ef: realPeriodoAcai.ef, compras: realPeriodoAcai.compras, saida: realPeriodoAcai.saida, cmv: realPeriodoAcai.cmv,
                           cmv_pct: realPeriodoAcai.cmv_pct, eiData: realPeriodoAcai.eiData, efData: realPeriodoAcai.efData, eiDesvioDias: 0, efDesvioDias: 0 };
     }
   }
 
   var totalTodas = vazio();
-  unidades.forEach(function(u) { ['fat', 'compras', 'transf', 'cmvTeorico', 'semFicha'].forEach(function(k) { totalTodas[k] += totalPorUnidade[u][k]; }); });
+  unidades.forEach(function(u) { ['fat', 'compras', 'transf', 'saida', 'cmvTeorico', 'semFicha'].forEach(function(k) { totalTodas[k] += totalPorUnidade[u][k]; }); });
   var totalUni = {}; unidades.forEach(function(u) { totalUni[u] = fechar(totalPorUnidade[u]); });
   var litrosTot = producaoTotal.litrosMedio + producaoTotal.litrosGrosso;
 
