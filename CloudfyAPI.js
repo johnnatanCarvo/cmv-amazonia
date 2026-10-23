@@ -249,6 +249,8 @@ var CFY_FILIAIS_VENDA = [
 // e ele alimenta CMC por grupo e Curva ABC. Montado a partir do cache de
 // fichas (produtos e insumos) e completado pelo histórico de compras dos CSVs.
 // Cobertura medida em setembro/2026: 99,98% do valor comprado.
+// Itens que não estão em ficha nenhuma nem nos CSVs (então a API não traz o grupo): a lata e os litros do Açaí.
+var CFY_GRUPOS_FIXOS = { '804': 'ACAI', '805': 'ACAI', '1238': 'ACAI' };
 function cfyMapaGrupos_(rowsComprasCSV) {
   var mapa = {};
   var fichas = cfyLerCacheFichas_();
@@ -267,6 +269,7 @@ function cfyMapaGrupos_(rowsComprasCSV) {
       if (cod && grp && !mapa[cod]) mapa[cod] = grp;
     }
   }
+  Object.keys(CFY_GRUPOS_FIXOS).forEach(function(c) { if (!mapa[c]) mapa[c] = CFY_GRUPOS_FIXOS[c]; });
   return mapa;
 }
 
@@ -512,6 +515,10 @@ function cfyLerCacheCompras_() {
     linhas.forEach(function(r) {
       var d = cfyDataBR_(r[C_COMPRAS.data]);
       r[C_COMPRAS.data] = d;   // o painel espera dd/MM/yyyy como texto
+      if (!String(r[C_COMPRAS.grupo] || '').trim()) {
+        var gFixo = CFY_GRUPOS_FIXOS[String(r[C_COMPRAS.cod] || '').trim()];
+        if (gFixo) r[C_COMPRAS.grupo] = gFixo;
+      }
       if (d.length >= 10) meses[d.slice(3, 5) + '/' + d.slice(6, 10)] = true;
     });
     return { linhas: linhas, meses: meses };

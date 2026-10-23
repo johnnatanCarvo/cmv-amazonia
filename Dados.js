@@ -202,7 +202,11 @@ function processarComprasPorPeriodo_(rows, resolverPeriodo) {
     var grupo  = limpaCelula(r[C_COMPRAS.grupo]);
     var unid   = limpaCelula(r[C_COMPRAS.unid]);
     var filial = limpaCelula(r[C_COMPRAS.filial]) || 'OUTRA';
-    if (!prod || !grupo) continue;
+    if (!prod) continue;
+    // Compra sem grupo conhecido NÃO pode sumir do CMC: o valor é real. Antes ela era descartada, e o Açaí na Cuia
+    // (cuja lata não está em ficha nenhuma, então não tinha grupo) ficava com zero compra. Cai no balde "SEM GRUPO",
+    // o mesmo que o CMV já usa pra estoque sem grupo.
+    if (!grupo) grupo = 'SEM GRUPO';
 
     // Detectar transferência interna pelo nome do fornecedor
     var fornecedor = limpaCelula(r[C_COMPRAS_FORNECEDOR]);
