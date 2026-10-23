@@ -1131,7 +1131,8 @@ function processarCMV(rowsEstoque, rowsCompras, historicoPorInsumo, fichasMap) {
   var inicioDiaCMV = {};
   for (var kp = 0; kp < datasOrdenadas.length - 1; kp++) {
     var cA = contagensPorData[datasOrdenadas[kp]], cB = contagensPorData[datasOrdenadas[kp + 1]];
-    if (cA.ano === cB.ano && cA.mes === cB.mes) inicioDiaCMV[NOMES_MESES[cB.mes]] = cA.dia;
+    // só no Açaí (que começou a contar no meio do mês): no Amazônia o cálculo segue exatamente como era
+    if (NEGOCIO_ATIVO === 'ACAI NA CUIA' && cA.ano === cB.ano && cA.mes === cB.mes) inicioDiaCMV[NOMES_MESES[cB.mes]] = cA.dia;
   }
   // Abertura (estoque zero) num mês ANTERIOR ao da contagem final: as compras dos dias seguintes à abertura, ainda no mês
   // anterior, fazem parte do período e somam no mês do CMV (ex.: abertura em 27/09, CMV de outubro leva as de 28 a 30/09).
