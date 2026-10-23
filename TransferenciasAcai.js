@@ -15,6 +15,14 @@
 //   Açaí na Cuia:     é SAÍDA do estoque, valorizada pelo CUSTO de produção do
 //                     litro (o estoque contado está a custo; a R$ 20 o CMV ficaria
 //                     subavaliado). O faturamento do Açaí continua só o varejo.
+// DECISÃO DO CLIENTE (23/10/2026): o açaí transferido às unidades é VENDA do Açaí (a preço de transferência, R$ 20/L).
+// Com a chave ligada: entra no faturamento do Açaí (uma linha de venda por pedido/nota), NÃO é saída abatida do CMV
+// (o custo do que foi transferido já está em estoque inicial + compras - estoque final) e as unidades seguem
+// recebendo como compra. Desligada, volta ao modelo anterior: saída a custo, bloco à parte, fora do faturamento.
+var ACAI_TRANSFERENCIA_COMO_VENDA = true;
+var ACAI_PRODUTO_TRANSFERENCIA = 'ACAI TRANSFERIDO PARA UNIDADES';
+var ACAI_COD_TRANSFERENCIA = 'TRF-ACAI';
+
 var FILIAL_ACAI = 'ACAI NA CUIA';
 var TRANSF_ACAI_PRECO_LITRO = 20;
 var TRANSF_ACAI_COD = '1238';
@@ -161,6 +169,51 @@ function aplicarTransferenciasAcai_(rows) {
   return out.concat(sup);
 }
 
+// Linhas de VENDA do Açaí para o que ele transferiu às unidades: os pedidos da tabela (02 a 22/10) e, depois da janela,
+// as notas que o Cloudfy trouxer com o Açaí como fornecedor de uma unidade de outro negócio. Valor = valor do pedido/nota
+// (preço de transferência); quantidade em litros. Layout de C_VENDAS.
+function linhasVendaTransferenciasAcai_() {
+  if (NEGOCIO_ATIVO !== 'ACAI NA CUIA' || !ACAI_TRANSFERENCIA_COMO_VENDA) return [];
+  var origem = linhasTransferenciasAcai_();
+  var fim = '00000000';
+  origem.forEach(function(l) { var k = chaveDataBR_(l[C_COMPRAS.data]); if (k > fim) fim = k; });
+  try {
+    var cache = (typeof cfyLerCacheCompras_ === 'function') ? cfyLerCacheCompras_() : null;
+    (cache && cache.linhas ? cache.linhas : []).forEach(function(r) {
+      var filial = String(r[C_COMPRAS.filial] || '').trim();
+      if (!filial || filial.toUpperCase() === FILIAL_ACAI || !filialConhecida_(filial) || filialDoNegocioAtivo_(filial)) return;
+      if (origemTransferencia_(r[C_COMPRAS_FORNECEDOR]) !== FILIAL_ACAI) return;
+      if (chaveDataBR_(r[C_COMPRAS.data]) <= fim) return;   // dentro da janela vale a tabela
+      origem.push(r);
+    });
+  } catch (e) { Logger.log('Transferências do Açaí pelo cache indisponíveis: ' + e.message); }
+  return origem.map(function(l) {
+    var v = new Array(16).fill('');
+    v[C_VENDAS.filial]  = FILIAL_ACAI;
+    v[C_VENDAS.data]    = l[C_COMPRAS.data];
+    v[C_VENDAS.cod]     = ACAI_COD_TRANSFERENCIA;
+    v[C_VENDAS.produto] = ACAI_PRODUTO_TRANSFERENCIA;
+    v[C_VENDAS.grupo]   = 'ACAI';
+    v[C_VENDAS.qtd]     = numVal(l[C_COMPRAS.qtd]);
+    v[C_VENDAS.valor]   = numVal(l[C_COMPRAS.total]);
+    v.destino = l[C_COMPRAS.filial];
+    return v;
+  });
+}
+
+// Transferências do Açaí que contam como venda, somadas por mês (nome do mês -> R$), pra tela dizer quanto do faturamento é isso.
+function transferenciasComoVendaPorMes_() {
+  var porMes = {};
+  linhasVendaTransferenciasAcai_().forEach(function(v) {
+    var d = parseDataCompleta(v[C_VENDAS.data]);
+    if (!d) return;
+    var m = NOMES_MESES[d.mes];
+    porMes[m] = (porMes[m] || 0) + numVal(v[C_VENDAS.valor]);
+  });
+  Object.keys(porMes).forEach(function(m) { porMes[m] = r2(porMes[m]); });
+  return porMes;
+}
+
 function filialConhecida_(nome) {
   var n = String(nome || '').trim().toUpperCase();
   return Object.keys(NEGOCIOS).some(function(k) {
@@ -175,6 +228,7 @@ function filtrarComprasNegocio_(rows) {
   rows = aplicarTransferenciasAcai_(rows);
   var base = filtrarNegocio_(rows, C_COMPRAS.filial);
   if (NEGOCIO_ATIVO !== 'ACAI NA CUIA' || !rows || rows.length < 2) return base;
+  if (ACAI_TRANSFERENCIA_COMO_VENDA) return base;   // transferência é venda: não vira saída nas compras
 
   var extras = [];
   for (var i = 1; i < rows.length; i++) {

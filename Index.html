@@ -972,6 +972,8 @@ var DEMANDAINSUMOS={}, RECONCILIACAOINSUMOS={}, mesDemanda='', uniDemanda='TODAS
 var SEMCAL_CACHE={}, mesSemCal='', uniSemCal='TODAS';
 var AVISOSINVENTARIO=[];
 var COMPRAS_NAO_INTEGRADAS=[];
+var TRANSF_COMO_VENDA={};   // Açaí: mês -> R$ de açaí transferido às unidades que conta como venda
+function notaTransfVenda_(mes){var v=(TRANSF_COMO_VENDA||{})[mes]||0;return v>0?' · inclui R$ '+Math.round(v).toLocaleString('pt-BR')+' transferidos às unidades':'';}
 var COBERTURA_CLOUDFY={compras:[],vendas:[]};
 var abcOrder='valor', custoCache=null, uniABC='TODAS', mesABC='TODOS';
 var custoMesA='', custoMesB='';
@@ -1177,6 +1179,7 @@ function aplicarPayload_(res){
   DEMANDAINSUMOS=res.demandaInsumos||{}; RECONCILIACAOINSUMOS=res.reconciliacaoInsumos||{};
   AVISOSINVENTARIO=res.avisosInventario||[];
   COMPRAS_NAO_INTEGRADAS=res.comprasNaoIntegradas||[];
+  TRANSF_COMO_VENDA=res.transferenciasComoVenda||{};
   COBERTURA_CLOUDFY=res.coberturaCloudfy||{compras:[],vendas:[]};
 }
 function mostrarErro(m){document.getElementById('load-msg').style.display='none';var e=document.getElementById('load-err');e.style.display='block';e.textContent=m;}
@@ -1770,7 +1773,7 @@ function rMes(){
   var temPctComTransf=(pctComTransf!==null&&pctComTransf!==undefined);
   if(fat>0){
     html+='<div class="metric"><div class="metric-l">Faturamento</div><div class="metric-v ac">'+fR(fat)+'</div>'+
-      '<div class="metric-sub" style="color:var(--fg3)">Vendas do mês</div></div>';
+      '<div class="metric-sub" style="color:var(--fg3)">Vendas do mês'+notaTransfVenda_(mesAtual)+'</div></div>';
     html+='<div class="metric'+(temTransf?'':' w2')+'"><div class="metric-l">CMC sobre Faturamento</div>'+
       '<div class="metric-v '+(pctFat>42?'rd':'ac')+'">'+fP(pctFat)+'</div>'+
       '<div class="metric-sub" style="color:var(--fg3)">'+
@@ -2637,7 +2640,7 @@ function rCMV(){
     '<div class="metric"><div class="metric-l">Compras</div><div class="metric-v am">'+fR(d.compras)+'</div>'+'</div>'+
     '<div class="metric"><div class="metric-l">Estoque Final</div><div class="metric-v az">'+fR(d.ef)+'</div></div>'+
     '<div class="metric"><div class="metric-l">CMV sobre Faturamento</div><div class="metric-v '+pctCls+'">'+pctTxt+'</div>'+
-      '<div class="metric-sub" style="color:var(--fg3)">'+(d.fat>0?fR(d.fat)+' vendas':'sem faturamento')+'</div></div>'+
+      '<div class="metric-sub" style="color:var(--fg3)">'+(d.fat>0?fR(d.fat)+' vendas'+notaTransfVenda_(mesCMV):'sem faturamento')+'</div></div>'+
   '</div>';
   // Açaí: transferência às lojas fora da compra, num KPI próprio (e o CMV sobre o faturamento que inclui essas transferências como venda)
   if(saidaBloco){

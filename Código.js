@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-10-23.15';
+var VERSAO_APP = '2026-10-23.16';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -411,6 +411,8 @@ function getPayload(senha, negocio) {
       // do próprio Cloudfy -- então o mês corrente fica parecendo melhor do que
       // é. Sem isso na tela, o erro é silencioso.
       comprasNaoIntegradas: cfyComprasNaoIntegradas(),
+      // Açaí: quanto do faturamento de cada mês é açaí transferido às unidades (conta como venda)
+      transferenciasComoVenda: transferenciasComoVendaPorMes_(),
       // Quais meses/dias já vêm da API e quais ainda dependem do CSV. Sem isso
       // visível, um mês pela metade (vendas chegam de 3 em 3 dias) passa por
       // completo e o faturamento aparece menor do que é.
@@ -692,7 +694,7 @@ function lerComprasCompleto_() {
 function lerVendasCompleto_() {
   var rowsCSV = lerTodosCSVs('vendas');
   var cache = cfyLerCacheVendas_();
-  if (!cache || !cache.linhas.length) return filtrarNegocio_(rowsCSV, C_VENDAS.filial);
+  if (!cache || !cache.linhas.length) return filtrarNegocio_(rowsCSV, C_VENDAS.filial).concat(linhasVendaTransferenciasAcai_());
 
   var filtrado = [rowsCSV[0]];
   for (var i = 1; i < rowsCSV.length; i++) {
@@ -704,7 +706,7 @@ function lerVendasCompleto_() {
              (rowsCSV.length - filtrado.length) + ' substituídas pelo cache da API (' +
              Object.keys(cache.dias).length + ' dias, ' + cache.linhas.length + ' linhas, atualizado ' +
              (cfyVendasAtualizadoEm() || 'data desconhecida') + ')');
-  return filtrarNegocio_(filtrado.concat(cache.linhas), C_VENDAS.filial);
+  return filtrarNegocio_(filtrado.concat(cache.linhas), C_VENDAS.filial).concat(linhasVendaTransferenciasAcai_());
 }
 
 // ── LEITURA DE CSVs ──────────────────────────────────────────
@@ -935,7 +937,9 @@ var FICHAS_PADRAO_ACAI = [
   { cod: '775', produto: 'ACAI MEDIO (500ML)', insCod: '1238', insumo: 'MP ACAI LT MEDIO',  qtde: 0.5 },
   { cod: '776', produto: 'ACAI MEDIO (1L)',    insCod: '1238', insumo: 'MP ACAI LT MEDIO',  qtde: 1 },
   { cod: '777', produto: 'ACAI GROSSO (500ML)', insCod: '805', insumo: 'MP ACAI LT GROSSO', qtde: 0.5 },
-  { cod: '778', produto: 'ACAI GROSSO (1L)',   insCod: '805',  insumo: 'MP ACAI LT GROSSO', qtde: 1 }
+  { cod: '778', produto: 'ACAI GROSSO (1L)',   insCod: '805',  insumo: 'MP ACAI LT GROSSO', qtde: 1 },
+  // açaí transferido às unidades (vendido em litros): o custo teórico é o litro de produção
+  { cod: 'TRF-ACAI', produto: 'ACAI TRANSFERIDO PARA UNIDADES', insCod: '1238', insumo: 'MP ACAI LT MEDIO', qtde: 1 }
 ];
 function fichasPadraoAcai_(linhasManuais, linhasCloudfy) {
   if (NEGOCIO_ATIVO !== 'ACAI NA CUIA') return [];
