@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-10-23.10';
+var VERSAO_APP = '2026-10-23.11';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -1922,8 +1922,11 @@ function calcularAnaliseSemanal(senha, mes, ano, negocio) {
     function consolidarTodas(mapaPorUnidade) {
       var unidades = Object.keys(mapaPorUnidade);
       if (!unidades.length) return null;
-      var ei = 0, ef = 0, compras = 0, faturamento = 0, semContagemAlguma = false;
+      var ei = 0, ef = 0, compras = 0, faturamento = 0, semContagemAlguma = false, saidaLiq = 0;
       unidades.forEach(function(u) {
+        // Entre unidades do negócio saída e entrada se anulam; o que sobra foi para FORA (Açaí -> lojas).
+        var dt = mapaPorUnidade[u].cmvDetalhado;
+        if (dt) saidaLiq += (dt.transf_saida || 0) - (dt.transf_entrada || 0);
         if (mapaPorUnidade[u].ei === null || mapaPorUnidade[u].ef === null) semContagemAlguma = true;
         else { ei += mapaPorUnidade[u].ei; ef += mapaPorUnidade[u].ef; }
         compras += mapaPorUnidade[u].compras; faturamento += mapaPorUnidade[u].faturamento;
@@ -1933,6 +1936,7 @@ function calcularAnaliseSemanal(senha, mes, ano, negocio) {
         ei: semContagemAlguma ? null : r2(ei), ef: semContagemAlguma ? null : r2(ef), compras: r2(compras), faturamento: r2(faturamento), cmv: cmv,
         cmc_pct: calcularPct(compras, faturamento), cmv_pct: cmv === null ? null : calcularPct(cmv, faturamento),
         semContagem: semContagemAlguma,
+        saida: saidaLiq > 0.005 ? r2(saidaLiq) : 0,
         unidadesIncompletas: unidades.length < filiaisDoNegocioAtivo_().length
       };
     }

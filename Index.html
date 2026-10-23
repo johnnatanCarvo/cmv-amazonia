@@ -1606,7 +1606,7 @@ function dadosPeriodoCMV(mesNome, periodo){
     if(!consolidado)return null;
     return {ei:consolidado.ei,ef:consolidado.ef,compras:consolidado.compras,cmv:consolidado.cmv,
       pct:consolidado.cmv_pct,fat:consolidado.faturamento,data_ei:null,data_ef:null,grupos:null,
-      transfEntrada:0,transfSaida:0,transfSaldo:0,cmvAjustado:consolidado.cmv,pctAjustado:consolidado.cmv_pct};
+      transfEntrada:0,transfSaida:consolidado.saida||0,transfSaldo:0,cmvAjustado:consolidado.cmv,pctAjustado:consolidado.cmv_pct};
   }
   var unidadeBloco=bloco[uniCMV];
   if(!unidadeBloco||!unidadeBloco.cmvDetalhado)return null;
@@ -1682,10 +1682,8 @@ function extrairCMCPorUnidade_(d){
     var liqSai=0, liqSaiQtd=0;
     if(tr&&tr.filiais){Object.keys(tr.filiais).forEach(function(k){var x=tr.filiais[k];liqSai+=(x.saida||0)-(x.entrada||0);liqSaiQtd+=(x.saida_qtd||0)-(x.entrada_qtd||0);});}
     if(liqSai<0.005){liqSai=0;liqSaiQtd=0;}
-    var comT=d.cmc_total-liqSai, fatT=d.faturamento||0;
-    return {cmc_total:d.cmc_total,faturamento:fatT,grupos:d.grupos,transf:tr,transfUni:null,transfSaldo:tr?tr.total:0,transfEntrada:0,transfSaida:liqSai,
-      transfEntradaQtd:0,transfSaidaQtd:liqSaiQtd,cmcComTransf:liqSai>0?comT:d.cmc_total,
-      cmcPctFatComTransf:liqSai>0?(fatT>0?comT/fatT*100:null):d.cmc_pct_fat};
+    return {cmc_total:d.cmc_total,faturamento:d.faturamento||0,grupos:d.grupos,transf:tr,transfUni:null,transfSaldo:tr?tr.total:0,transfEntrada:0,transfSaida:liqSai,
+      transfEntradaQtd:0,transfSaidaQtd:liqSaiQtd,cmcComTransf:d.cmc_total,cmcPctFatComTransf:d.cmc_pct_fat};
   }
   if(d.filiais&&d.filiais[uniAtual]){
     var f=d.filiais[uniAtual];
@@ -1765,7 +1763,9 @@ function rMes(){
   // Em "Todas" não existe versão com transferência: entre as unidades o que
   // sai de uma entra na outra e o líquido é zero -- somar contaria a mesma
   // mercadoria duas vezes.
-  var temTransf=((uniAtual!=='TODAS'||d.transfSaida>0) && (d.transfEntrada>0||d.transfSaida>0));
+  // Açaí: o enviado às lojas é um BLOCO À PARTE -- não abate a compra e não vira "CMC com transferência".
+  var blocoTransf=(NEGOCIO_ATUAL==='ACAI NA CUIA' && d.transfSaida>0);
+  var temTransf=(uniAtual!=='TODAS' && !blocoTransf && (d.transfEntrada>0||d.transfSaida>0));
   var pctComTransf=d.cmcPctFatComTransf;
   var temPctComTransf=(pctComTransf!==null&&pctComTransf!==undefined);
   if(fat>0){
@@ -1811,6 +1811,12 @@ function rMes(){
     html+='<div class="metric w2"><div class="metric-l">CMC com Transferência</div>'+
       '<div class="metric-v '+(temPctComTransf&&pctComTransf>42?'rd':'')+'">'+fR2(d.cmcComTransf)+'</div>'+
       '<div class="metric-sub" style="color:var(--fg3)">compra externa + recebido &minus; enviado</div></div>';
+  }
+
+  if(blocoTransf){
+    html+='<div class="metric w2"><div class="metric-l">Transferido às Unidades (a custo)</div>'+
+      '<div class="metric-v am">'+fR2(d.transfSaida)+'</div>'+
+      '<div class="metric-sub" style="color:var(--fg3)">'+(d.transfSaidaQtd>0?fQ(d.transfSaidaQtd)+' litros · ':'')+'bloco à parte: fora do CMC e do faturamento</div></div>';
   }
 
   document.getElementById('mes-metrics').innerHTML=html;
@@ -2604,6 +2610,9 @@ function rCMV(){
   var pctCls=(d.pct>35)?'rd':(d.pct>30)?'am':'ac';
 
   // ===== MÉTRICAS =====
+  // Açaí: o enviado às lojas é um BLOCO À PARTE (não abate a compra). Os dados chegam com a compra líquida; devolve o bruto.
+  var saidaBloco=(NEGOCIO_ATUAL==='ACAI NA CUIA' && d.transfSaida>0);
+  if(saidaBloco)d=Object.assign({},d,{compras:d.compras+d.transfSaida});
   var cmvAtipico = d.cmv < 0;
   // No período personalizado, a contagem usada pode não cair exatamente
   // na data pedida (usa a mais próxima) -- deixa isso visível em vez de
@@ -2617,7 +2626,7 @@ function rCMV(){
         (cmvAtipico?'&#9888; CMV negativo — confira as contagens de estoque':(d.data_ei||'')+' a '+(d.data_ef||'')+avisoAproximado+avisoPeriodoSemanaCMV_(d))+
       '</div></div>'+
     '<div class="metric"><div class="metric-l">Estoque Inicial</div><div class="metric-v az">'+fR(d.ei)+'</div></div>'+
-    '<div class="metric"><div class="metric-l">Compras</div><div class="metric-v am">'+fR(d.compras)+'</div></div>'+
+    '<div class="metric"><div class="metric-l">Compras</div><div class="metric-v am">'+fR(d.compras)+'</div>'+(saidaBloco?'<div class="metric-sub" style="color:var(--fg3)">+ '+fR(d.transfSaida)+' transferido às unidades, à parte</div>':'')+'</div>'+
     '<div class="metric"><div class="metric-l">Estoque Final</div><div class="metric-v az">'+fR(d.ef)+'</div></div>'+
     '<div class="metric"><div class="metric-l">CMV sobre Faturamento</div><div class="metric-v '+pctCls+'">'+pctTxt+'</div>'+
       '<div class="metric-sub" style="color:var(--fg3)">'+(d.fat>0?fR(d.fat)+' vendas':'sem faturamento')+'</div></div>'+
@@ -2626,7 +2635,7 @@ function rCMV(){
   if(periodoAtualCMV.tipo==='custom')html+=blocoOrigemContagensCMV_();
 
   // Segunda faixa: os mesmos 5 indicadores, SEM considerar transferências entre unidades
-  if(uniCMV!=='TODAS' && (d.transfEntrada>0 || d.transfSaida>0)){
+  if(uniCMV!=='TODAS' && !saidaBloco && (d.transfEntrada>0 || d.transfSaida>0)){
     var pctPuroTxt=(d.pctPuro!==null&&d.pctPuro!==undefined)?fP(d.pctPuro):'--';
     var pctPuroCls=(d.pctPuro>35)?'rd':(d.pctPuro>30)?'am':'ac';
     html+='<div class="metrics" style="grid-template-columns:1.4fr 1fr 1fr 1fr 1fr;margin-top:10px;opacity:.82;">'+
@@ -2642,12 +2651,13 @@ function rCMV(){
   }
 
   // ===== FÓRMULA VISUAL =====
-  html+='<div class="card"><div class="card-h"><div class="card-t">Composicao do CMV</div><div class="card-s">EI + Compras - EF</div></div>'+
+  html+='<div class="card"><div class="card-h"><div class="card-t">Composicao do CMV</div><div class="card-s">'+(saidaBloco?'EI + Compras - Transferido - EF':'EI + Compras - EF')+'</div></div>'+
     '<div class="cmv-formula" style="display:flex;flex-direction:row;flex-wrap:nowrap;align-items:stretch;gap:10px;">'+
       '<div class="cf-box" style="flex:1;min-width:0;"><div class="cf-v az">'+fR2(d.ei)+'</div><div class="cf-l">Estoque Inicial</div><div class="cf-d">'+(d.data_ei||'')+'</div></div>'+
       '<div class="cf-op">+</div>'+
-      '<div class="cf-box" style="flex:1;min-width:0;"><div class="cf-v am">'+fR2(d.compras)+'</div><div class="cf-l">Compras'+(d.transfSaida>0?' (liq. transf.)':'')+'</div>'+(d.transfSaida>0?'<div class="cf-d">menos '+fR(d.transfSaida)+' enviado</div>':'')+'</div>'+
+      '<div class="cf-box" style="flex:1;min-width:0;"><div class="cf-v am">'+fR2(d.compras)+'</div><div class="cf-l">Compras'+(d.transfSaida>0&&!saidaBloco?' (liq. transf.)':'')+'</div>'+(d.transfSaida>0&&!saidaBloco?'<div class="cf-d">menos '+fR(d.transfSaida)+' enviado</div>':'')+'</div>'+
       '<div class="cf-op">&minus;</div>'+
+      (saidaBloco?'<div class="cf-box" style="flex:1;min-width:0;"><div class="cf-v am">'+fR2(d.transfSaida)+'</div><div class="cf-l">Transferido às Unidades</div><div class="cf-d">a custo do litro</div></div><div class="cf-op">&minus;</div>':'')+
       '<div class="cf-box" style="flex:1;min-width:0;"><div class="cf-v az">'+fR2(d.ef)+'</div><div class="cf-l">Estoque Final</div><div class="cf-d">'+(d.data_ef||'')+'</div></div>'+
       '<div class="cf-op">=</div>'+
       '<div class="cf-box lead" style="flex:1;min-width:0;"><div class="cf-v ac">'+fR2(d.cmv)+'</div><div class="cf-l">CMV Real</div></div>'+
