@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-10-23.4';
+var VERSAO_APP = '2026-10-23.5';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -1744,7 +1744,11 @@ function calcularAnaliseSemanal(senha, mes, ano, negocio) {
     // ser do mês anterior, por isso as somas de período usam as versões
     // "Cross" abaixo, que aceitam início/fim em meses diferentes.
     var mesFimNum = Number(Object.keys(NOMES_MESES).filter(function(k) { return NOMES_MESES[k] === mes; })[0]);
-    var semanasSalvas = obterSemanasSalvas_().filter(function(s) { return s.mes === mes && s.ano === anoNum && filialDoNegocioAtivo_(s.unidade); });
+    // Açaí na Cuia: estoque contado todo dia -> semanas automáticas (segunda a domingo, recortadas ao mês), sem configurar nada.
+    var ehAcai = (NEGOCIO_ATIVO === 'ACAI NA CUIA');
+    var semanasSalvas = ehAcai
+      ? semanasAutomaticasAcai_(mes, anoNum)
+      : obterSemanasSalvas_().filter(function(s) { return s.mes === mes && s.ano === anoNum && filialDoNegocioAtivo_(s.unidade); });
     if (!semanasSalvas.length) {
       return JSON.stringify({ ok: true, semanas: {}, quinzenas: {}, avisos: [] });
     }
@@ -1772,6 +1776,18 @@ function calcularAnaliseSemanal(senha, mes, ano, negocio) {
     // quanto pra montar as quinzenas (soma de duas semanas consecutivas).
     var blocos = {}; // 'semanaNum|unidade' -> bloco
     semanasSalvas.forEach(function(s) {
+      if (s.semContagem) {   // semana automática sem contagem: dá CMC e faturamento, não dá CMV real
+        var p0 = parseISOData_(s.periodoAuto.ini), p1 = parseISOData_(s.periodoAuto.fim), a0 = diaAnterior_(p0);
+        blocos[s.semanaNum + '|' + s.unidade] = {
+          semanaNum: s.semanaNum, unidade: s.unidade, semContagem: true, auto: true, periodoMarcado: true,
+          mesInicioCompras: a0.mes, anoInicioCompras: a0.ano, diaInicioCompras: a0.dia,
+          mesFimCompras: p1.mes, anoFimCompras: p1.ano, diaFimCompras: p1.dia,
+          invInicio: null, invFim: null,
+          dataInicio: pad2(p0.dia) + '/' + pad2(p0.mes) + '/' + p0.ano, dataFim: pad2(p1.dia) + '/' + pad2(p1.mes) + '/' + p1.ano,
+          ei: null, ef: null, labelInicial: 'sem contagem', labelFinal: 'sem contagem'
+        };
+        return;
+      }
       var invInicial = invPorId[s.inventarioInicialId];
       var invFinal   = invPorId[s.inventarioFinalId];
       if (!invInicial || !invFinal) {
@@ -1818,7 +1834,7 @@ function calcularAnaliseSemanal(senha, mes, ano, negocio) {
       var mesFimCompras = mesFimNum, anoFimCompras = anoNum, diaFimCompras = infoFinal.dia;
       // Período de VENDAS E COMPRAS marcado à mão pra esta semana (aba Semana Calendário): um intervalo só,
       // inclusive nos dois dias, que vale pros dois. O EI/EF continuam sendo as contagens.
-      var pm = periodosSem[anoNum + '|' + mes + '|' + s.semanaNum];
+      var pm = s.periodoAuto || periodosSem[anoNum + '|' + mes + '|' + s.semanaNum];
       var pIni = pm ? parseISOData_(pm.ini) : null, pFim = pm ? parseISOData_(pm.fim) : null;
       var periodoMarcado = !!(pIni && pFim);
       if (periodoMarcado) {
@@ -1833,7 +1849,7 @@ function calcularAnaliseSemanal(senha, mes, ano, negocio) {
         mesInicioNum: infoInicial.mes, anoInicio: infoInicial.ano,
         mesInicioCompras: mesInicioCompras, anoInicioCompras: anoInicioCompras, diaInicioCompras: diaInicioCompras,
         mesFimCompras: mesFimCompras, anoFimCompras: anoFimCompras, diaFimCompras: diaFimCompras,
-        periodoMarcado: periodoMarcado,
+        periodoMarcado: periodoMarcado, auto: !!s.auto,
         invInicio: pad2(infoInicial.dia) + '/' + pad2(infoInicial.mes) + '/' + infoInicial.ano,
         invFim: pad2(infoFinal.dia) + '/' + pad2(infoFinal.mes) + '/' + infoFinal.ano,
         // Rotulo mostrado na tela: pra Semana 1, tem que bater com o
@@ -1870,12 +1886,18 @@ function calcularAnaliseSemanal(senha, mes, ano, negocio) {
     // formato de cmc[mes] e cmv[mes].filiais[unidade], pra alimentar as
     // mesmas telas ricas de "Análise Mês a Mês" e "CMV" (rMes/rCMV) sem
     // precisar reescrevê-las.
-    function montarPeriodo(ei, ef, mesIniNum, anoIni, diaInicio, diaFim, unidade, eiPorProduto, efPorProduto, mesFimP, anoFimP) {
+    function montarPeriodo(ei, ef, mesIniNum, anoIni, diaInicio, diaFim, unidade, eiPorProduto, efPorProduto, mesFimP, anoFimP, semContagem) {
       if (mesFimP === undefined) { mesFimP = mesFimNum; anoFimP = anoNum; }   // padrão: mês da semana
       var compras = somarPeriodoPreAgregadoCross_(porDiaCompras, mesIniNum, anoIni, diaInicio, mesFimP, anoFimP, diaFim);
       var vendas  = somarPeriodoPreAgregadoCross_(porDiaVendas, mesIniNum, anoIni, diaInicio, mesFimP, anoFimP, diaFim);
       var compraUni = compras.filiais[unidade] || 0;
       var vendaUni  = vendas.filiais[unidade]  || 0;
+      if (semContagem) {   // sem contagem: CMC e faturamento valem, CMV real não existe
+        var cmcSem = processarComprasIntervaloDiasCross_(rowsCompras, mesIniNum, anoIni, diaInicio, mesFimP, anoFimP, diaFim);
+        injetarFaturamentoCmcPeriodo_(cmcSem, porDiaVendas, mesIniNum, anoIni, diaInicio, mesFimP, anoFimP, diaFim);
+        return { ei: null, ef: null, compras: r2(compraUni), faturamento: r2(vendaUni), cmv: null, cmc_pct: calcularPct(compraUni, vendaUni), cmv_pct: null,
+                 semContagem: true, cmcDetalhado: cmcSem };
+      }
       var cmv = r2(ei + compraUni - ef);
       var resultado = {
         ei: r2(ei), ef: r2(ef), compras: r2(compraUni), faturamento: r2(vendaUni), cmv: cmv,
@@ -1897,30 +1919,32 @@ function calcularAnaliseSemanal(senha, mes, ano, negocio) {
     function consolidarTodas(mapaPorUnidade) {
       var unidades = Object.keys(mapaPorUnidade);
       if (!unidades.length) return null;
-      var ei = 0, ef = 0, compras = 0, faturamento = 0;
+      var ei = 0, ef = 0, compras = 0, faturamento = 0, semContagemAlguma = false;
       unidades.forEach(function(u) {
-        ei += mapaPorUnidade[u].ei; ef += mapaPorUnidade[u].ef;
+        if (mapaPorUnidade[u].ei === null || mapaPorUnidade[u].ef === null) semContagemAlguma = true;
+        else { ei += mapaPorUnidade[u].ei; ef += mapaPorUnidade[u].ef; }
         compras += mapaPorUnidade[u].compras; faturamento += mapaPorUnidade[u].faturamento;
       });
-      var cmv = r2(ei + compras - ef);
+      var cmv = semContagemAlguma ? null : r2(ei + compras - ef);
       return {
-        ei: r2(ei), ef: r2(ef), compras: r2(compras), faturamento: r2(faturamento), cmv: cmv,
-        cmc_pct: calcularPct(compras, faturamento), cmv_pct: calcularPct(cmv, faturamento),
-        unidadesIncompletas: unidades.length < 3
+        ei: semContagemAlguma ? null : r2(ei), ef: semContagemAlguma ? null : r2(ef), compras: r2(compras), faturamento: r2(faturamento), cmv: cmv,
+        cmc_pct: calcularPct(compras, faturamento), cmv_pct: cmv === null ? null : calcularPct(cmv, faturamento),
+        semContagem: semContagemAlguma,
+        unidadesIncompletas: unidades.length < filiaisDoNegocioAtivo_().length
       };
     }
 
-    var semanas = { 1: {}, 2: {}, 3: {}, 4: {} };
+    var semanas = { 1: {}, 2: {}, 3: {}, 4: {}, 5: {}, 6: {} };   // o mês tem de 4 a 6 semanas de calendário
     Object.keys(blocos).forEach(function(chave) {
       var b = blocos[chave];
-      var periodo = montarPeriodo(b.ei, b.ef, b.mesInicioCompras, b.anoInicioCompras, b.diaInicioCompras, b.diaFimCompras, b.unidade, b.eiPorProduto, b.efPorProduto, b.mesFimCompras, b.anoFimCompras);
+      var periodo = montarPeriodo(b.ei, b.ef, b.mesInicioCompras, b.anoInicioCompras, b.diaInicioCompras, b.diaFimCompras, b.unidade, b.eiPorProduto, b.efPorProduto, b.mesFimCompras, b.anoFimCompras, b.semContagem);
       semanas[b.semanaNum][b.unidade] = Object.assign({
         dataInicio: b.dataInicio, dataFim: b.dataFim,
-        invInicio: b.invInicio, invFim: b.invFim, periodoMarcado: b.periodoMarcado,
+        invInicio: b.invInicio, invFim: b.invFim, periodoMarcado: b.periodoMarcado, auto: !!b.auto,
         labelInicial: b.labelInicial, labelFinal: b.labelFinal
       }, periodo);
     });
-    [1, 2, 3, 4].forEach(function(n) {
+    [1, 2, 3, 4, 5, 6].forEach(function(n) {
       var consolidado = consolidarTodas(semanas[n]);
       if (!consolidado) return;
       if (consolidado.unidadesIncompletas) {
@@ -1955,8 +1979,10 @@ function calcularAnaliseSemanal(senha, mes, ano, negocio) {
       if (consolidado) porUnidade['TODAS'] = consolidado;
       quinzenas[nomeQ] = porUnidade;
     }
-    montarQuinzena('primeira', 1, 2);
-    montarQuinzena('segunda', 3, 4);
+    if (!ehAcai) {
+      montarQuinzena('primeira', 1, 2);
+      montarQuinzena('segunda', 3, 4);
+    }
 
     return JSON.stringify({ ok: true, semanas: semanas, quinzenas: quinzenas, avisos: avisos });
   } catch (err) {

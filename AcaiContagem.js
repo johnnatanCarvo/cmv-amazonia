@@ -86,3 +86,53 @@ function lerItensPorContagem_(contagemIds) {
   Object.keys(porId).forEach(function(cid) { out[cid] = Object.keys(porId[cid]).map(function(k) { return porId[cid][k]; }); });
   return out;
 }
+
+// ── SEMANAS AUTOMÁTICAS DO MÊS (segunda a domingo, recortadas ao mês) ──
+// O Açaí não configura semana nenhuma: Semana 1, 2, 3... são as semanas de calendário (segunda a domingo) que tocam o
+// mês, cortadas nas pontas (a Semana 1 começa no dia 1 e a última termina no último dia do mês, então a soma das
+// semanas é o mês). Semana que ainda não começou não aparece; a semana corrente vai até hoje.
+//
+// Cada semana vira um "registro de semana salva" pro cálculo existente (calcularAnaliseSemanal):
+//  - com contagens: EI = última contagem ANTES da semana (até 10 dias antes), EF = última até o fim da semana (ou até hoje).
+//    O período de compras e vendas é (data do EI, data do EF], como no CMV diário; com contagem todo dia é a semana exata;
+//    se faltou contagem, o intervalo cresce e as datas mostradas dizem qual foi.
+//  - sem contagens: semContagem = true. Mostra CMC e faturamento da semana, sem CMV real.
+// hojeMs: só pra teste; em produção é "agora".
+function semanasAutomaticasAcai_(mesNome, ano, hojeMs) {
+  var mesIdx = ORDEM_MESES.indexOf(mesNome);
+  if (mesIdx < 0) return [];
+  var total = diasNoMes(mesNome, ano);
+  var chaveDe = function(d) { return d.getFullYear() + pad2(d.getMonth() + 1) + pad2(d.getDate()); };
+  var isoDe = function(d) { return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()); };
+  var hoje = new Date(hojeMs === undefined ? new Date().getTime() : hojeMs);
+  var hojeKey = chaveDe(hoje);
+  var primeiro = new Date(ano, mesIdx, 1), ultimo = new Date(ano, mesIdx, total);
+  var contagens = contagensDiariasAcai_();
+  var out = [];
+  enumerarSemanasCalendario_(mesNome, ano).forEach(function(w, idx) {
+    var seg = new Date(w.segunda.ano, w.segunda.mes - 1, w.segunda.dia), dom = new Date(w.domingo.ano, w.domingo.mes - 1, w.domingo.dia);
+    var ini = seg < primeiro ? primeiro : seg;
+    var fim = dom > ultimo ? ultimo : dom;
+    var iniKey = chaveDe(ini);
+    if (iniKey > hojeKey) return;                                  // semana que ainda não começou
+    var fimKey = chaveDe(fim) > hojeKey ? hojeKey : chaveDe(fim);   // semana corrente: até hoje
+    var fimEf = chaveDe(fim) > hojeKey ? hoje : fim;
+    var janelaKey = chaveDe(new Date(ini.getFullYear(), ini.getMonth(), ini.getDate() - 10));
+    var ei = null, ef = null;
+    contagens.forEach(function(c) {
+      if (c.ts < iniKey && c.ts >= janelaKey) ei = c;
+      if (c.ts <= fimKey) ef = c;
+    });
+    var s = { id: 'AUTO-SEM-' + (idx + 1), mes: mesNome, ano: ano, semanaNum: idx + 1, unidade: ACAI_UNIDADE_CONTAGEM, auto: true };
+    if (ei && ef && ef.ts >= iniKey && ef.ts > ei.ts) {
+      var diaSeg = new Date(Number(ei.ts.slice(0, 4)), Number(ei.ts.slice(4, 6)) - 1, Number(ei.ts.slice(6, 8)) + 1);
+      s.inventarioInicialId = 'AUTO-' + ei.id; s.inventarioFinalId = 'AUTO-' + ef.id;
+      s.periodoAuto = { ini: isoDe(diaSeg), fim: ef.ts.slice(0, 4) + '-' + ef.ts.slice(4, 6) + '-' + ef.ts.slice(6, 8) };
+    } else {
+      s.semContagem = true;
+      s.periodoAuto = { ini: isoDe(ini), fim: isoDe(fimEf) };
+    }
+    out.push(s);
+  });
+  return out;
+}

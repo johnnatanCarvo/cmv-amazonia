@@ -1546,8 +1546,12 @@ function montarGranSeg_(elId, mesNome, periodoAtual, onSelectFn){
   el.style.display='';
   var chaveAtual=periodoParaChave_(periodoAtual);
   var html='<button class="'+(!chaveAtual?'on':'')+'" onclick="'+onSelectFn+'(null)">Mês Todo</button>';
+  var dadosSem=ANALISE_SEMANAL_CACHE[mesNome];
   html+=disponiveis.map(function(d){
-    return '<button class="'+(d.key===chaveAtual?'on':'')+'" onclick="'+onSelectFn+'(\''+d.key+'\')">'+d.label+'</button>';
+    var titulo='';
+    var bl=dadosSem&&d.tipo==='semana'?dadosSem.semanas[d.num]:(dadosSem&&dadosSem.quinzenas?dadosSem.quinzenas[d.nome]:null);
+    if(bl){var uk=Object.keys(bl).filter(function(k){return k!=='TODAS';})[0];if(uk&&bl[uk]&&bl[uk].dataInicio)titulo=bl[uk].dataInicio+' a '+bl[uk].dataFim+(bl[uk].auto?' (semana automática, segunda a domingo)':'');}
+    return '<button class="'+(d.key===chaveAtual?'on':'')+'"'+(titulo?' title="'+titulo+'"':'')+' onclick="'+onSelectFn+'(\''+d.key+'\')">'+d.label+'</button>';
   }).join('');
   el.innerHTML=html;
 }
@@ -1613,7 +1617,7 @@ function dadosPeriodoCMV(mesNome, periodo){
   var pctSemAjuste=(fatFil>0&&f.cmv_sem_ajuste!==undefined)?Math.round(f.cmv_sem_ajuste/fatFil*10000)/100:null;
   return {ei:f.ei,ef:f.ef,compras:f.compras,cmv:f.cmv,pct:pct,fat:fatFil,
     data_ei:unidadeBloco.dataInicio||null,data_ef:unidadeBloco.dataFim||null,grupos:(f.grupos||null),
-    invInicio:unidadeBloco.invInicio||null,invFim:unidadeBloco.invFim||null,periodoMarcado:!!unidadeBloco.periodoMarcado,
+    invInicio:unidadeBloco.invInicio||null,invFim:unidadeBloco.invFim||null,periodoMarcado:!!unidadeBloco.periodoMarcado,auto:!!unidadeBloco.auto,
     transfEntrada:f.transf_entrada||0,transfSaida:f.transf_saida||0,transfSaldo:f.transf_saldo||0,
     cmvAjustado:f.cmv,pctAjustado:pct,
     cmvSemAjuste:(f.cmv_sem_ajuste!==undefined?f.cmv_sem_ajuste:f.cmv),pctSemAjuste:pctSemAjuste,
@@ -2472,8 +2476,8 @@ function cmvDados(mes){
     if(dcustom)return dcustom;
   }
   if(mes===mesCMV&&periodoAtualCMV.tipo!=='mes'){
-    var dp=dadosPeriodoCMV(mes, periodoAtualCMV);
-    if(dp)return dp;
+    // semana/quinzena escolhida: ou mostra os dados dela, ou diz que não há -- nunca cai em silêncio nos números do mês inteiro
+    return dadosPeriodoCMV(mes, periodoAtualCMV);
   }
   var c=CMV[mes];if(!c)return null;
   if(uniCMV==='TODAS')return {ei:c.ei_total,ef:c.ef_total,compras:c.compras_total,cmv:c.cmv_total,
@@ -2528,9 +2532,19 @@ function valorEvolucaoCMV(key){
   return dadosPeriodoCMV(mesCMV, chaveParaPeriodo_(key));
 }
 
+// A semana escolhida no CMV é uma semana automática sem contagem (só tem CMC e faturamento)?
+function semanaSemContagemCMV_(){
+  if(periodoAtualCMV.tipo!=='semana')return false;
+  var dados=ANALISE_SEMANAL_CACHE[mesCMV];
+  var bl=dados&&dados.semanas?dados.semanas[periodoAtualCMV.num]:null;
+  if(!bl)return false;
+  var b=(uniCMV==='TODAS')?bl.TODAS:bl[uniCMV];
+  return !!(b&&b.semContagem);
+}
 // Semana de análise escolhida no CMV: mostra de onde vem o período de vendas e compras.
 function avisoPeriodoSemanaCMV_(d){
   if(periodoAtualCMV.tipo==='mes'||periodoAtualCMV.tipo==='custom'||!d||!d.invInicio)return '';
+  if(d.auto)return ' <span class="tag tA" title="Estoque inicial: contagem de '+d.invInicio+' · Estoque final: contagem de '+d.invFim+' · semana automática: segunda a domingo, sem configurar nada">semana automática</span>';
   return ' <span class="tag '+(d.periodoMarcado?'tA':'tB')+'" title="Estoque inicial: contagem de '+d.invInicio+' · Estoque final: contagem de '+d.invFim+(d.periodoMarcado?'':' · marque o período de vendas e compras na aba Semana Calendário')+'">vendas e compras: '+(d.periodoMarcado?'período marcado':'datas das contagens')+'</span>';
 }
 function rCMV(){
@@ -2569,7 +2583,7 @@ function rCMV(){
   }
 
   var d=cmvDados(mesCMV);
-  if(!d){cont.innerHTML='<div class="card"><div class="empty">Sem dados de CMV para esta selecao.</div></div>';return;}
+  if(!d){cont.innerHTML='<div class="card"><div class="empty">'+(semanaSemContagemCMV_()?'Esta semana ainda não tem contagem de estoque que a feche, então o CMV real não existe. O CMC e o faturamento dela estão em Análise Mês a Mês.':'Sem dados de CMV para esta selecao.')+'</div></div>';return;}
 
   var evoListaCMV=listaEvolucaoCMV(mesesCMV);
   var chaveAtualEvoCMV=(periodoAtualCMV.tipo==='mes'||periodoAtualCMV.tipo==='custom')?mesCMV:periodoParaChave_(periodoAtualCMV);
@@ -3641,7 +3655,9 @@ var QUINZENAL_SUB_DEFS=[
   {key:'q1', label:'1ª Quinzena', tipo:'quinzena', nome:'primeira'},
   {key:'s3', label:'Semana 3', tipo:'semana', num:3},
   {key:'s4', label:'Semana 4', tipo:'semana', num:4},
-  {key:'q2', label:'2ª Quinzena', tipo:'quinzena', nome:'segunda'}
+  {key:'q2', label:'2ª Quinzena', tipo:'quinzena', nome:'segunda'},
+  {key:'s5', label:'Semana 5', tipo:'semana', num:5},
+  {key:'s6', label:'Semana 6', tipo:'semana', num:6}
 ];
 
 /* ============================================================
