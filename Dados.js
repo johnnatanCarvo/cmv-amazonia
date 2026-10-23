@@ -739,16 +739,17 @@ function agregarComprasPeriodoCMV_(rows, resolverPeriodo) {
 
     var qtdC = numVal(rc[C_COMPRAS.qtd]);
     if (ehTransfCMV && !clsCMV.entra) {
-      // Saída do Açaí para uma unidade de OUTRO negócio: não é compra e o destino não é daqui. A mercadoria
-      // saiu do estoque, então o consolidado fica líquido dela (a filial já desconta pela saidaFilial).
-      comprasMes[mnC].total -= totC;
-      comprasMes[mnC].grupos[grC] = (comprasMes[mnC].grupos[grC] || 0) - totC;
+      // Saída do Açaí para uma unidade de OUTRO negócio: não é compra e o destino não é daqui, mas a mercadoria
+      // saiu do estoque. Fica separada das compras (que seguem só as compras) e o CMV consolidado desconta (a filial
+      // já desconta pela saidaFilial).
       comprasMes[mnC].saidaExterna = (comprasMes[mnC].saidaExterna || 0) + totC;
-      if (grC && prodC) {
-        if (!comprasMes[mnC].prodGrupo[grC]) comprasMes[mnC].prodGrupo[grC] = {};
-        if (!comprasMes[mnC].prodGrupo[grC][prodC]) comprasMes[mnC].prodGrupo[grC][prodC] = { valor:0, qtd:0 };
-        comprasMes[mnC].prodGrupo[grC][prodC].valor -= totC;
-        comprasMes[mnC].prodGrupo[grC][prodC].qtd   -= qtdC;
+      if (!comprasMes[mnC].saidaExternaGrupo) comprasMes[mnC].saidaExternaGrupo = {};
+      if (!comprasMes[mnC].saidaExternaGrupo[grC]) comprasMes[mnC].saidaExternaGrupo[grC] = { valor:0, qtd:0, prod:{} };
+      var sxg = comprasMes[mnC].saidaExternaGrupo[grC];
+      sxg.valor += totC; sxg.qtd += qtdC;
+      if (prodC) {
+        if (!sxg.prod[prodC]) sxg.prod[prodC] = { valor:0, qtd:0 };
+        sxg.prod[prodC].valor += totC; sxg.prod[prodC].qtd += qtdC;
       }
       continue;
     }
@@ -1120,18 +1121,21 @@ function processarCMV(rowsEstoque, rowsCompras, historicoPorInsumo, fichasMap) {
     var chaveMes = ef.ano + '-' + String(ef.mes).padStart(2,'0');
     var cMes     = comprasMes[mesNome];
     var compras  = cMes ? cMes.total : 0;
-    var cmvReal  = ei.total + compras - ef.total;
+    var saidaExt = (cMes && cMes.saidaExterna) || 0;   // Açaí enviado a unidades de outro negócio (não é compra)
+    var cmvReal  = ei.total + compras - saidaExt - ef.total;
 
     // CMV por grupo: EI_grupo + Compras_grupo - EF_grupo
     var gruposSet = {};
     Object.keys(ei.porGrupo).forEach(function(g){ gruposSet[g]=1; });
     Object.keys(ef.porGrupo).forEach(function(g){ gruposSet[g]=1; });
     if (cMes) Object.keys(cMes.grupos).forEach(function(g){ gruposSet[g]=1; });
+    if (cMes && cMes.saidaExternaGrupo) Object.keys(cMes.saidaExternaGrupo).forEach(function(g){ gruposSet[g]=1; });
 
     var grupos = Object.keys(gruposSet).map(function(g){
       var eiG = ei.porGrupo[g] || 0;
       var efG = ef.porGrupo[g] || 0;
       var coG = (cMes && cMes.grupos[g]) ? cMes.grupos[g] : 0;
+      var sxG = (cMes && cMes.saidaExternaGrupo && cMes.saidaExternaGrupo[g]) || { valor:0, qtd:0, prod:{} };
 
       // Detalhe de produtos dentro do grupo: EI, Compras, EF por produto
       var prodSet = {};
@@ -1145,6 +1149,7 @@ function processarCMV(rowsEstoque, rowsCompras, historicoPorInsumo, fichasMap) {
       Object.keys(eiProds).forEach(function(p){ prodSet[p]=1; });
       Object.keys(efProds).forEach(function(p){ prodSet[p]=1; });
       Object.keys(coProds).forEach(function(p){ prodSet[p]=1; });
+      Object.keys(sxG.prod).forEach(function(p){ prodSet[p]=1; });
 
       var produtos = Object.keys(prodSet).map(function(p){
         var eiP = eiProds[p] || 0;
@@ -1152,10 +1157,12 @@ function processarCMV(rowsEstoque, rowsCompras, historicoPorInsumo, fichasMap) {
         var coObj = coProds[p] || { valor:0, qtd:0 };
         var coP = coObj.valor || 0;
         var qtdP = coObj.qtd || 0;
+        var sxP = sxG.prod[p] || { valor:0, qtd:0 };
         return {
           nome: p,
           ei: r2(eiP), compras: r2(coP), ef: r2(efP),
-          cmv: r2(eiP + coP - efP),
+          cmv: r2(eiP + coP - sxP.valor - efP),
+          transf_saida: r2(sxP.valor), transf_saida_qtd: r2(sxP.qtd),
           qtd: r2(qtdP),
           ei_qtd: r2(eiProdsQtd[p] || 0), ef_qtd: r2(efProdsQtd[p] || 0),
           ei_fontes: eiProdsFontes[p] || [], ef_fontes: efProdsFontes[p] || []
@@ -1168,7 +1175,8 @@ function processarCMV(rowsEstoque, rowsCompras, historicoPorInsumo, fichasMap) {
       return {
         grupo: g,
         ei: r2(eiG), compras: r2(coG), ef: r2(efG),
-        cmv: r2(eiG + coG - efG),
+        cmv: r2(eiG + coG - sxG.valor - efG),
+        transf_saida: r2(sxG.valor), transf_saida_qtd: r2(sxG.qtd),
         qtd: r2(qtdGrupo),
         produtos: produtos
       };
@@ -1246,6 +1254,7 @@ function processarCMV(rowsEstoque, rowsCompras, historicoPorInsumo, fichasMap) {
       ei_total:      r2(ei.total),
       ef_total:      r2(ef.total),
       compras_total: r2(compras),
+      saida_transf_total: r2(saidaExt),
       cmv_total:     r2(cmvReal),
       cmv_pct:       null,
       faturamento:   0,

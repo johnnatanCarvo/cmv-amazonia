@@ -2481,9 +2481,9 @@ function cmvDados(mes){
     return dadosPeriodoCMV(mes, periodoAtualCMV);
   }
   var c=CMV[mes];if(!c)return null;
-  if(uniCMV==='TODAS')return {ei:c.ei_total,ef:c.ef_total,compras:c.compras_total,cmv:c.cmv_total,
+  if(uniCMV==='TODAS')return {ei:c.ei_total,ef:c.ef_total,compras:c.compras_total-(c.saida_transf_total||0),cmv:c.cmv_total,
     pct:c.cmv_pct,fat:c.faturamento,data_ei:c.data_ei,data_ef:c.data_ef,grupos:c.grupos,
-    transfEntrada:0,transfSaida:0,transfSaldo:0,cmvAjustado:c.cmv_total,pctAjustado:c.cmv_pct};
+    transfEntrada:0,transfSaida:c.saida_transf_total||0,transfSaldo:0,cmvAjustado:c.cmv_total,pctAjustado:c.cmv_pct};
   if(c.filiais&&c.filiais[uniCMV]){
     var f=c.filiais[uniCMV];
     // O CMV da filial JÁ é o ajustado: compras inclui a entrada e desconta a saída.
@@ -2637,7 +2637,7 @@ function rCMV(){
     '<div class="cmv-formula" style="display:flex;flex-direction:row;flex-wrap:nowrap;align-items:stretch;gap:10px;">'+
       '<div class="cf-box" style="flex:1;min-width:0;"><div class="cf-v az">'+fR2(d.ei)+'</div><div class="cf-l">Estoque Inicial</div><div class="cf-d">'+(d.data_ei||'')+'</div></div>'+
       '<div class="cf-op">+</div>'+
-      '<div class="cf-box" style="flex:1;min-width:0;"><div class="cf-v am">'+fR2(d.compras)+'</div><div class="cf-l">Compras'+(uniCMV!=='TODAS'&&(d.transfSaida>0)?' (liq. transf.)':'')+'</div>'+(uniCMV!=='TODAS'&&d.transfSaida>0?'<div class="cf-d">menos '+fR(d.transfSaida)+' enviado</div>':'')+'</div>'+
+      '<div class="cf-box" style="flex:1;min-width:0;"><div class="cf-v am">'+fR2(d.compras)+'</div><div class="cf-l">Compras'+(d.transfSaida>0?' (liq. transf.)':'')+'</div>'+(d.transfSaida>0?'<div class="cf-d">menos '+fR(d.transfSaida)+' enviado</div>':'')+'</div>'+
       '<div class="cf-op">&minus;</div>'+
       '<div class="cf-box" style="flex:1;min-width:0;"><div class="cf-v az">'+fR2(d.ef)+'</div><div class="cf-l">Estoque Final</div><div class="cf-d">'+(d.data_ef||'')+'</div></div>'+
       '<div class="cf-op">=</div>'+
@@ -2727,7 +2727,7 @@ function renderCMVGrupoTabela(grupos){
   if(cmvGrupoOrder==='qtd')arr=arr.slice().sort(function(a,b){return (b.qtd||0)-(a.qtd||0);});
   else arr=arr.slice().sort(function(a,b){return b.cmv-a.cmv;});
 
-  var comTransf = uniCMV!=='TODAS';
+  var comTransf = uniCMV!=='TODAS' || arr.some(function(g){return (g.transf_saida||0)>0;});
   var thTransf = comTransf ? '<th class="r">Transf. Receb.</th><th class="r">Transf. Enviada</th>' : '';
   cont.innerHTML='<table><thead><tr><th>Grupo</th><th class="r">Qtd. Comprada</th><th class="r">Est. Inicial</th><th class="r">Compras</th>'+
     '<th class="r">Est. Final</th>'+thTransf+'<th class="r">CMV</th></tr></thead><tbody>'+
@@ -2844,7 +2844,7 @@ function renderCMVProdTabela(prods){
   if(porQtd)arr.sort(function(a,b){return (b.qtd||0)-(a.qtd||0);});
   else arr.sort(function(a,b){return b.cmv-a.cmv;});
 
-  var comTransf = uniCMV!=='TODAS';
+  var comTransf = uniCMV!=='TODAS' || arr.some(function(p){return (p.transf_saida||0)>0;});
   // "Por quantidade": Est. Inicial/Compras/Est. Final em UNIDADES contadas/
   // compradas (nao em R$) -- so faz sentido por produto, ja que cada linha
   // tem uma unidade homogenea (KG, UN, L...), diferente do grupo que pode
