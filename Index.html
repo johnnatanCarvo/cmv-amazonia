@@ -1676,8 +1676,17 @@ function valorEvolucaoCMC(key){
 function extrairCMCPorUnidade_(d){
   if(!d)return null;
   var tr=d.transferencias||null;
-  if(uniAtual==='TODAS')return {cmc_total:d.cmc_total,faturamento:d.faturamento||0,grupos:d.grupos,transf:tr,transfUni:null,transfSaldo:tr?tr.total:0,transfEntrada:0,transfSaida:0,
-    transfEntradaQtd:0,transfSaidaQtd:0,cmcComTransf:d.cmc_total,cmcPctFatComTransf:d.cmc_pct_fat};
+  if(uniAtual==='TODAS'){
+    // Entre unidades do mesmo negócio o que sai de uma entra na outra (líquido zero). O que sobra é transferência
+    // para FORA do negócio (Açaí enviando às lojas): aparece como "enviado" e abate o CMC, igual ao CMV.
+    var liqSai=0, liqSaiQtd=0;
+    if(tr&&tr.filiais){Object.keys(tr.filiais).forEach(function(k){var x=tr.filiais[k];liqSai+=(x.saida||0)-(x.entrada||0);liqSaiQtd+=(x.saida_qtd||0)-(x.entrada_qtd||0);});}
+    if(liqSai<0.005){liqSai=0;liqSaiQtd=0;}
+    var comT=d.cmc_total-liqSai, fatT=d.faturamento||0;
+    return {cmc_total:d.cmc_total,faturamento:fatT,grupos:d.grupos,transf:tr,transfUni:null,transfSaldo:tr?tr.total:0,transfEntrada:0,transfSaida:liqSai,
+      transfEntradaQtd:0,transfSaidaQtd:liqSaiQtd,cmcComTransf:liqSai>0?comT:d.cmc_total,
+      cmcPctFatComTransf:liqSai>0?(fatT>0?comT/fatT*100:null):d.cmc_pct_fat};
+  }
   if(d.filiais&&d.filiais[uniAtual]){
     var f=d.filiais[uniAtual];
     var trUni=(tr&&tr.filiais&&tr.filiais[uniAtual])?tr.filiais[uniAtual]:null;
@@ -1756,7 +1765,7 @@ function rMes(){
   // Em "Todas" não existe versão com transferência: entre as unidades o que
   // sai de uma entra na outra e o líquido é zero -- somar contaria a mesma
   // mercadoria duas vezes.
-  var temTransf=(uniAtual!=='TODAS' && (d.transfEntrada>0||d.transfSaida>0));
+  var temTransf=((uniAtual!=='TODAS'||d.transfSaida>0) && (d.transfEntrada>0||d.transfSaida>0));
   var pctComTransf=d.cmcPctFatComTransf;
   var temPctComTransf=(pctComTransf!==null&&pctComTransf!==undefined);
   if(fat>0){
@@ -1793,7 +1802,7 @@ function rMes(){
         '<div class="metric-sub" style="color:var(--fg3)">'+fQ(d.transfEntradaQtd)+' unidades</div></div>';
     }
     if(d.transfSaida>0){
-      html+='<div class="'+clsTr+'"><div class="metric-l">Enviado para Outra Unidade</div>'+
+      html+='<div class="'+clsTr+'"><div class="metric-l">'+(uniAtual==='TODAS'?'Enviado às Unidades (a custo)':'Enviado para Outra Unidade')+'</div>'+
         '<div class="metric-v am">'+fR2(d.transfSaida)+'</div>'+
         '<div class="metric-sub" style="color:var(--fg3)">'+fQ(d.transfSaidaQtd)+' unidades</div></div>';
     }
