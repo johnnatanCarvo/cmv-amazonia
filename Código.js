@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-10-23.5';
+var VERSAO_APP = '2026-10-23.6';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -1426,6 +1426,9 @@ function obterSemanasSalvas_() {
 // Valida que os dois inventários existem e que a data resolvida de ambos
 // cai dentro do mês/ano informado — evita salvar uma semana com contagem
 // de outro mês por engano.
+// Id único mesmo se dois salvamentos caírem no mesmo milissegundo.
+function novoIdSemana_() { return 'SEM-' + new Date().getTime() + '-' + Math.floor(Math.random() * 100000); }
+
 function salvarSemana(senha, dados) {
   if (!validarSenha(senha)) {
     return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
@@ -1478,7 +1481,7 @@ function salvarSemana(senha, dados) {
     var props = PropertiesService.getScriptProperties();
     var lista = obterSemanasSalvas_();
     var novo = {
-      id: dados.id || ('SEM-' + new Date().getTime()),
+      id: dados.id || novoIdSemana_(),
       mes: dados.mes, ano: Number(dados.ano), semanaNum: Number(dados.semanaNum),
       unidade: String(dados.unidade).trim(),
       inventarioInicialId: dados.inventarioInicialId,
@@ -1491,7 +1494,7 @@ function salvarSemana(senha, dados) {
     // mostrando semana de outro mês) nunca pode sobrescrever aquele registro: vira um registro novo.
     if (idx >= 0 && (lista[idx].mes !== novo.mes || Number(lista[idx].ano) !== novo.ano ||
                      Number(lista[idx].semanaNum) !== novo.semanaNum || lista[idx].unidade !== novo.unidade)) {
-      novo.id = 'SEM-' + new Date().getTime();
+      novo.id = novoIdSemana_();
       idx = -1;
     }
     // Mesmo mês/semana/unidade já salvos com outro id: atualiza esse, em vez de duplicar.
