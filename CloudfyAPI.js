@@ -1226,12 +1226,16 @@ var CFY_ABA_PRODUCAO_ACAI = 'PRODUCAO_ACAI_CLOUDFY';
 var ACAI_NR_FILIAL = 4;
 var ACAI_INICIO_PRODUCAO = { ano: 2026, mes: 9, dia: 1 };   // a unidade abriu no fim de setembro/2026
 var ACAI_COD_LATA = '804', ACAI_COD_MEDIO = '1238', ACAI_COD_GROSSO = '805';
+var ACAI_MOTIVO_PRODUCAO = 70;   // CFYCC886: 10 venda, 30 entrada, 50 baixa, 70 produção, 100 compra/devolução
 var ACAI_NOME_LATA = 'MP ACAI LATA 14,5KG', ACAI_NOME_MEDIO = 'MP ACAI LT MEDIO', ACAI_NOME_GROSSO = 'MP ACAI LT GROSSO';
 
 function cfyProducaoAcaiLinhas_(dataIni, dataFim) {
   var rs = cfyChamar_('CFYCC886', {
     DataInicial: dataIni, DataFinal: dataFim, CodRefProduto: null,
-    ConsolidarFiliais: null, ConsolidarCentrosEstoque: null, ConsolidarMotivos: null,
+    // ConsolidarMotivos 0: uma linha por MOTIVO do movimento. Consolidado, a devolução de compra (motivo 100, saída da lata)
+    // se misturava com a produção (motivo 70) e contava como lata usada: em out/2026 eram 120 latas a mais (780 em vez de 660),
+    // e o custo do litro saía 25% alto.
+    ConsolidarFiliais: 0, ConsolidarCentrosEstoque: 0, ConsolidarMotivos: 0,
     // Só o formato [{NrFilial: n}] filtra; "4" e ["4"] dão erro ou lista vazia.
     Filiais: [{ NrFilial: ACAI_NR_FILIAL }], CentrosEstoque: null, Motivos: null
   }, ACAI_NR_FILIAL);
@@ -1242,6 +1246,8 @@ function cfyProducaoAcaiLinhas_(dataIni, dataFim) {
     var cod = cfyTexto_(p.CodRefProduto);
     if (!cods[cod]) return;
     if (Number(p.NrFilial) !== ACAI_NR_FILIAL) return;
+    // só PRODUÇÃO (motivo 70); venda (10), baixa (50) e compra/devolução (100) não são a lata virando litro
+    if (p.Motivo !== undefined && p.Motivo !== null && Number(p.Motivo) !== ACAI_MOTIVO_PRODUCAO) return;
     var s = String(p.Data);
     linhas.push([s.slice(6, 8) + '/' + s.slice(4, 6) + '/' + s.slice(0, 4), cod, cfyTexto_(p.Produto),
                  Number(p.QtdeEntradas) || 0, Number(p.QtdeSaidas) || 0]);
