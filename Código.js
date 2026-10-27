@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-10-27.1';
+var VERSAO_APP = '2026-10-27.2';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -184,7 +184,7 @@ function corrigirEscalaContagensSetembro() {
 // ── SERVIDOR ─────────────────────────────────────────────────
 
 // ID da implantação do link piloto (parte do meio da URL /macros/s/<ID>/exec). Vazio = só abre com ?app=piloto.
-var DEPLOY_PILOTO = '';
+var DEPLOY_PILOTO = 'AKfycbywE0kffUM-XL7DuSr8QwUiJwqLclwgYfSDJExcIoVd6j9aa1lYuZFZBkGkUV18tLxGZg';
 function ehPiloto_(e) {
   if (e && e.parameter && e.parameter.app === 'piloto') return true;
   if (!DEPLOY_PILOTO) return false;
