@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-10-26.1';
+var VERSAO_APP = '2026-10-27.1';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -183,6 +183,14 @@ function corrigirEscalaContagensSetembro() {
 
 // ── SERVIDOR ─────────────────────────────────────────────────
 
+// ID da implantação do link piloto (parte do meio da URL /macros/s/<ID>/exec). Vazio = só abre com ?app=piloto.
+var DEPLOY_PILOTO = '';
+function ehPiloto_(e) {
+  if (e && e.parameter && e.parameter.app === 'piloto') return true;
+  if (!DEPLOY_PILOTO) return false;
+  try { return String(ScriptApp.getService().getUrl() || '').indexOf(DEPLOY_PILOTO) >= 0; } catch (err) { return false; }
+}
+
 function doGet(e) {
   // ?app=fichas abre o editor de fichas técnicas (mobile, senha própria) --
   // mesmo projeto/deployment, view totalmente separada do dashboard.
@@ -190,6 +198,15 @@ function doGet(e) {
     return HtmlService.createTemplateFromFile('Fichas')
       .evaluate()
       .setTitle('Fichas Técnicas | Amazônia na Cuia | CARVO')
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1.0')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  }
+  // Piloto do padrão visual CARVO (DESIGN.md): mesmos dados e mesma senha do painel, outra casca. Abre no link próprio
+  // da implantação piloto (DEPLOY_PILOTO) ou, em qualquer link, com ?app=piloto.
+  if (ehPiloto_(e)) {
+    return HtmlService.createTemplateFromFile('Piloto')
+      .evaluate()
+      .setTitle('CMV | Amazônia na Cuia | CARVO (piloto)')
       .addMetaTag('viewport', 'width=device-width, initial-scale=1.0')
       .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
   }
