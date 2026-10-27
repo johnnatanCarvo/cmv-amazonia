@@ -266,6 +266,14 @@ a.btn{text-decoration:none;}
 .tab-rol{overflow-x:auto;}
 @media (max-width:780px){.tab-rol{overflow-x:visible;}}
 .kpi .val.txt{font-family:var(--fonte-tit);font-size:22px;letter-spacing:-.01em;line-height:1.25;white-space:normal;overflow-wrap:anywhere;}
+.lin-ficha{cursor:pointer;}
+tr.det td{background:var(--card-alt);padding:var(--space-3);}
+.tab-detalhe{width:100%;border-collapse:collapse;}
+.tab-detalhe th{font-size:9.5px;font-weight:500;letter-spacing:.1em;text-transform:uppercase;color:var(--txt3);text-align:left;padding:var(--space-1) var(--space-2);border-bottom:1px solid var(--linha-2);}
+.tab-detalhe th.num{text-align:right;}
+.tab-detalhe td{font-size:12.5px;padding:6px var(--space-2);border-bottom:1px solid var(--linha);text-align:left;}
+.tab-detalhe td.num{text-align:right;font-family:var(--num-oper);font-variant-numeric:tabular-nums lining-nums;white-space:nowrap;}
+@media (max-width:780px){tr.det td{display:block;}.tab-detalhe thead{display:none;}.tab-detalhe tr{display:block;border:0;}.tab-detalhe td{display:flex;justify-content:space-between;border:0;}}
 </style>
 </head>
 <body class="">
@@ -386,7 +394,7 @@ var NAV=[
   {id:'cmvg',t:'CMV',ic:'clock',subs:[['realteorico','Real × Teórico']]},
   {id:'comprasg',t:'Compras',ic:'cart',subs:[['compras','Análise mês a mês'],['variacao','Variação de custo']]},
   {id:'estoque',t:'Estoque',ic:'box',subs:[['demanda','Demanda de insumos']]},
-  {id:'ficha',t:'Ficha técnica',ic:'doc',externo:'fichas'},
+  {id:'ficha',t:'Ficha técnica',ic:'doc',page:'ficha'},
   {id:'fin',t:'Financeiro',ic:'coin',subs:[['dfc','DFC'],['dre','DRE']]}
 ];
 var GRUPOS_ABERTOS={resumo:true};
@@ -799,6 +807,59 @@ function vDemanda(){
     it.slice(0,30).map(function(i){var o=(i.origens||[])[0];return [esc(i.nome),esc(i.und||''),nr(i.qtde,1),brl(i.custo_unit,2),barra(i.custo_total,max,brl(i.custo_total)),pct(total?i.custo_total/total*100:null),o?esc(o.produto):''];})));
   return {html:h};
 }
+/* ---------- ficha técnica: vem da API do Cloudfy (cache diário), não do app antigo de fichas ---------- */
+var FICHAS=null, FICHAS_ERRO='', FICHAS_EM=''; var FICHA_Q='', FICHA_G='', FICHA_ABERTAS={}, FICHA_CARREGANDO=false;
+function carregarFichas(){
+  if(FICHA_CARREGANDO)return; FICHA_CARREGANDO=true;
+  google.script.run
+    .withSuccessHandler(function(json){
+      FICHA_CARREGANDO=false; var r; try{r=JSON.parse(json);}catch(e){r=null;}
+      if(!r||!r.ok){FICHAS_ERRO=(r&&r.erro)||'Não foi possível ler as fichas.';FICHAS=[];}
+      else{FICHAS=r.fichas||[];FICHAS_EM=r.atualizadoEm||'';FICHAS_ERRO='';}
+      if(VISTA==='ficha')desenhar();
+    })
+    .withFailureHandler(function(e){FICHA_CARREGANDO=false;FICHAS_ERRO='Falha na comunicação: '+((e&&e.message)||e);FICHAS=[];if(VISTA==='ficha')desenhar();})
+    .listarFichasApi(SENHA);
+}
+function fichasFiltradas(){
+  var q=FICHA_Q.trim().toLowerCase();
+  return (FICHAS||[]).filter(function(f){
+    if(FICHA_G&&f.grupo!==FICHA_G)return false;
+    return !q||f.produto.toLowerCase().indexOf(q)>=0||String(f.cod).toLowerCase()===q;
+  });
+}
+function listaFichasHtml(){
+  var lista=fichasFiltradas(), tot=lista.length, vis=lista.slice(0,100);
+  if(!vis.length)return vazio('Nenhuma ficha encontrada para esta busca.');
+  var th=['Produto','Grupo','Tipo','Rendimento','Custo unit.','Insumos'].map(function(c,i){return '<th class="'+(i>=3?'num':'')+'">'+c+'</th>';}).join('');
+  var tr=vis.map(function(f){
+    var k=f.cod+'|'+f.produto, aberta=!!FICHA_ABERTAS[k];
+    var linha='<tr class="lin-ficha" data-ficha="'+esc(k)+'"><td data-r="Produto">'+esc(f.produto)+'</td><td data-r="Grupo">'+esc(f.grupo||'--')+'</td><td data-r="Tipo">'+esc(f.tipo||'--')+'</td>'+
+      '<td class="num" data-r="Rendimento">'+nr(f.rendimento,2)+' '+esc(f.unidade||'')+'</td><td class="num" data-r="Custo unit.">'+brl(f.custoUnit,2)+'</td><td class="num" data-r="Insumos">'+f.insumos.length+'</td></tr>';
+    if(!aberta)return linha;
+    var ins=f.insumos.length?'<table class="tab-detalhe"><thead><tr><th>Insumo</th><th class="num">Quantidade</th><th>Und.</th><th class="num">Custo unit.</th><th class="num">Custo total</th></tr></thead><tbody>'+
+      f.insumos.map(function(i){return '<tr><td>'+esc(i.nome)+'</td><td class="num">'+nr(i.qtde,3)+'</td><td>'+esc(i.und)+'</td><td class="num">'+brl(i.custoUnit,2)+'</td><td class="num">'+brl(i.custoTotal,2)+'</td></tr>';}).join('')+'</tbody></table>':vazio('Esta ficha não tem insumos na API.');
+    return linha+'<tr class="det"><td colspan="6">'+ins+'</td></tr>';
+  }).join('');
+  return '<div class="tab-rol"><table class="tabela tab-ficha"><thead><tr>'+th+'</tr></thead><tbody>'+tr+'</tbody></table></div>'+
+    (tot>vis.length?'<p class="rodape">Mostrando '+vis.length+' de '+tot+' fichas. Refine a busca para ver as outras.</p>':'');
+}
+function pintarFichas(){var el=$('fichaLista');if(el)el.innerHTML=listaFichasHtml();}
+function vFicha(){
+  if(FICHAS===null){return {html:vazio('Lendo as fichas na API do Cloudfy…'),post:carregarFichas};}
+  if(FICHAS_ERRO)return {html:vazio(esc(FICHAS_ERRO))};
+  if(!FICHAS.length)return {html:vazio('Ainda não há fichas no cache da API. Elas chegam na atualização diária do Cloudfy.')};
+  var vendas=FICHAS.filter(function(f){return f.tipo==='Venda';}).length;
+  var grupos={}; FICHAS.forEach(function(f){if(f.grupo)grupos[f.grupo]=1;});
+  var gl=Object.keys(grupos).sort();
+  var h='<div class="kpis">'+kpi('Fichas',nr(FICHAS.length),'','vindas da API do Cloudfy')+kpi('Produtos de venda',nr(vendas),'','tipo Venda')+
+    kpi('Preparos e matérias-primas',nr(FICHAS.length-vendas),'','sub-receitas')+kpi('Atualizado em',esc((FICHAS_EM||'--').split(' ')[0]),'',esc((FICHAS_EM||'').split(' ')[1]||'')+' · cache diário da API',true)+'</div>';
+  h+='<div class="cartao"><h3>Fichas técnicas</h3><p class="sub">Clique numa ficha para ver os insumos. O custo é o que o Cloudfy calcula.</p>'+
+    '<div class="controles" style="margin-bottom:var(--space-3)"><div class="campo" style="flex:1 1 260px"><label for="fichaQ">Buscar produto ou código</label><input id="fichaQ" type="search" value="'+esc(FICHA_Q)+'" autocomplete="off"></div>'+
+    '<div class="campo"><label for="fichaG">Grupo</label><select id="fichaG"><option value="">Todos os grupos</option>'+gl.map(function(g){return '<option value="'+esc(g)+'"'+(g===FICHA_G?' selected':'')+'>'+esc(g)+'</option>';}).join('')+'</select></div></div>'+
+    '<div id="fichaLista">'+listaFichasHtml()+'</div></div>';
+  return {html:h};
+}
 function vEmObras(nome){
   return function(){
     return {html:'<div class="em-obras"><h3>'+nome+' em implantação</h3><p>O demonstrativo financeiro vive no painel executivo financeiro, que é outro aplicativo. Este piloto já tem o lugar e o padrão visual dele no menu; falta conectar a fonte de dados.</p></div>'};
@@ -812,7 +873,7 @@ function vConfig(){
     cartao('Acesso','','<div class="lista-chave"><div class="li"><span>Negócio</span><span>Amazônia na Cuia</span></div><div class="li"><span>Senha</span><span>lembrada só neste navegador</span></div></div>'+
       '<div style="margin-top:var(--space-3)"><button class="btn" id="cfgSair">Sair</button></div>')+'</div>';
   h+=cartao('Outros painéis','As telas que ainda não foram para o novo padrão continuam nos painéis atuais.',
-    '<div style="display:flex;gap:var(--space-2);flex-wrap:wrap"><button class="btn" data-ext="painel">Abrir o painel atual</button><button class="btn" data-ext="fichas">Ficha técnica</button></div>');
+    '<div style="display:flex;gap:var(--space-2);flex-wrap:wrap"><button class="btn" data-ext="painel">Abrir o painel atual</button></div>');
   return {html:h};
 }
 
@@ -829,6 +890,7 @@ var VIEWS={
   compras:{escopo:'Compras',tit:'Análise mês a mês',sub:function(){return nomeUni(UNI);},ctl:['mes','uni'],avisos:1,render:vCompras},
   variacao:{escopo:'Compras',tit:'Variação de custo',sub:function(){return mesNome(MES)+' contra o mês anterior · '+nomeUni(UNI);},ctl:['mes','uni'],render:vVariacao},
   demanda:{escopo:'Estoque',tit:'Demanda de insumos',sub:function(){return mesNome(MES)+' · '+nomeUni(UNI);},ctl:['mes','uni'],render:vDemanda},
+  ficha:{escopo:'Ficha técnica',tit:'Ficha técnica',sub:'Receitas e custos direto da API do Cloudfy.',ctl:[],render:vFicha},
   dfc:{escopo:'Financeiro',tit:'DFC',sub:'Demonstrativo de fluxo de caixa.',ctl:[],render:vEmObras('DFC')},
   dre:{escopo:'Financeiro',tit:'DRE',sub:'Demonstrativo de resultado.',ctl:[],render:vEmObras('DRE')},
   config:{escopo:'Configuração',tit:'Configuração',sub:'Aparência, acesso e atalhos.',ctl:[],render:vConfig}
@@ -902,7 +964,7 @@ function entrar(ev){
   if(!s){$('erroLogin').textContent='Digite a senha.';return;}
   carregar(s,false);
 }
-function sair(){lsDel('carvo_senha_piloto');SENHA='';D=null;matarGraficos();$('app').hidden=true;$('login').hidden=false;$('senha').value='';$('senha').focus();}
+function sair(){lsDel('carvo_senha_piloto');SENHA='';D=null;FICHAS=null;matarGraficos();$('app').hidden=true;$('login').hidden=false;$('senha').value='';$('senha').focus();}
 
 window.addEventListener('load',function(){
   aplicarTema(lsGet('carvo_tema')==='dark'?'dark':'light');
@@ -914,6 +976,7 @@ window.addEventListener('load',function(){
     if((b=t.closest('[data-tema]'))){aplicarTema(b.dataset.tema);return;}
     if((b=t.closest('button.grupo'))){clicarGrupo(b.dataset.g);return;}
     if((b=t.closest('[data-ext]'))){abrirExterno(b.dataset.ext);return;}
+    if((b=t.closest('[data-ficha]'))){var kf=b.dataset.ficha;FICHA_ABERTAS[kf]=!FICHA_ABERTAS[kf];pintarFichas();return;}
     if((b=t.closest('#lateral [data-v]'))){irPara(b.dataset.v);return;}
     if((b=t.closest('[data-mes]'))){MES=b.dataset.mes;desenhar();return;}
     if(t.closest('#btnRecolher')){recolher();return;}
@@ -923,7 +986,8 @@ window.addEventListener('load',function(){
     if(t.closest('#btnAtualizar')){if(SENHA){$('carregando').hidden=false;carregar(SENHA,true);}return;}
     if(document.body.classList.contains('gaveta')&&t===document.body)document.body.classList.remove('gaveta');
   });
-  document.body.addEventListener('change',function(ev){if(ev.target&&ev.target.id==='selUni'){UNI=ev.target.value;desenhar();}});
+  document.body.addEventListener('change',function(ev){if(!ev.target)return;if(ev.target.id==='selUni'){UNI=ev.target.value;desenhar();}if(ev.target.id==='fichaG'){FICHA_G=ev.target.value;pintarFichas();}});
+  document.body.addEventListener('input',function(ev){if(ev.target&&ev.target.id==='fichaQ'){FICHA_Q=ev.target.value;pintarFichas();}});
   var salva=lsGet('carvo_senha_piloto');
   if(salva){$('senha').value=salva;$('carregando').hidden=false;carregar(salva,true);}
 });

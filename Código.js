@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-10-27.4';
+var VERSAO_APP = '2026-10-27.5';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -1073,6 +1073,41 @@ function buscarFicha(senhaFichas, produto) {
     });
   } catch (err) {
     Logger.log('buscarFicha ERROR: ' + err.message + '\n' + err.stack);
+    return JSON.stringify({ ok: false, erro: err.message });
+  }
+}
+
+// Ficha técnica vinda SÓ da API do Cloudfy (CFYCC880, cache diário): é a fonte do piloto. Não mistura as fichas manuais do
+// app antigo de fichas e usa a senha do PAINEL (a do app antigo não é mais necessária para ler).
+function listarFichasApi(senha) {
+  if (!validarSenha(senha)) {
+    return JSON.stringify({ ok: false, auth: false, erro: 'Senha invalida.' });
+  }
+  try {
+    var rows = cfyLerCacheFichas_() || [];
+    var por = {}, ordem = [];
+    for (var i = 1; i < rows.length; i++) {
+      var r = rows[i];
+      if (!r) continue;
+      var nome = limpaCelula(r[C_FICHAS.produto]);
+      if (!nome) continue;
+      var cod = limpaCelula(r[C_FICHAS.cod]);
+      var k = cod + '|' + nome;
+      if (!por[k]) {
+        por[k] = { cod: cod, produto: nome, grupo: limpaCelula(r[C_FICHAS.grupo]), tipo: limpaCelula(r[C_FICHAS.tipo]),
+                   unidade: limpaCelula(r[2]), rendimento: numVal(r[C_FICHAS.rendimento]) || 1, custoUnit: numVal(r[C_FICHAS.custo_unit]), insumos: [] };
+        ordem.push(k);
+      }
+      var ins = limpaCelula(r[C_FICHAS.insumo_nome]);
+      if (ins) {
+        por[k].insumos.push({ cod: limpaCelula(r[11]), nome: ins, qtde: numVal(r[C_FICHAS.insumo_qtde]), und: limpaCelula(r[C_FICHAS.insumo_und]),
+                              custoUnit: numVal(r[C_FICHAS.insumo_custo_unit]), custoTotal: numVal(r[16]) });
+      }
+    }
+    var lista = ordem.map(function(k) { return por[k]; }).sort(function(a, b) { return a.produto.localeCompare(b.produto); });
+    return JSON.stringify({ ok: true, fichas: lista, atualizadoEm: cfyFichasAtualizadoEm() || '' });
+  } catch (err) {
+    Logger.log('listarFichasApi ERROR: ' + err.message);
     return JSON.stringify({ ok: false, erro: err.message });
   }
 }
