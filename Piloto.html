@@ -38,7 +38,7 @@
   /* medidas */
   --space-1:4px; --space-2:8px; --space-3:16px; --space-4:24px; --space-5:32px; --space-6:48px; --space-7:64px;
   --radius-sm:4px; --radius-md:6px; --sombra:none;
-  --lat-w:232px; --lat-w-rec:68px; --lat-w-gav:268px;
+  --lat-w:232px; --lat-w-rec:68px; --lat-w-gav:268px; --lat-t:.22s;
 }
 html[data-theme="light"]{
   --bg:#FFFFFF; --card:#FFFFFF; --card-alt:#F6F6F3; --linha:#DFE0DC; --linha-2:#CBCDC8;
@@ -80,13 +80,15 @@ html[data-theme="dark"] .login-logo{mix-blend-mode:screen;}
 
 /* ---------- casca ---------- */
 #app{display:flex;min-height:100vh;}
-#lateral{position:sticky;top:0;align-self:flex-start;height:100vh;width:var(--lat-w);flex:0 0 var(--lat-w);background:var(--lat-bg);border-right:1px solid var(--lat-borda);display:flex;flex-direction:column;z-index:30;transition:width .18s ease;overflow:hidden;}
+#lateral{position:sticky;top:0;align-self:flex-start;height:100vh;width:var(--lat-w);flex:0 0 var(--lat-w);background:var(--lat-bg);border-right:1px solid var(--lat-borda);display:flex;flex-direction:column;z-index:30;transition:width var(--lat-t) ease;overflow:hidden;}
 #lateralEspaco{display:none;flex:0 0 var(--lat-w-rec);}
 #lateral .lat-topo{display:flex;align-items:center;height:64px;border-bottom:1px solid var(--lat-linha);flex:0 0 auto;}
 #lateral .lat-marca{position:relative;flex:1 1 auto;height:64px;}
-#lateral .lat-logo{position:absolute;left:var(--space-4);top:50%;transform:translateY(-50%);height:22px;mix-blend-mode:screen;}
-body.recolhido #lateral .lat-logo{height:40px;left:11px;top:12px;transform:none;clip-path:inset(15.5% 72.1% 16.25% 5.65%);}
-body.recolhido #lateral.espiando .lat-logo{height:22px;left:var(--space-4);top:50%;transform:translateY(-50%);clip-path:none;}
+/* A marca fica sempre no mesmo lugar e no mesmo tamanho (centro dela na coluna do ícone, 32px). O que muda com a barra é o recorte:
+   recolhido mostra só a marca; ao esticar, o recorte da direita abre no mesmo tempo e no mesmo ritmo da largura, revelando o nome. */
+#lateral .lat-logo{position:absolute;left:13px;top:14px;height:36px;mix-blend-mode:screen;clip-path:inset(15.5% 0% 16.25% 5.65%);transition:clip-path var(--lat-t) ease;}
+body.recolhido #lateral .lat-logo{clip-path:inset(15.5% 72.1% 16.25% 5.65%);}
+body.recolhido #lateral.espiando .lat-logo{clip-path:inset(15.5% 0% 16.25% 5.65%);}
 #lateral .lat-nome{font-family:var(--fonte-tit);font-size:15px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--lat-txt);font-kerning:normal;font-feature-settings:'kern' 1;white-space:nowrap;}
 #lateral nav{flex:1 1 auto;overflow-y:auto;padding:var(--space-2) 0;}
 .lat-sep{font-size:9px;font-weight:500;letter-spacing:.16em;text-transform:uppercase;color:var(--lat-txt3);padding:var(--space-4) var(--space-4) var(--space-2) 66px;border-top:1px solid var(--lat-linha);white-space:nowrap;}
@@ -200,7 +202,7 @@ tfoot td.num{text-align:right;font-family:var(--num-oper);font-variant-numeric:t
   body.recolhido #lateral{width:var(--lat-w-gav);}
   body.recolhido .lat-texto,body.recolhido .lat-nome,body.recolhido .lat-sep,body.recolhido .lat-quem,body.recolhido .tema{display:revert;}
   body.recolhido #lateralEspaco{display:none;}
-  body.recolhido #lateral .lat-logo{height:22px;left:var(--space-4);top:50%;transform:translateY(-50%);clip-path:none;}
+  body.recolhido #lateral .lat-logo{clip-path:inset(15.5% 0% 16.25% 5.65%);}
   #btnGaveta{display:inline-flex;}
   #btnRecolher{display:none;}
   .grade-2{grid-template-columns:minmax(0,1fr);}
