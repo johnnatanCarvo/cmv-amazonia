@@ -57,6 +57,15 @@ var PADRAO_PRODUTO_AJUSTE = /^\s*AJUSTE\s+DE\s+CAIXA\b/i;
 function naoEhVenda_(produto) {
   return PADRAO_PRODUTO_TAXA.test(produto) || PADRAO_PRODUTO_AJUSTE.test(produto);
 }
+
+// Produtos que NÃO entram no CMV (nem no estoque inicial/final, nem nas compras do período): decisão do cliente.
+// Continuam no CMC (compra é compra) e no cadastro. Casa pelo código do Cloudfy ou pelo nome exato.
+var PRODUTOS_FORA_DO_CMV = { cods: ['1055'], nomes: ['MP GAS'] };
+function foraDoCMV_(cod, nome) {
+  var c = String(cod == null ? '' : cod).trim();
+  if (c && PRODUTOS_FORA_DO_CMV.cods.indexOf(c) >= 0) return true;
+  return PRODUTOS_FORA_DO_CMV.nomes.indexOf(String(nome == null ? '' : nome).trim().toUpperCase()) >= 0;
+}
 // Transferências entre unidades: no relatório de compras, aparecem como
 // "fornecedor" que é a própria empresa. Identificadas pelo nome do fornecedor.
 // O índice da coluna fornecedor no CSV de compras é 2.
@@ -708,6 +717,7 @@ function agregarComprasPeriodoCMV_(rows, resolverPeriodo) {
     var prodC= limpaCelula(rc[C_COMPRAS.produto]);
     var totC = numVal(rc[C_COMPRAS.total]);
     if (totC <= 0) continue;
+    if (foraDoCMV_(rc[C_COMPRAS.cod], prodC)) continue;   // MP GAS: fora do CMV (continua no CMC)
 
     if (!comprasMes[mnC]) comprasMes[mnC] = { total:0, grupos:{}, filiais:{}, prodGrupo:{}, saidaFilial:{}, entradaFilial:{} };
 
@@ -1019,6 +1029,8 @@ function processarCMV(rowsEstoque, rowsCompras, historicoPorInsumo, fichasMap) {
       if (!produto) continue;
       recuperadosPorCodigo++;
     }
+
+    if (foraDoCMV_(r[C_ESTOQUE.cod], produto)) continue;   // MP GAS: fora do CMV
 
     var mesNomeLinha = NOMES_MESES[dataInfo.mes];
     var custoUnit = buscarCustoInsumoComFallback(historicoPorInsumo, produto, mesNomeLinha, dataInfo.ano);
@@ -1972,7 +1984,8 @@ function chaveDia(ano, mesNome, dia) { return ano + '|' + mesNome + '|' + dia; }
 // destino recebe normalmente, a de origem tem descontado o que enviou, e o
 // consolidado nunca conta a transferência como compra nova (já foi contada
 // na compra externa de origem).
-function preAgregarComprasPorDia(rowsCompras) {
+// soCmv: o mesmo agregado SEM os produtos que ficam fora do CMV (MP GAS); sem a chave, tudo (CMC).
+function preAgregarComprasPorDia(rowsCompras, soCmv) {
   var porDia = {};
   if (!rowsCompras || rowsCompras.length < 2) return porDia;
 
@@ -1982,6 +1995,7 @@ function preAgregarComprasPorDia(rowsCompras) {
     var custoUnit = numVal(r[C_COMPRAS.custo_atual]);
     var total     = numVal(r[C_COMPRAS.total]);
     if (custoUnit <= 0 || total <= 0) continue;
+    if (soCmv && foraDoCMV_(r[C_COMPRAS.cod], r[C_COMPRAS.produto])) continue;
 
     var dataInfo = parseDataCompleta(r[C_COMPRAS.data]);
     if (!dataInfo) continue;

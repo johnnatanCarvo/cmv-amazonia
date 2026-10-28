@@ -598,7 +598,8 @@ function vCmv(){
   if(!c)return {html:vazio('Não há CMV real para '+esc(mesNome(MES))+' nesta unidade: falta contagem de estoque no início e no fim do período.')};
   var h='';
   if(c.dataEi)h+='<div class="faixa"><b>Período considerado</b> &nbsp;·&nbsp; Compras e vendas: '+esc(c.dataEi)+' a '+esc(c.dataEf)+
-    ' &nbsp;·&nbsp; Contagens: '+esc(c.contEi||c.dataEi)+(c.abertura?' (abertura, estoque R$ 0)':'')+' &rarr; '+esc(c.contEf||c.dataEf)+'</div>';
+    ' &nbsp;·&nbsp; Contagens: '+esc(c.contEi||c.dataEi)+(c.abertura?' (abertura, estoque R$ 0)':'')+' &rarr; '+esc(c.contEf||c.dataEf)+
+    ((D.produtosForaDoCMV&&D.produtosForaDoCMV.length)?' &nbsp;·&nbsp; <b>Fora do CMV:</b> '+esc(D.produtosForaDoCMV.join(', ')):'')+'</div>';
   h+='<div class="kpis">'+
     kpi('CMV real',brl(c.cmv),c0?tagVar(c.pct,c0.pct,true):'<span class="tag neu">sem comparação</span>',pct(c.pct)+' do faturamento')+
     kpi('Estoque inicial',brl(c.ei),'','contagem de '+esc(c.contEi||c.dataEi))+

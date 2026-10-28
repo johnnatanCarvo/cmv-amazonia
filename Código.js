@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-10-28.2';
+var VERSAO_APP = '2026-10-28.3';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -432,6 +432,8 @@ function getPayload(senha, negocio) {
       transferenciasComoVenda: transferenciasComoVendaPorMes_(),
       // Mês cujo período começa antes do dia 1 (Açaí: abertura com estoque zero em 26/09, outubro começa em 27/09)
       inicioPeriodoPorMes: inicioPeriodoPorMes_(),
+      // produtos que ficam fora do CMV (continuam no CMC): a tela avisa
+      produtosForaDoCMV: PRODUTOS_FORA_DO_CMV.nomes.slice(),
       // Quais meses/dias já vêm da API e quais ainda dependem do CSV. Sem isso
       // visível, um mês pela metade (vendas chegam de 3 em 3 dias) passa por
       // completo e o faturamento aparece menor do que é.
@@ -1826,6 +1828,7 @@ function calcularAnaliseSemanal(senha, mes, ano, negocio) {
     var catalogoPorCodigo = preAgregarCatalogoPorCodigo(rowsCompras);
     var fichaPorCodigo = preAgregarFichaPorCodigo(rowsFichas);
     var porDiaCompras = preAgregarComprasPorDia(rowsCompras);
+    var porDiaComprasCmv = preAgregarComprasPorDia(rowsCompras, true);   // sem MP GAS: só para o CMV
     var porDiaVendas  = preAgregarVendasPorDia(rowsVendas);
 
     var inventarios = obterInventariosSalvos_();
@@ -1872,8 +1875,8 @@ function calcularAnaliseSemanal(senha, mes, ano, negocio) {
       // contado em 31/08 tem que usar o preço médio de Agosto, não o de
       // Setembro, senão o EI fica com o custo errado.
       var mesNomeInicial = NOMES_MESES[infoInicial.mes];
-      var valInicial = valorizarItensInventario_(itensInicial, mesNomeInicial, infoInicial.ano, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (inicial)', catalogoPorCodigo, fichaPorCodigo);
-      var valFinal   = valorizarItensInventario_(itensFinal, mes, anoNum, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (final)', catalogoPorCodigo, fichaPorCodigo);
+      var valInicial = valorizarParaCMV_(itensInicial, mesNomeInicial, infoInicial.ano, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (inicial)', catalogoPorCodigo, fichaPorCodigo);
+      var valFinal   = valorizarParaCMV_(itensFinal, mes, anoNum, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (final)', catalogoPorCodigo, fichaPorCodigo);
       avisos = avisos.concat(valInicial.avisos).concat(valFinal.avisos);
 
       // Semana 1 do mes (a primeira salva) e um caso especial pedido pelo
@@ -1954,15 +1957,16 @@ function calcularAnaliseSemanal(senha, mes, ano, negocio) {
       var vendas  = somarPeriodoPreAgregadoCross_(porDiaVendas, mesIniNum, anoIni, diaInicio, mesFimP, anoFimP, diaFim);
       var compraUni = compras.filiais[unidade] || 0;
       var vendaUni  = vendas.filiais[unidade]  || 0;
+      var compraCmvUni = (somarPeriodoPreAgregadoCross_(porDiaComprasCmv, mesIniNum, anoIni, diaInicio, mesFimP, anoFimP, diaFim).filiais[unidade]) || 0;
       if (semContagem) {   // sem contagem: CMC e faturamento valem, CMV real não existe
         var cmcSem = processarComprasIntervaloDiasCross_(rowsCompras, mesIniNum, anoIni, diaInicio, mesFimP, anoFimP, diaFim);
         injetarFaturamentoCmcPeriodo_(cmcSem, porDiaVendas, mesIniNum, anoIni, diaInicio, mesFimP, anoFimP, diaFim);
         return { ei: null, ef: null, compras: r2(compraUni), faturamento: r2(vendaUni), cmv: null, cmc_pct: calcularPct(compraUni, vendaUni), cmv_pct: null,
                  semContagem: true, cmcDetalhado: cmcSem, transfVenda: somaTransfVendaPeriodo_(mesIniNum, anoIni, diaInicio, mesFimP, anoFimP, diaFim) };
       }
-      var cmv = r2(ei + compraUni - ef);
+      var cmv = r2(ei + compraCmvUni - ef);
       var resultado = {
-        ei: r2(ei), ef: r2(ef), compras: r2(compraUni), faturamento: r2(vendaUni), cmv: cmv,
+        ei: r2(ei), ef: r2(ef), compras: r2(compraCmvUni), comprasCmc: r2(compraUni), faturamento: r2(vendaUni), cmv: cmv,
         cmc_pct: calcularPct(compraUni, vendaUni),
         cmv_pct: calcularPct(cmv, vendaUni),
         transfVenda: somaTransfVendaPeriodo_(mesIniNum, anoIni, diaInicio, mesFimP, anoFimP, diaFim)
@@ -1982,7 +1986,7 @@ function calcularAnaliseSemanal(senha, mes, ano, negocio) {
     function consolidarTodas(mapaPorUnidade) {
       var unidades = Object.keys(mapaPorUnidade);
       if (!unidades.length) return null;
-      var ei = 0, ef = 0, compras = 0, faturamento = 0, semContagemAlguma = false, saidaLiq = 0, saidaPrecoLiq = 0, transfVendaSoma = 0;
+      var ei = 0, ef = 0, compras = 0, comprasCmc = 0, faturamento = 0, semContagemAlguma = false, saidaLiq = 0, saidaPrecoLiq = 0, transfVendaSoma = 0;
       unidades.forEach(function(u) {
         // Entre unidades do negócio saída e entrada se anulam; o que sobra foi para FORA (Açaí -> lojas).
         var dt = mapaPorUnidade[u].cmvDetalhado;
@@ -1993,12 +1997,14 @@ function calcularAnaliseSemanal(senha, mes, ano, negocio) {
         if (mapaPorUnidade[u].ei === null || mapaPorUnidade[u].ef === null) semContagemAlguma = true;
         else { ei += mapaPorUnidade[u].ei; ef += mapaPorUnidade[u].ef; }
         compras += mapaPorUnidade[u].compras; faturamento += mapaPorUnidade[u].faturamento;
+        comprasCmc += (mapaPorUnidade[u].comprasCmc !== undefined ? mapaPorUnidade[u].comprasCmc : mapaPorUnidade[u].compras);
         transfVendaSoma += mapaPorUnidade[u].transfVenda || 0;
       });
       var cmv = semContagemAlguma ? null : r2(ei + compras - ef);
       return {
         ei: semContagemAlguma ? null : r2(ei), ef: semContagemAlguma ? null : r2(ef), compras: r2(compras), faturamento: r2(faturamento), cmv: cmv,
-        cmc_pct: calcularPct(compras, faturamento), cmv_pct: cmv === null ? null : calcularPct(cmv, faturamento),
+        comprasCmc: r2(comprasCmc),
+        cmc_pct: calcularPct(comprasCmc, faturamento), cmv_pct: cmv === null ? null : calcularPct(cmv, faturamento),
         semContagem: semContagemAlguma,
         transfVenda: r2(transfVendaSoma),
         saida: saidaLiq > 0.005 ? r2(saidaLiq) : 0,
@@ -2174,6 +2180,7 @@ function calcularCMVPersonalizado(senha, unidade, inventarioInicialId, inventari
     var catalogoPorCodigo = preAgregarCatalogoPorCodigo(rowsCompras);
     var fichaPorCodigo = preAgregarFichaPorCodigo(rowsFichas);
     var porDiaCompras = preAgregarComprasPorDia(rowsCompras);
+    var porDiaComprasCmv = preAgregarComprasPorDia(rowsCompras, true);   // sem MP GAS: só para o CMV
     var porDiaVendas  = preAgregarVendasPorDia(rowsVendas);
 
     var itensInicial = buscarItensDeContagens_(invInicial.contagemIds);
@@ -2181,16 +2188,17 @@ function calcularCMVPersonalizado(senha, unidade, inventarioInicialId, inventari
     var rotulo = 'Período personalizado, ' + unidade;
     var mesNomeInicial = NOMES_MESES[infoInicial.mes];
     var mesNomeFinal   = NOMES_MESES[infoFinal.mes];
-    var valInicial = valorizarItensInventario_(itensInicial, mesNomeInicial, infoInicial.ano, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (inicial)', catalogoPorCodigo, fichaPorCodigo);
-    var valFinal   = valorizarItensInventario_(itensFinal, mesNomeFinal, infoFinal.ano, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (final)', catalogoPorCodigo, fichaPorCodigo);
+    var valInicial = valorizarParaCMV_(itensInicial, mesNomeInicial, infoInicial.ano, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (inicial)', catalogoPorCodigo, fichaPorCodigo);
+    var valFinal   = valorizarParaCMV_(itensFinal, mesNomeFinal, infoFinal.ano, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (final)', catalogoPorCodigo, fichaPorCodigo);
     var avisos = [].concat(valInicial.avisos).concat(valFinal.avisos);
 
     var compras = somarPeriodoPreAgregadoCross_(porDiaCompras, periodoIni.mes, periodoIni.ano, periodoIni.dia, periodoFim.mes, periodoFim.ano, periodoFim.dia);
     var vendas  = somarPeriodoPreAgregadoCross_(porDiaVendas, periodoIni.mes, periodoIni.ano, periodoIni.dia, periodoFim.mes, periodoFim.ano, periodoFim.dia);
     var compraUni = compras.filiais[unidade] || 0;
     var vendaUni  = vendas.filiais[unidade] || 0;
+    var compraCmvUni = (somarPeriodoPreAgregadoCross_(porDiaComprasCmv, periodoIni.mes, periodoIni.ano, periodoIni.dia, periodoFim.mes, periodoFim.ano, periodoFim.dia).filiais[unidade]) || 0;
     var ei = valInicial.total, ef = valFinal.total;
-    var cmv = r2(ei + compraUni - ef);
+    var cmv = r2(ei + compraCmvUni - ef);
 
     var cmcDetalhado = processarComprasIntervaloDiasCross_(rowsCompras, periodoIni.mes, periodoIni.ano, periodoIni.dia, periodoFim.mes, periodoFim.ano, periodoFim.dia);
     injetarFaturamentoCmcPeriodo_(cmcDetalhado, porDiaVendas, periodoIni.mes, periodoIni.ano, periodoIni.dia, periodoFim.mes, periodoFim.ano, periodoFim.dia);
@@ -2270,6 +2278,7 @@ function calcularCMVPersonalizadoTodas_(dataIniStr, dataFimStr) {
     var catalogoPorCodigo = preAgregarCatalogoPorCodigo(rowsCompras);
     var fichaPorCodigo = preAgregarFichaPorCodigo(rowsFichas);
     var porDiaCompras = preAgregarComprasPorDia(rowsCompras);
+    var porDiaComprasCmv = preAgregarComprasPorDia(rowsCompras, true);   // sem MP GAS: só para o CMV
     var porDiaVendas  = preAgregarVendasPorDia(rowsVendas);
 
     // ATENÇÃO à assinatura: somarPeriodoPreAgregadoCross_ soma o intervalo e
@@ -2285,8 +2294,9 @@ function calcularCMVPersonalizadoTodas_(dataIniStr, dataFimStr) {
     var anterior = diaAnterior_(dataIni);
     var compras = somarPeriodoPreAgregadoCross_(porDiaCompras, anterior.mes, anterior.ano, anterior.dia, dataFim.mes, dataFim.ano, dataFim.dia);
     var vendas  = somarPeriodoPreAgregadoCross_(porDiaVendas,  anterior.mes, anterior.ano, anterior.dia, dataFim.mes, dataFim.ano, dataFim.dia);
+    var comprasCmv = somarPeriodoPreAgregadoCross_(porDiaComprasCmv, anterior.mes, anterior.ano, anterior.dia, dataFim.mes, dataFim.ano, dataFim.dia);
 
-    var somaEi = 0, somaEf = 0, somaCompras = 0, somaFat = 0, todasDisponivel = true;
+    var somaEi = 0, somaEf = 0, somaCompras = 0, somaComprasCmv = 0, somaFat = 0, todasDisponivel = true;
     // porUnidade: mesmo formato de montarCMVDetalhadoUnidade_ (ei, ef,
     // compras, cmv, grupos, transf_*, cmv_puro...) -- permite trocar de
     // unidade no mesmo período personalizado sem precisar escolher
@@ -2300,12 +2310,13 @@ function calcularCMVPersonalizadoTodas_(dataIniStr, dataFimStr) {
       var compraUni = compras.filiais[u] || 0;
       var vendaUni  = vendas.filiais[u] || 0;
       somaCompras += compraUni; somaFat += vendaUni;
+      somaComprasCmv += (comprasCmv.filiais[u] || 0);
       if (eiInfo && efInfo) {
         var rotulo = 'Periodo personalizado, ' + u;
         var itensEi = buscarItensDeContagens_(eiInfo.ids);
         var itensEf = buscarItensDeContagens_(efInfo.ids);
-        var valEi = valorizarItensInventario_(itensEi, NOMES_MESES[eiInfo.mes], eiInfo.ano, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (inicial)', catalogoPorCodigo, fichaPorCodigo);
-        var valEf = valorizarItensInventario_(itensEf, NOMES_MESES[efInfo.mes], efInfo.ano, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (final)', catalogoPorCodigo, fichaPorCodigo);
+        var valEi = valorizarParaCMV_(itensEi, NOMES_MESES[eiInfo.mes], eiInfo.ano, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (inicial)', catalogoPorCodigo, fichaPorCodigo);
+        var valEf = valorizarParaCMV_(itensEf, NOMES_MESES[efInfo.mes], efInfo.ano, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (final)', catalogoPorCodigo, fichaPorCodigo);
         somaEi += valEi.total; somaEf += valEf.total;
         var detUni = montarCMVDetalhadoUnidade_(valEi.porProduto, valEf.porProduto, rowsCompras,
           dataIni.mes, dataIni.ano, dataIni.dia, dataFim.mes, dataFim.ano, dataFim.dia, u);
@@ -2324,11 +2335,11 @@ function calcularCMVPersonalizadoTodas_(dataIniStr, dataFimStr) {
       }
     });
 
-    var cmv = r2(somaEi + somaCompras - somaEf);
+    var cmv = r2(somaEi + somaComprasCmv - somaEf);
     var dataIniFmt = pad2(dataIni.dia) + '/' + pad2(dataIni.mes) + '/' + dataIni.ano;
     var dataFimFmt = pad2(dataFim.dia) + '/' + pad2(dataFim.mes) + '/' + dataFim.ano;
     var resultado = {
-      ei: r2(somaEi), ef: r2(somaEf), compras: r2(somaCompras), faturamento: r2(somaFat), cmv: cmv,
+      ei: r2(somaEi), ef: r2(somaEf), compras: r2(somaComprasCmv), comprasCmc: r2(somaCompras), faturamento: r2(somaFat), cmv: cmv,
       cmc_pct: calcularPct(somaCompras, somaFat), cmv_pct: calcularPct(cmv, somaFat),
       disponivel: todasDisponivel, porUnidade: porUnidade,
       dataInicio: dataIniFmt, dataFim: dataFimFmt
@@ -2495,6 +2506,7 @@ function calcularSemanaCalendario(senha, mes, ano, negocio) {
     var catalogoPorCodigo = preAgregarCatalogoPorCodigo(rowsCompras);
     var fichaPorCodigo = preAgregarFichaPorCodigo(rowsFichas);
     var porDiaCompras = preAgregarComprasPorDia(rowsCompras);
+    var porDiaComprasCmv = preAgregarComprasPorDia(rowsCompras, true);   // sem MP GAS: só para o CMV
     var porDiaVendas  = preAgregarVendasPorDia(rowsVendas);
 
     var resultado = semanas.map(function(sem) {
@@ -2506,9 +2518,10 @@ function calcularSemanaCalendario(senha, mes, ano, negocio) {
       var anterior = diaAnterior_(sem.segunda);
       var compras = somarPeriodoPreAgregadoCross_(porDiaCompras, anterior.mes, anterior.ano, anterior.dia, sem.domingo.mes, sem.domingo.ano, sem.domingo.dia);
       var vendas  = somarPeriodoPreAgregadoCross_(porDiaVendas,  anterior.mes, anterior.ano, anterior.dia, sem.domingo.mes, sem.domingo.ano, sem.domingo.dia);
+      var comprasCmv = somarPeriodoPreAgregadoCross_(porDiaComprasCmv, anterior.mes, anterior.ano, anterior.dia, sem.domingo.mes, sem.domingo.ano, sem.domingo.dia);
 
       var porUnidade = {};
-      var somaEi = 0, somaEf = 0, somaCompras = 0, somaFat = 0, todasDisponivel = true, algumaDisponivel = false;
+      var somaEi = 0, somaEf = 0, somaCompras = 0, somaComprasCmv = 0, somaFat = 0, todasDisponivel = true, algumaDisponivel = false;
       unidades.forEach(function(u) {
         var pd = porDiaPorUnidade[u];
         var eiInfo = contagemOuInventarioMaisProximo_(pd, inventariosSalvos, u, sem.segunda, dataPorContagemId, JANELA_MAX_DIAS_CONTAGEM_PROXIMA);
@@ -2528,9 +2541,9 @@ function calcularSemanaCalendario(senha, mes, ano, negocio) {
           var itensEf = buscarItensDeContagens_(efInfo.ids);
           var mesNomeEi = NOMES_MESES[eiInfo.mes];
           var mesNomeEf = NOMES_MESES[efInfo.mes];
-          var valEi = valorizarItensInventario_(itensEi, mesNomeEi, eiInfo.ano, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (inicial)', catalogoPorCodigo, fichaPorCodigo);
-          var valEf = valorizarItensInventario_(itensEf, mesNomeEf, efInfo.ano, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (final)', catalogoPorCodigo, fichaPorCodigo);
-          var cmv = r2(valEi.total + compraUni - valEf.total);
+          var valEi = valorizarParaCMV_(itensEi, mesNomeEi, eiInfo.ano, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (inicial)', catalogoPorCodigo, fichaPorCodigo);
+          var valEf = valorizarParaCMV_(itensEf, mesNomeEf, efInfo.ano, historicoPorInsumo, fichasMap, catalogo, rotulo + ' (final)', catalogoPorCodigo, fichaPorCodigo);
+          var cmv = r2(valEi.total + (comprasCmv.filiais[u] || 0) - valEf.total);
           linha.ei = r2(valEi.total); linha.ef = r2(valEf.total); linha.cmv = cmv;
           linha.cmv_pct = calcularPct(cmv, vendaUni);
           linha.eiData = pad2(eiInfo.dia) + '/' + pad2(eiInfo.mes) + '/' + eiInfo.ano;
@@ -2541,14 +2554,14 @@ function calcularSemanaCalendario(senha, mes, ano, negocio) {
         } else {
           todasDisponivel = false;
         }
-        somaCompras += compraUni; somaFat += vendaUni;
+        somaCompras += compraUni; somaFat += vendaUni; somaComprasCmv += (comprasCmv.filiais[u] || 0);
         porUnidade[u] = linha;
       });
 
       var todas = { compras: r2(somaCompras), faturamento: r2(somaFat), cmc_pct: calcularPct(somaCompras, somaFat),
         ei: null, ef: null, cmv: null, cmv_pct: null, disponivel: false };
       if (algumaDisponivel) {
-        var cmvTodas = r2(somaEi + somaCompras - somaEf);
+        var cmvTodas = r2(somaEi + somaComprasCmv - somaEf);
         todas.ei = r2(somaEi); todas.ef = r2(somaEf); todas.cmv = cmvTodas;
         todas.cmv_pct = calcularPct(cmvTodas, somaFat);
         todas.disponivel = todasDisponivel; // "Todas" só é 100% confiável se TODA unidade tinha contagem próxima
@@ -3070,9 +3083,19 @@ function valorizarItensInventario_(itens, mesNome, ano, historicoPorInsumo, fich
     // custo de volta pela linha. fontes: preenchido quando item vem de
     // VÁRIAS contagens combinadas (buscarItensDeContagens_, semana/quinzena)
     // -- usado pro botão "Corrigir" na aba CMV. Nunca os dois ao mesmo tempo.
-    porProduto.push({ produto: nomeCanonico, grupo: grupo, und: item.und, qtd: item.qtde, custoUnit: custoUnit, custoTotal: custoTotal, linha: item.linha, fontes: item.fontes || [] });
+    porProduto.push({ produto: nomeCanonico, cod: item.cod, grupo: grupo, und: item.und, qtd: item.qtde, custoUnit: custoUnit, custoTotal: custoTotal, linha: item.linha, fontes: item.fontes || [] });
   });
   return { total: r2(total), porProduto: porProduto, avisos: avisos, semPreco: semPreco };
+}
+
+// Mesma valorização, SEM os produtos que ficam fora do CMV (MP GAS): usada em todo cálculo de CMV por contagem (semana,
+// quinzena, período). A tela de inventário continua usando valorizarItensInventario_ e mostra tudo que foi contado.
+function valorizarParaCMV_() {
+  var r = valorizarItensInventario_.apply(null, arguments);
+  var fica = [], total = 0;
+  r.porProduto.forEach(function(p) { if (foraDoCMV_(p.cod, p.produto)) return; fica.push(p); total += p.custoTotal || 0; });
+  r.porProduto = fica; r.total = r2(total);
+  return r;
 }
 
 // Retorna { linhas, avisos, semPreco } — linhas no MESMO formato de
