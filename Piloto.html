@@ -48,7 +48,11 @@ html[data-theme="light"]{
   --amarelo:#9A7524; --amar-fr:rgba(154,117,36,.10); --mao:#7E5F1D;
   --neutral:#A6A8A5; --azul:#7C9E97; --sel-bg:#103F39; --sel-txt:#FFFFFF;
   --serie-2:#8A5A2B; --col-1:#8CBDB3; --col-2:#C6DBD6;
-  --lat-borda:var(--lat-linha);
+  /* menu acompanha o tema (decisao do cliente): no claro, off-white com texto escuro */
+  --lat-bg:#F4F3EF; --lat-linha:#DFE0DC; --lat-txt:#111211; --lat-txt2:#535653; --lat-txt3:#666966;
+  --lat-hover:#E7E7E3; --lat-verde:#103F39; --lat-verde-fr:rgba(16,63,57,.08);
+  --lat-trilho:#E7E7E3; --lat-pastilha:#FFFFFF; --lat-borda:var(--lat-linha);
+  --veu-gaveta:rgba(17,18,17,.35);
 }
 *{box-sizing:border-box;margin:0;padding:0;}
 html{-webkit-text-size-adjust:100%;}
@@ -90,6 +94,7 @@ html.trocando-tema,html.trocando-tema *{transition:none !important;}
 .marca-glifo{fill:var(--marca-glifo);}
 .marca-nome{font-family:var(--fonte-tit);font-size:11px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;white-space:nowrap;color:var(--marca-txt);transition:opacity var(--lat-t) ease;}
 #lateral{--marca-fundo:var(--lat-trilho);--marca-borda:var(--lat-borda);--marca-glifo:var(--lat-txt);--marca-txt:var(--lat-txt);}
+html[data-theme="light"] #lateral{--marca-fundo:var(--carvo-black);--marca-borda:var(--carvo-black);--marca-glifo:var(--carvo-offwhite);}
 #lateral .marca-bloco{position:absolute;left:14px;top:50%;transform:translateY(-50%);}
 body.recolhido #lateral:not(.espiando) .marca-nome{opacity:0;}
 #lateral .lat-nome{font-family:var(--fonte-tit);font-size:15px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--lat-txt);font-kerning:normal;font-feature-settings:'kern' 1;white-space:nowrap;}
@@ -400,8 +405,8 @@ var NAV=[
   {id:'ficha',t:'Ficha técnica',ic:'doc',page:'ficha'},
   {id:'fin',t:'Financeiro',ic:'coin',subs:[['dfc','DFC'],['dre','DRE']]}
 ];
-var GRUPOS_ABERTOS={resumo:true};
-try{var gs0=JSON.parse(lsGet('carvo_grupos')||'null');if(gs0&&typeof gs0==='object')GRUPOS_ABERTOS=gs0;}catch(e){}
+var SENHA_JA_ENTROU=false;
+var GRUPOS_ABERTOS={};   // o menu sempre abre com todos os grupos fechados (nada e lembrado entre sessoes)
 function btnIcone(ic){return '<span class="lat-icone"><svg viewBox="0 0 24 24">'+IC[ic]+'</svg></span>';}
 function montarMenu(){
   var h='';
@@ -428,7 +433,6 @@ function marcarMenu(){
     g.classList.toggle('tem-ativo',temAtivo);
     var hd=g.querySelector('button.grupo'); if(hd)hd.classList.toggle('on',n.page===VISTA);
   });
-  lsSet('carvo_grupos',JSON.stringify(GRUPOS_ABERTOS));
 }
 function clicarGrupo(id){
   var n=NAV.filter(function(x){return x.id===id;})[0]; if(!n)return;
@@ -953,7 +957,10 @@ function carregar(senha,auto){
       SENHA=senha; lsSet('carvo_senha_piloto',senha); D=r;
       var l=mesesDisp(); if(!MES||l.indexOf(MES)<0)MES=l.length?l[l.length-1]:''; UNI='TODAS';
       $('login').hidden=true; $('app').hidden=false;
+      var primeira=!SENHA_JA_ENTROU; SENHA_JA_ENTROU=true;
+      var antes=primeira?{}:JSON.parse(JSON.stringify(GRUPOS_ABERTOS));
       irPara(VISTA);
+      GRUPOS_ABERTOS=antes; marcarMenu();   // ao abrir o site, grupos fechados; o botao Atualizar nao mexe no menu
     })
     .withFailureHandler(function(e){
       btn.disabled=false; btn.textContent='Entrar'; $('carregando').hidden=true;
