@@ -62,7 +62,7 @@ html.trocando-tema,html.trocando-tema *{transition:none !important;}
 /* ---------- login ---------- */
 #login{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:var(--space-4);}
 .login-cartao{width:100%;max-width:380px;border:1px solid var(--linha);border-radius:var(--radius-md);background:var(--card);padding:var(--space-5);}
-.login-marca{margin-bottom:var(--space-4);--marca-fundo:var(--txt);--marca-glifo:var(--card);--marca-txt:var(--txt);}
+.login-marca{margin-bottom:var(--space-4);--marca-fundo:var(--txt);--marca-borda:var(--txt);--marca-glifo:var(--card);--marca-txt:var(--txt);}
 .login-cartao h1{font-family:var(--fonte-tit);font-size:17px;font-weight:600;letter-spacing:-.005em;margin-bottom:var(--space-1);}
 .login-cartao p{font-size:12.5px;line-height:1.55;color:var(--txt2);margin-bottom:var(--space-4);}
 .campo{display:flex;flex-direction:column;gap:var(--space-1);margin-bottom:var(--space-3);}
@@ -86,10 +86,10 @@ html.trocando-tema,html.trocando-tema *{transition:none !important;}
    O quadrado fica sempre no mesmo lugar (centrado na barra recolhida de 68px); o nome só aparece com a barra aberta. */
 .marca-bloco{display:flex;align-items:center;gap:var(--space-3);}
 .marca-svg{flex:0 0 36px;width:36px;height:36px;display:block;}
-.marca-fundo{fill:var(--marca-fundo);}
+.marca-fundo{fill:var(--marca-fundo);stroke:var(--marca-borda);stroke-width:6;}
 .marca-glifo{fill:var(--marca-glifo);}
-.marca-nome{font-family:var(--fonte-tit);font-size:12.5px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;white-space:nowrap;color:var(--marca-txt);transition:opacity var(--lat-t) ease;}
-#lateral{--marca-fundo:var(--lat-txt);--marca-glifo:var(--lat-bg);--marca-txt:var(--lat-txt);}
+.marca-nome{font-family:var(--fonte-tit);font-size:11px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;white-space:nowrap;color:var(--marca-txt);transition:opacity var(--lat-t) ease;}
+#lateral{--marca-fundo:var(--lat-trilho);--marca-borda:var(--lat-borda);--marca-glifo:var(--lat-txt);--marca-txt:var(--lat-txt);}
 #lateral .marca-bloco{position:absolute;left:14px;top:50%;transform:translateY(-50%);}
 body.recolhido #lateral:not(.espiando) .marca-nome{opacity:0;}
 #lateral .lat-nome{font-family:var(--fonte-tit);font-size:15px;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--lat-txt);font-kerning:normal;font-feature-settings:'kern' 1;white-space:nowrap;}
