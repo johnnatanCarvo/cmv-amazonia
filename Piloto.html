@@ -245,6 +245,9 @@ tfoot td.num{text-align:right;font-family:var(--num-oper);font-variant-numeric:t
 body.recolhido .lat-sub,body.recolhido .lat-chev{display:none;}
 body.recolhido #lateral.espiando .lat-chev{display:flex;}
 body.recolhido #lateral.espiando .lat-grupo.aberto > .lat-sub{display:block;}
+/* recolhido (so icones): os subitens do grupo aberto ficam escondidos; so abrem de novo ao espiar */
+@media (min-width:901px){body.recolhido #lateral:not(.espiando) nav .lat-grupo.aberto > .lat-sub{display:none;}}
+#lateral nav{overflow-x:hidden;}
 body.recolhido .tema{display:flex;flex-direction:column;}
 body.recolhido #lateral.espiando .tema{flex-direction:row;}
 .tema button{display:inline-flex;align-items:center;justify-content:center;padding:6px 10px;}
