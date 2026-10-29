@@ -973,8 +973,8 @@ var SEMCAL_CACHE={}, mesSemCal='', uniSemCal='TODAS';
 var AVISOSINVENTARIO=[];
 var COMPRAS_NAO_INTEGRADAS=[];
 var TRANSF_COMO_VENDA={};   // Açaí: mês -> R$ de açaí transferido às unidades que conta como venda
-var FORA_DO_CMV=[];   // produtos que o CMV desconsidera (ex.: MP GAS); continuam no CMC
-function notaForaDoCMV_(){return FORA_DO_CMV.length?'· Fora do CMV: '+FORA_DO_CMV.join(', '):'';}
+var FORA_DO_CMV=[];   // produtos que o CMV e o CMC desconsideram (ex.: MP GAS)
+function notaForaDoCMV_(){return FORA_DO_CMV.length?'· Fora do CMV e do CMC: '+FORA_DO_CMV.join(', '):'';}
 var INICIO_PERIODO_MES={};   // mês -> 'dd/mm/aaaa' quando o período do mês começa antes do dia 1 (Açaí: abertura com estoque zero)
 var MESES_NOMES_=['JANEIRO','FEVEREIRO','MARÇO','ABRIL','MAIO','JUNHO','JULHO','AGOSTO','SETEMBRO','OUTUBRO','NOVEMBRO','DEZEMBRO'];
 
@@ -1014,7 +1014,7 @@ function faixaPeriodoCMC_(){
   var info=infoPeriodoAnalise_(mesAtual,periodoAtualCMC,uniAtual);
   if(info){
     var iv=[info.ini,info.fim];
-    return faixaPeriodoHtml_({compras:iv,vendas:iv,contagens:null,nota:info.igual?'':'(as unidades têm períodos diferentes; mostrando a primeira)'});
+    return faixaPeriodoHtml_({compras:iv,vendas:iv,contagens:null,nota:(info.igual?'':'(as unidades têm períodos diferentes; mostrando a primeira) ')+notaForaDoCMV_()});
   }
   if(periodoAtualCMC.tipo!=='mes')return '';
   var mi=MESES_NOMES_.indexOf(mesAtual); if(mi<0)return '';
@@ -1024,7 +1024,7 @@ function faixaPeriodoCMC_(){
   var ultimo=new Date(ano,mi+1,0).getDate();
   var fimDia=(ano===hoje.getFullYear()&&mi===hoje.getMonth())?Math.min(hoje.getDate(),ultimo):ultimo;
   var fim=p2(fimDia)+'/'+p2(mi+1)+'/'+ano;
-  return faixaPeriodoHtml_({compras:[ini,fim],vendas:[ini,fim],contagens:null});
+  return faixaPeriodoHtml_({compras:[ini,fim],vendas:[ini,fim],contagens:null,nota:notaForaDoCMV_()});
 }
 // CMV: período de compras/vendas e as contagens que abrem e fecham
 function faixaPeriodoCMV_(){

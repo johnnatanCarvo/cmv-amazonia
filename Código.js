@@ -15,7 +15,7 @@ var PASTA_ID = '1XS4NKNDUf4NJaCp_ajjr2K5g0CUYilT1';
 // mudou, é porque alguém (eu) publicou uma atualização enquanto a página
 // já estava aberta -- aí mostra um aviso pra recarregar, em vez de deixar
 // a pessoa usando uma versão desatualizada sem saber.
-var VERSAO_APP = '2026-10-28.8';
+var VERSAO_APP = '2026-10-29.1';
 
 function obterVersaoApp() {
   return JSON.stringify({ ok: true, versao: VERSAO_APP });
@@ -691,7 +691,7 @@ function lerComprasCompleto_() {
   // Filtro de negócio no ponto único de leitura: tudo que roda daqui pra
   // frente (CMC, CMV, ABC, teórico) já nasce no escopo certo, sem precisar
   // passar o negócio por dezenas de funções.
-  if (!cache || !cache.linhas.length) return filtrarComprasNegocio_(rowsCSV);
+  if (!cache || !cache.linhas.length) return removerForaDoCusto_(filtrarComprasNegocio_(rowsCSV));
 
   // Todo mês coberto pelo cache tem prioridade sobre o CSV: o cache vem da API
   // e já inclui nota lançada em atraso, que a exportação manual perdia.
@@ -705,7 +705,7 @@ function lerComprasCompleto_() {
              (rowsCSV.length - filtrado.length) + ' substituídas pelo cache da API (' +
              Object.keys(cache.meses).join(', ') + ' -- ' + cache.linhas.length + ' linhas, atualizado ' +
              (cfyComprasAtualizadoEm() || 'data desconhecida') + ')');
-  return filtrarComprasNegocio_(filtrado.concat(cache.linhas));
+  return removerForaDoCusto_(filtrarComprasNegocio_(filtrado.concat(cache.linhas)));
 }
 
 // Ponto único de leitura de VENDAS. Mesma ideia das compras, mas a

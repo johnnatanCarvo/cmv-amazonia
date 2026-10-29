@@ -58,9 +58,22 @@ function naoEhVenda_(produto) {
   return PADRAO_PRODUTO_TAXA.test(produto) || PADRAO_PRODUTO_AJUSTE.test(produto);
 }
 
-// Produtos que NÃO entram no CMV (nem no estoque inicial/final, nem nas compras do período): decisão do cliente.
-// Continuam no CMC (compra é compra) e no cadastro. Casa pelo código do Cloudfy ou pelo nome exato.
+// Produtos que NÃO entram no CMV nem no CMC (nem no estoque inicial/final, nem nas compras do período): decisão do cliente.
+// Saem das compras já na leitura (lerComprasCompleto_), então CMC, grupos, variação de custo e curva ABC nascem sem eles.
+// Continuam no cadastro e na tela de inventário. Casa pelo código do Cloudfy ou pelo nome exato.
+// (O nome PRODUTOS_FORA_DO_CMV e as barreiras extras do CMV ficam: valem como segunda trava.)
 var PRODUTOS_FORA_DO_CMV = { cods: ['1055'], nomes: ['MP GAS'] };
+// Tira das compras as linhas dos produtos que ficam fora do CMV/CMC. A linha 0 é o cabeçalho e sempre fica.
+function removerForaDoCusto_(rows) {
+  if (!rows || rows.length < 2) return rows;
+  var saida = [rows[0]];
+  for (var i = 1; i < rows.length; i++) {
+    var r = rows[i];
+    if (r && foraDoCMV_(r[C_COMPRAS.cod], r[C_COMPRAS.produto])) continue;
+    saida.push(r);
+  }
+  return saida;
+}
 function foraDoCMV_(cod, nome) {
   var c = String(cod == null ? '' : cod).trim();
   if (c && PRODUTOS_FORA_DO_CMV.cods.indexOf(c) >= 0) return true;
