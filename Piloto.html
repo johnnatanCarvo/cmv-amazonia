@@ -610,7 +610,7 @@ function vCmv(){
   var h='';
   if(c.dataEi)h+='<div class="faixa"><b>Período considerado</b> &nbsp;·&nbsp; Compras e vendas: '+esc(c.dataEi)+' a '+esc(c.dataEf)+
     ' &nbsp;·&nbsp; Contagens: '+esc(c.contEi||c.dataEi)+(c.abertura?' (abertura, estoque R$ 0)':'')+' &rarr; '+esc(c.contEf||c.dataEf)+
-    ((D.produtosForaDoCMV&&D.produtosForaDoCMV.length)?' &nbsp;·&nbsp; <b>Fora do CMV e do CMC:</b> '+esc(D.produtosForaDoCMV.join(', ')):'')+'</div>';
+    '</div>';
   h+='<div class="kpis">'+
     kpi('CMV real',brl(c.cmv),c0?tagVar(c.pct,c0.pct,true):'<span class="tag neu">sem comparação</span>',pct(c.pct)+' do faturamento')+
     kpi('Estoque inicial',brl(c.ei),'','contagem de '+esc(c.contEi||c.dataEi))+
@@ -633,7 +633,7 @@ function vCmv(){
 function vCmc(){
   var k=cmcMes(MES,UNI), m0=ant(MES), k0=m0?cmcMes(m0,UNI):null;
   if(!k)return {html:vazio('Sem compras registradas neste recorte.')};
-  var h=((D.produtosForaDoCMV&&D.produtosForaDoCMV.length)?'<div class="faixa"><b>Fora do CMV e do CMC:</b> '+esc(D.produtosForaDoCMV.join(', '))+'</div>':'')+'<div class="kpis">'+
+  var h='<div class="kpis">'+
     kpi('CMC total',brl(k.total),k0?tagVarPct(k.total,k0.total,true):'<span class="tag neu">sem comparação</span>',m0?'contra '+mesNome(m0):'primeiro mês com dados')+
     kpi('Faturamento',brl(k.fat),'','vendas do mês')+
     kpi('CMC sobre faturamento',pct(k.pct),k0?tagVar(k.pct,k0.pct,true):'<span class="tag neu">sem comparação</span>',k.pct!=null&&k.pct>42?'acima de 42%':'dentro do esperado')+'</div>';
